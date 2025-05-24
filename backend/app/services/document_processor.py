@@ -2,14 +2,17 @@ import os
 import logging
 import json
 import uuid
+import traceback
 from typing import List, Dict, Any, Optional
 from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from datetime import datetime
 from app.models.document import Document, DocumentCreate, DocumentUpdate
 from app.db.init_db import get_chroma_client
 from app.core.config import settings
 
+# Configure more detailed logging
 logger = logging.getLogger(__name__)
 
 class DocumentProcessor:
@@ -41,7 +44,7 @@ class DocumentProcessor:
             content = await file.read()
             f.write(content)
             
-        logger.info(f"Saved file {file.filename} to {file_path}")
+        logger.info(f"[DEBUG] Saved file {file.filename} to {file_path} (size: {len(content)} bytes)")
         return file_path
     
     async def create_document(self, db: AsyncSession, document_create: DocumentCreate) -> Document:
@@ -63,70 +66,109 @@ class DocumentProcessor:
             status=document_create.status,
             project_id=document_create.project_id,
             description=document_create.description,
-            metadata=json.dumps(document_create.metadata) if document_create.metadata else None
+            doc_metadata=json.dumps(document_create.doc_metadata) if document_create.doc_metadata else None
         )
         
         db.add(document)
         await db.commit()
         await db.refresh(document)
         
-        logger.info(f"Created document record with ID {document.id}")
+        logger.info(f"[DEBUG] Created document record with ID {document.id} for project {document_create.project_id}")
         return document
     
-    async def process_document(self, document_id: str, file_path: str, db: AsyncSession) -> None:
+    async def process_document(self, document_id: str, file_path: str, db) -> None:
         """
         Process a document and extract text for vectorization
         
         Args:
             document_id: ID of the document to process
             file_path: Path to the document file
-            db: Database session
+            db: Database session (can be sync or async)
         """
         try:
+            logger.info(f"[DEBUG] Starting processing of document {document_id} at path {file_path}")
+            
             # Update document status to processing
             await self.update_document_status(db, document_id, "processing")
             
+            # Verify file exists
+            if not os.path.exists(file_path):
+                logger.error(f"[DEBUG] File not found at path {file_path}")
+                await self.update_document_status(db, document_id, "error")
+                await self.update_document(
+                    db,
+                    document_id,
+                    DocumentUpdate(doc_metadata={"error": "File not found"})
+                )
+                return
+            
             # Extract text from document based on file type
             file_ext = os.path.splitext(file_path)[1].lower()
+            logger.info(f"[DEBUG] Detected file extension: {file_ext}")
             
             if file_ext == ".pdf":
                 # This would use a PDF extraction library like PyPDF2 or pdfplumber
                 text_content = "PDF content would be extracted here"
+                logger.info(f"[DEBUG] Extracted PDF content from {file_path}")
                 
             elif file_ext == ".docx":
                 # This would use a DOCX extraction library like python-docx
                 text_content = "DOCX content would be extracted here"
+                logger.info(f"[DEBUG] Extracted DOCX content from {file_path}")
                 
             elif file_ext == ".txt":
                 # Simple text file reading
                 with open(file_path, "r", encoding="utf-8") as f:
                     text_content = f.read()
+                logger.info(f"[DEBUG] Read text file content from {file_path}, size: {len(text_content)} characters")
                     
             else:
-                raise ValueError(f"Unsupported file type: {file_ext}")
+                logger.error(f"[DEBUG] Unsupported file type: {file_ext}")
+                await self.update_document_status(db, document_id, "error")
+                await self.update_document(
+                    db,
+                    document_id,
+                    DocumentUpdate(doc_metadata={"error": f"Unsupported file type: {file_ext}"})
+                )
+                return
             
             # Split text into chunks for vectorization
-            # This is a simplified version - in a real implementation, 
-            # we would use a more sophisticated chunking strategy
+            logger.info(f"[DEBUG] Splitting text content into chunks")
             chunks = self._split_text_into_chunks(text_content)
+            logger.info(f"[DEBUG] Split text into {len(chunks)} chunks")
             
             # Vectorize and store chunks in ChromaDB
+            logger.info(f"[DEBUG] Vectorizing and storing chunks in ChromaDB")
             await self._vectorize_chunks(document_id, chunks)
             
             # Update document status to processed
-            metadata = {"chunk_count": len(chunks)}
+            doc_metadata = {
+                "chunk_count": len(chunks),
+                "processing_complete": True,
+                "processed_at": str(datetime.now())
+            }
+            
             await self.update_document(
                 db, 
                 document_id, 
-                DocumentUpdate(status="processed", metadata=metadata)
+                DocumentUpdate(status="processed", doc_metadata=doc_metadata)
             )
             
-            logger.info(f"Successfully processed document {document_id}")
+            logger.info(f"[DEBUG] Successfully processed document {document_id} with {len(chunks)} chunks")
             
         except Exception as e:
-            logger.error(f"Error processing document {document_id}: {str(e)}")
+            error_details = {
+                "error": str(e),
+                "traceback": traceback.format_exc()
+            }
+            logger.error(f"[DEBUG] Error processing document {document_id}: {str(e)}\n{traceback.format_exc()}")
             # Update document status to error
             await self.update_document_status(db, document_id, "error")
+            await self.update_document(
+                db,
+                document_id,
+                DocumentUpdate(doc_metadata=error_details)
+            )
     
     def _split_text_into_chunks(self, text: str, chunk_size: int = 1000, overlap: int = 200) -> List[str]:
         """
@@ -143,6 +185,7 @@ class DocumentProcessor:
         chunks = []
         if len(text) <= chunk_size:
             chunks.append(text)
+            logger.debug(f"[DEBUG] Text fits in a single chunk of size {len(text)}")
         else:
             start = 0
             while start < len(text):
@@ -151,6 +194,7 @@ class DocumentProcessor:
                 if start > 0:
                     start = start - overlap
                 chunks.append(text[start:end])
+                logger.debug(f"[DEBUG] Created chunk from position {start} to {end}")
                 start = end
         
         return chunks
@@ -166,6 +210,7 @@ class DocumentProcessor:
         # Get ChromaDB client
         client = get_chroma_client()
         collection = client.get_or_create_collection("documents")
+        logger.info(f"[DEBUG] Connected to ChromaDB collection 'documents'")
         
         # Create IDs for chunks
         chunk_ids = [f"{document_id}_{i}" for i in range(len(chunks))]
@@ -174,13 +219,28 @@ class DocumentProcessor:
         metadatas = [{"document_id": document_id, "chunk_index": i} for i in range(len(chunks))]
         
         # Add chunks to collection
-        collection.add(
-            ids=chunk_ids,
-            documents=chunks,
-            metadatas=metadatas
-        )
-        
-        logger.info(f"Vectorized {len(chunks)} chunks for document {document_id}")
+        try:
+            # Check if chunks for this document already exist and delete them
+            existing_results = collection.get(
+                where={"document_id": document_id}
+            )
+            
+            if existing_results and existing_results["ids"]:
+                logger.info(f"[DEBUG] Removing {len(existing_results['ids'])} existing chunks for document {document_id}")
+                collection.delete(
+                    where={"document_id": document_id}
+                )
+            
+            # Add new chunks
+            collection.add(
+                ids=chunk_ids,
+                documents=chunks,
+                metadatas=metadatas
+            )
+            logger.info(f"[DEBUG] Successfully added {len(chunks)} chunks to ChromaDB for document {document_id}")
+        except Exception as e:
+            logger.error(f"[DEBUG] Error adding chunks to ChromaDB: {str(e)}\n{traceback.format_exc()}")
+            raise
     
     async def get_document(self, db: AsyncSession, document_id: str) -> Optional[Document]:
         """

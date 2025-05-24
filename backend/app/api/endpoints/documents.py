@@ -53,23 +53,52 @@ async def upload_document(
                 file_path=file_path,
                 project_id=project_id,
                 description=description,
-                status="processing"
+                status="pending"  # Change initial status to pending
             )
         )
         
         # Process document in background
-        background_tasks.add_task(
-            document_processor.process_document,
-            document_id=document_id,
-            file_path=file_path,
-            db=db
-        )
+        # We need to create a new database session for the background task
+        # since the current session will be closed after the request completes
+        from app.db.init_db import is_async, SessionLocal
+        
+        # Create a function that will run in the background
+        async def process_document_task():
+            try:
+                # Create a new database session for this background task
+                if is_async:
+                    # For PostgreSQL (async)
+                    async with SessionLocal() as task_db:
+                        await document_processor.process_document(
+                            document_id=document_id,
+                            file_path=file_path,
+                            db=task_db
+                        )
+                else:
+                    # For SQLite (sync)
+                    task_db = SessionLocal()
+                    try:
+                        await document_processor.process_document(
+                            document_id=document_id,
+                            file_path=file_path,
+                            db=task_db
+                        )
+                    finally:
+                        task_db.close()
+            except Exception as e:
+                logger.error(f"Background task error processing document {document_id}: {str(e)}")
+                logger.exception(e)
+        
+        # Add the task to the background tasks
+        background_tasks.add_task(process_document_task)
+        
+        logger.info(f"Document {document_id} queued for processing")
         
         return DocumentResponse(
             id=document.id,
             filename=document.filename,
-            status="processing",
-            message="Document uploaded successfully and is being processed"
+            status="pending",  # Changed from "processing" to "pending"
+            message="Document uploaded successfully and queued for processing"
         )
         
     except Exception as e:

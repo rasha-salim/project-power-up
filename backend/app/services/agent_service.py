@@ -203,14 +203,33 @@ class AgentService:
         try:
             logger.info(f"Executing crew analysis {analysis_id} for project {project_id}")
             
-            # In a real implementation, this would:
-            # 1. Retrieve all documents for the project
-            # 2. Create and execute the CrewAI crew
-            # 3. Store the results
+            # Check if all documents for this project are processed
+            # Import here to avoid circular imports
+            from app.services.document_processor import DocumentProcessor
+            document_processor = DocumentProcessor()
+            
+            # Get all documents for this project
+            documents = await document_processor.list_documents(db, project_id)
+            
+            # Check if any documents are still processing
+            processing_docs = [doc for doc in documents if doc.status in ["pending", "processing"]]
+            if processing_docs:
+                logger.warning(f"Cannot start analysis - {len(processing_docs)} documents still processing for project {project_id}")
+                # We'll try again later - in a real implementation, this would be handled by a background job
+                return
+            
+            # Check if we already have analysis results for this project
+            from app.services.project_service import ProjectService
+            project_service = ProjectService()
+            project = await project_service.get_project(db, project_id)
+            
+            if project and project.insights:
+                logger.info(f"Analysis results already exist for project {project_id}")
+                return
             
             # Set up Anthropic LLM
             anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
-            anthropic_model = os.getenv("ANTHROPIC_MODEL")
+            anthropic_model = os.getenv("ANTHROPIC_MODEL", "claude-2")
             
             if not anthropic_api_key:
                 logger.error("ANTHROPIC_API_KEY not found in environment variables")
@@ -237,9 +256,40 @@ class AgentService:
             planning_agent = self._create_planning_agent()
             planning_agent.llm = llm
             
-            # Create tasks for each agent
-            technical_task = self._create_technical_task(technical_agent, project_id)
-            risk_task = self._create_risk_task(risk_agent, project_id)
+            # Prepare document content for agents
+            document_content = []
+            for doc in documents:
+                # Get document chunks from ChromaDB
+                client = get_chroma_client()
+                collection = client.get_collection("documents")
+                results = collection.get(
+                    where={"document_id": doc.id}
+                )
+                
+                if results and results["documents"]:
+                    # Add document metadata and content
+                    document_content.append({
+                        "id": doc.id,
+                        "filename": doc.filename,
+                        "description": doc.description,
+                        "content": "\n".join(results["documents"])
+                    })
+            
+            # Create tasks for each agent with document content
+            context = {
+                "project_id": project_id,
+                "documents": document_content
+            }
+            
+            # Convert context to string for agents
+            context_str = f"Project ID: {project_id}\n\nDocuments:\n"
+            for doc in document_content:
+                context_str += f"\n--- Document: {doc['filename']} ---\n"
+                context_str += f"Description: {doc['description']}\n\n"
+                context_str += doc['content'][:1000] + "...\n"  # Limit content size
+            
+            technical_task = self._create_technical_task(technical_agent, context_str)
+            risk_task = self._create_risk_task(risk_agent, context_str)
             planning_task = self._create_planning_task(planning_agent, project_id, [technical_task, risk_task])
             
             # Create the crew
@@ -257,7 +307,7 @@ class AgentService:
             # result = crew.kickoff()
             
             # Simulate analysis time
-            await asyncio.sleep(10)
+            await asyncio.sleep(2)
             
             # Simulate results
             result = {
@@ -286,7 +336,9 @@ class AgentService:
                         "Week 12: Dashboard and visualization features complete"
                     ],
                     "resource_requirements": "2 backend developers, 1 frontend developer, 1 AI specialist"
-                }
+                },
+                "analysis_id": analysis_id,
+                "completed_at": str(datetime.datetime.now())
             }
             
             # Store the results
