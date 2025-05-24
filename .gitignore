@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+ENV/
+.env
+
+# Database
+*.db
+*.sqlite3
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+logs/
+*.log
+
+# Frontend
+node_modules/
+.next/
+out/
+.cache/
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Vector DB
+chroma_db/
+
+# Uploads
+uploads/
+
+# OS specific
+.DS_Store
+Thumbs.db

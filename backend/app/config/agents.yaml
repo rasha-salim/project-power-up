@@ -1,0 +1,106 @@
+version: "1.0"
+agents:
+  technical_analyst:
+    role: "Technical Analyst"
+    goal: "Analyze project requirements and provide technical recommendations"
+    backstory: "You are an experienced technical architect with expertise in software design, technology selection, and feasibility analysis. Your job is to analyze project requirements and provide detailed technical recommendations."
+    verbose: true
+    allow_delegation: false
+    llm:
+      provider: "anthropic"
+      model: "claude-3-opus-20240229"
+      temperature: 0.2
+    config:
+      max_iterations: 5
+      max_execution_time: 300  # seconds
+      tools:
+        - document_analyzer
+        - code_reviewer
+
+  risk_analyst:
+    role: "Risk Analyst"
+    goal: "Identify potential risks and develop mitigation strategies"
+    backstory: "You are a skilled risk analyst with a background in project management and risk assessment. Your job is to identify potential risks in the project and develop effective mitigation strategies."
+    verbose: true
+    allow_delegation: false
+    llm:
+      provider: "anthropic"
+      model: "claude-3-opus-20240229"
+      temperature: 0.2
+    config:
+      max_iterations: 5
+      max_execution_time: 300  # seconds
+      tools:
+        - risk_analyzer
+        - mitigation_generator
+
+  project_planner:
+    role: "Project Planner"
+    goal: "Create a comprehensive project plan with timeline and resource requirements"
+    backstory: "You are an experienced project manager with expertise in planning complex software projects. Your job is to create a comprehensive project plan with timeline, milestones, and resource requirements."
+    verbose: true
+    allow_delegation: true
+    llm:
+      provider: "anthropic"
+      model: "claude-3-opus-20240229"
+      temperature: 0.2
+    config:
+      max_iterations: 5
+      max_execution_time: 300  # seconds
+      tools:
+        - timeline_generator
+        - resource_calculator
+
+tasks:
+  technical_analysis:
+    description: "Analyze project requirements and provide technical recommendations"
+    expected_output: "Technical analysis report with architecture recommendations and technology stack"
+    agent: "technical_analyst"
+    dependencies: []
+    context_requirements:
+      - project_documents
+      - project_requirements
+
+  risk_assessment:
+    description: "Identify potential risks and develop mitigation strategies"
+    expected_output: "Risk assessment report with identified risks and mitigation strategies"
+    agent: "risk_analyst"
+    dependencies: []
+    context_requirements:
+      - project_documents
+      - project_requirements
+
+  project_planning:
+    description: "Create a comprehensive project plan with timeline and resource requirements"
+    expected_output: "Project plan with timeline, milestones, and resource requirements"
+    agent: "project_planner"
+    dependencies:
+      - technical_analysis
+      - risk_assessment
+    context_requirements:
+      - technical_analysis_results
+      - risk_assessment_results
+
+crews:
+  project_analysis_crew:
+    name: "Project Analysis Crew"
+    description: "Analyze project requirements and create a comprehensive project plan"
+    agents:
+      - technical_analyst
+      - risk_analyst
+      - project_planner
+    tasks:
+      - technical_analysis
+      - risk_assessment
+      - project_planning
+    process: "sequential"
+    verbose: true
+    memory: true
+    llm:
+      provider: "anthropic"
+      model: "${ANTHROPIC_MODEL}"
+      temperature: 0.2
+      anthropic_api_key: "${ANTHROPIC_API_KEY}"
+    config:
+      max_iterations: 5
+      max_execution_time: 600  # seconds
