@@ -450,8 +450,19 @@ async def upload_document(
 ):
     """
     Upload a document (PDF, DOCX, TXT) for processing.
-    Using direct asyncpg connection to PostgreSQL (working pattern)
+    Uses connection pool for reliable PostgreSQL access.
     """
+    # Import connection pool
+    from app.db.connection_pool import get_pool
+    
+    # Get connection pool
+    pg_pool = get_pool()
+    if not pg_pool:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database connection pool not available"
+        )
+    
     try:
         # Validate file type
         allowed_extensions = [".pdf", ".docx", ".txt"]
@@ -459,7 +470,7 @@ async def upload_document(
         
         if file_ext not in allowed_extensions:
             raise HTTPException(
-                status_code=400, 
+                status_code=status.HTTP_400_BAD_REQUEST, 
                 detail=f"Unsupported file type. Allowed types: {', '.join(allowed_extensions)}"
             )
         
@@ -477,6 +488,8 @@ async def upload_document(
         with open(file_path, "wb") as f:
             f.write(content)
         
+        logger.info(f"File saved: {file_path}")
+        
         # Get current UTC time
         now = datetime.utcnow()
         
@@ -488,58 +501,39 @@ async def upload_document(
         }
         content_type = content_type_map.get(file_ext, "application/octet-stream")
         
-        # Connect directly to PostgreSQL using asyncpg
-        import asyncpg
-        conn = await asyncpg.connect(
-            host=settings.POSTGRES_SERVER,
-            port=settings.POSTGRES_PORT,
-            user=settings.POSTGRES_USER,
-            password=settings.POSTGRES_PASSWORD,
-            database=settings.POSTGRES_DB
-        )
+        # Save document record using connection from pool
+        async with pg_pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO documents 
+                (id, filename, file_path, content_type, status, project_id, description, created_at, updated_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                """,
+                document_id,
+                file.filename,
+                file_path,
+                content_type,
+                "pending",
+                project_id,
+                description,
+                now,
+                now
+            )
         
-        # Insert document record
-        await conn.execute(
-            """INSERT INTO documents 
-               (id, filename, file_path, content_type, status, project_id, description, created_at, updated_at)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)""",
-            document_id, 
-            file.filename, 
-            file_path, 
-            content_type, 
-            "pending", 
-            project_id, 
-            description, 
-            now,
-            now
-        )
+        logger.info(f"Document record saved: {document_id}")
         
-        # Close the connection
-        await conn.close()
-        
-        # Define a simplified background task function
+        # Define background task for document processing
         async def process_document_task():
             try:
                 logger.info(f"Starting background processing for document {document_id}")
                 
-                # Connect directly to PostgreSQL using asyncpg
-                import asyncpg
-                task_conn = await asyncpg.connect(
-                    host=settings.POSTGRES_SERVER,
-                    port=settings.POSTGRES_PORT,
-                    user=settings.POSTGRES_USER,
-                    password=settings.POSTGRES_PASSWORD,
-                    database=settings.POSTGRES_DB
-                )
-                
-                # Update the document status
-                await task_conn.execute(
-                    "UPDATE documents SET status = $1, updated_at = $2 WHERE id = $3",
-                    "processed", datetime.utcnow(), document_id
-                )
-                
-                # Close the connection
-                await task_conn.close()
+                # Use connection from pool for background task
+                async with pg_pool.acquire() as conn:
+                    # Update document status
+                    await conn.execute(
+                        "UPDATE documents SET status = $1, updated_at = $2 WHERE id = $3",
+                        "processed", datetime.utcnow(), document_id
+                    )
                 
                 logger.info(f"Completed background processing for document {document_id}")
             except Exception as e:
@@ -551,52 +545,66 @@ async def upload_document(
         
         logger.info(f"Document {document_id} queued for processing")
         
+        # Return response in the expected format
         return DocumentResponse(
             id=document_id,
             filename=file.filename,
             status="pending",
-            message="Document uploaded successfully and queued for processing"
+            message="Document uploaded successfully and queued for processing",
+            created_at=None,
+            updated_at=None
         )
-        
+    
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    
     except Exception as e:
+        # Log and convert other exceptions to HTTP exceptions
         logger.error(f"Error uploading document: {str(e)}")
         logger.exception(e)
-        raise HTTPException(status_code=500, detail=f"Error uploading document: {str(e)}")
-        
-    # Return the document response
-    return DocumentResponse(
-        id=document_id,
-        filename=file.filename,
-        status="pending",
-        message="Document uploaded successfully",
-        created_at=now,
-        updated_at=now
-    )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error uploading document: {str(e)}"
+        )
 
 @router.get("/{document_id}", response_model=DocumentResponse)
-async def get_document(
-    document_id: str,
-    db: AsyncSession = Depends(get_db)
-):
+async def get_document(document_id: str):
     """
-    Get document details by ID
+    Get document details by ID using connection pool
     """
+    # Import connection pool
+    from app.db.connection_pool import get_pool
+    
+    # Get connection pool
+    pg_pool = get_pool()
+    if not pg_pool:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database connection pool not available"
+        )
+    
     try:
-        document_processor = DocumentProcessor()
-        document = await document_processor.get_document(db, document_id)
+        # Get document from database using connection pool
+        async with pg_pool.acquire() as conn:
+            document = await conn.fetchrow(
+                "SELECT * FROM documents WHERE id = $1",
+                document_id
+            )
         
         if not document:
             raise HTTPException(status_code=404, detail="Document not found")
-            
+        
+        # Convert to dictionary for easier access
+        doc_dict = dict(document)
+        
         return DocumentResponse(
-            id=document.id,
-            filename=document.filename,
-            status=document.status,
+            id=doc_dict["id"],
+            filename=doc_dict["filename"],
+            status=doc_dict["status"],
             message="Document retrieved successfully",
-            project_id=document.project_id,
-            description=document.description,
-            created_at=document.created_at,
-            updated_at=document.updated_at
+            created_at=doc_dict["created_at"],
+            updated_at=doc_dict["updated_at"]
         )
         
     except HTTPException:
@@ -606,61 +614,118 @@ async def get_document(
         raise HTTPException(status_code=500, detail=f"Error retrieving document: {str(e)}")
 
 @router.get("/", response_model=List[DocumentResponse])
-async def list_documents(
-    project_id: Optional[str] = None,
-    db: AsyncSession = Depends(get_db)
-):
+async def list_documents(project_id: Optional[str] = None):
     """
-    List all documents, optionally filtered by project_id
+    List all documents, optionally filtered by project_id using connection pool
     """
+    # Import connection pool
+    from app.db.connection_pool import get_pool
+    
+    # Get connection pool
+    pg_pool = get_pool()
+    if not pg_pool:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database connection pool not available"
+        )
+    
     try:
-        document_processor = DocumentProcessor()
-        documents = await document_processor.list_documents(db, project_id)
+        # Get documents from database using connection pool
+        async with pg_pool.acquire() as conn:
+            if project_id:
+                # Filter by project_id if provided
+                rows = await conn.fetch(
+                    "SELECT * FROM documents WHERE project_id = $1 ORDER BY created_at DESC",
+                    project_id
+                )
+            else:
+                # Get all documents
+                rows = await conn.fetch(
+                    "SELECT * FROM documents ORDER BY created_at DESC"
+                )
         
+        # Convert rows to response objects
         return [
             DocumentResponse(
-                id=doc.id,
-                filename=doc.filename,
-                status=doc.status,
+                id=dict(row)["id"],
+                filename=dict(row)["filename"],
+                status=dict(row)["status"],
                 message="Document retrieved successfully",
-                project_id=doc.project_id,
-                description=doc.description,
-                created_at=doc.created_at,
-                updated_at=doc.updated_at
-            ) for doc in documents
+                created_at=dict(row)["created_at"],
+                updated_at=dict(row)["updated_at"]
+            ) for row in rows
         ]
-        
+    
     except Exception as e:
         logger.error(f"Error listing documents: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error listing documents: {str(e)}")
+        logger.exception(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error listing documents: {str(e)}"
+        )
 
 @router.delete("/{document_id}", response_model=DocumentResponse)
-async def delete_document(
-    document_id: str,
-    db: AsyncSession = Depends(get_db)
-):
+async def delete_document(document_id: str):
     """
-    Delete a document by ID
+    Delete a document by ID using connection pool
     """
+    # Import connection pool
+    from app.db.connection_pool import get_pool
+    
+    # Get connection pool
+    pg_pool = get_pool()
+    if not pg_pool:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database connection pool not available"
+        )
+    
     try:
-        document_processor = DocumentProcessor()
-        document = await document_processor.get_document(db, document_id)
-        
-        if not document:
-            raise HTTPException(status_code=404, detail="Document not found")
+        # Get document details before deleting
+        async with pg_pool.acquire() as conn:
+            document = await conn.fetchrow(
+                "SELECT * FROM documents WHERE id = $1",
+                document_id
+            )
             
-        # Delete document from database and vector store
-        await document_processor.delete_document(db, document_id)
+            if not document:
+                raise HTTPException(status_code=404, detail="Document not found")
+            
+            # Get document details for response
+            doc_dict = dict(document)
+            filename = doc_dict["filename"]
+            file_path = doc_dict["file_path"]
+            
+            # Delete document from database
+            await conn.execute(
+                "DELETE FROM documents WHERE id = $1",
+                document_id
+            )
+        
+        # Try to delete the file from disk
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                logger.info(f"Deleted file: {file_path}")
+        except Exception as file_e:
+            logger.warning(f"Could not delete file {file_path}: {str(file_e)}")
         
         return DocumentResponse(
             id=document_id,
-            filename=document.filename,
+            filename=filename,
             status="deleted",
-            message="Document deleted successfully"
+            message="Document deleted successfully",
+            created_at=None,
+            updated_at=None
         )
-        
+    
     except HTTPException:
         raise
+    
     except Exception as e:
         logger.error(f"Error deleting document: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error deleting document: {str(e)}")
+        logger.exception(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error deleting document: {str(e)}"
+        )
