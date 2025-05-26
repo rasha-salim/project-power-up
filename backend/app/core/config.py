@@ -12,8 +12,8 @@ class Settings(BaseSettings):
     CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:8000"]
     
     # Database settings
-    # Use SQLite for development
-    USE_SQLITE: bool = os.getenv("USE_SQLITE", "True").lower() == "true"
+    # Use PostgreSQL by default
+    USE_SQLITE: bool = os.getenv("USE_SQLITE", "False").lower() == "true"
     POSTGRES_SERVER: str = os.getenv("POSTGRES_SERVER", "localhost")
     POSTGRES_USER: str = os.getenv("POSTGRES_USER", "postgres")
     POSTGRES_PASSWORD: str = os.getenv("POSTGRES_PASSWORD", "postgres")
@@ -26,11 +26,7 @@ class Settings(BaseSettings):
         if isinstance(v, str):
             return v
             
-        # Use SQLite for development if specified
-        if values.get("USE_SQLITE", True):
-            return "sqlite:///./project_planning.db"
-            
-        # Otherwise use PostgreSQL
+        # Force using PostgreSQL
         postgres_user = values.get("POSTGRES_USER")
         postgres_password = values.get("POSTGRES_PASSWORD")
         postgres_server = values.get("POSTGRES_SERVER")

@@ -6,6 +6,7 @@ import logging
 from app.core.config import settings
 from app.api.routes import api_router
 from app.db.init_db import init_db
+from app.db.connection_pool import initialize_pool, close_pool
 
 # Configure logging
 logging.basicConfig(
@@ -36,12 +37,25 @@ app.include_router(api_router, prefix=settings.API_V1_STR)
 async def startup_event():
     """Initialize database connections and other startup tasks"""
     logger.info("Starting up application...")
+    
+    # Initialize database tables and schema
     await init_db()
+    
+    # Initialize PostgreSQL connection pool
+    pool_initialized = await initialize_pool()
+    if pool_initialized:
+        logger.info("PostgreSQL connection pool initialized")
+    else:
+        logger.warning("Failed to initialize PostgreSQL connection pool")
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Close database connections and perform cleanup"""
     logger.info("Shutting down application...")
+    
+    # Close PostgreSQL connection pool
+    await close_pool()
+    logger.info("Application shutdown complete")
 
 @app.get("/")
 async def root():
