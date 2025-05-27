@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 from app.api.endpoints import documents, documents_sqlalchemy, projects, agents, websocket, test
 
+
 api_router = APIRouter()
 
 # Include all endpoint routers
