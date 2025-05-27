@@ -7,6 +7,7 @@ import ProjectHeader from '@/components/project/ProjectHeader';
 import DocumentManager from '@/components/project/DocumentManager';
 import AgentConversation from '@/components/project/AgentConversation';
 import ProjectInsights from '@/components/project/ProjectInsights';
+import { API_ENDPOINTS } from '@/app/api/config';
 
 // Types
 interface Project {
@@ -28,7 +29,21 @@ interface Document {
 
 export default function ProjectDetailPage() {
   const params = useParams();
-  const projectId = params.id as string;
+  const projectId = params?.id as string;
+  
+  if (!projectId) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center max-w-md p-6 bg-white rounded-lg shadow">
+          <h3 className="text-lg font-medium text-gray-900 mb-2">Invalid Project ID</h3>
+          <p className="text-gray-500 mb-6">No project ID was provided.</p>
+          <Link href="/projects" className="btn btn-primary">
+            Return to Projects
+          </Link>
+        </div>
+      </div>
+    );
+  }
   
   const [project, setProject] = useState<Project | null>(null);
   const [documents, setDocuments] = useState<Document[]>([]);
@@ -41,49 +56,48 @@ export default function ProjectDetailPage() {
   useEffect(() => {
     const fetchProjectData = async () => {
       try {
-        // In a real implementation, this would fetch from the API
-        // const response = await fetch(`/api/v1/projects/${projectId}`);
-        // const data = await response.json();
+        // Fetch project from the API
+        const projectResponse = await fetch(`/api/v1/projects/${projectId}`);
         
-        // For now, use mock data
-        const mockProject = {
-          id: projectId,
-          name: 'E-Commerce Platform Redesign',
-          description: 'Redesign the company\'s e-commerce platform with improved UX and mobile responsiveness.',
-          status: 'draft',
-          created_at: '2025-05-01T10:00:00Z',
-          updated_at: '2025-05-20T15:30:00Z',
-        };
+        if (!projectResponse.ok) {
+          const errorData = await projectResponse.json();
+          throw new Error(errorData.detail || 'Failed to load project');
+        }
         
-        const mockDocuments = [
-          {
-            id: '1',
-            filename: 'requirements.pdf',
-            status: 'processed',
-            created_at: '2025-05-01T10:30:00Z',
-            description: 'Initial project requirements document'
-          },
-          {
-            id: '2',
-            filename: 'meeting_notes.docx',
-            status: 'processed',
-            created_at: '2025-05-05T14:20:00Z',
-            description: 'Notes from kickoff meeting'
-          },
-          {
-            id: '3',
-            filename: 'technical_specs.pdf',
-            status: 'processing',
-            created_at: '2025-05-18T09:45:00Z',
-          },
-        ];
+        const projectData = await projectResponse.json();
         
-        setProject(mockProject);
-        setDocuments(mockDocuments);
+        // Fetch documents for this project
+        let documentsData = [];
+        try {
+          const documentsResponse = await fetch(API_ENDPOINTS.DOCUMENTS.PROJECT(projectId));
+          
+          if (!documentsResponse.ok) {
+            console.error(`Error fetching documents: ${documentsResponse.status}`);
+          } else {
+            try {
+              const data = await documentsResponse.json();
+              // Ensure data is an array
+              documentsData = Array.isArray(data) ? data : [];
+              console.log('Documents loaded:', documentsData.length);
+            } catch (parseErr) {
+              console.error('Error parsing documents response:', parseErr);
+            }
+          }
+        } catch (fetchErr) {
+          console.error('Network error fetching documents:', fetchErr);
+        }
+        
+        setProject(projectData);
+        setDocuments(documentsData);
         setLoading(false);
-      } catch (err) {
+        
+        // If the project is in analyzing status, set the analysis running flag
+        if (projectData.status === 'analyzing') {
+          setIsAnalysisRunning(true);
+        }
+      } catch (err: any) {
         console.error('Error fetching project data:', err);
-        setError('Failed to load project data. Please try again later.');
+        setError(err.message || 'Failed to load project data. Please try again later.');
         setLoading(false);
       }
     };
@@ -92,52 +106,232 @@ export default function ProjectDetailPage() {
   }, [projectId]);
 
   // Handle starting analysis
-  const handleStartAnalysis = () => {
-    setIsAnalysisRunning(true);
-    
-    // In a real implementation, this would call the API to start the analysis
-    // For now, just update the project status after a delay
-    setTimeout(() => {
+  const handleStartAnalysis = async () => {
+    try {
+      setIsAnalysisRunning(true);
+      
+      // Call the API to start the analysis
+      const response = await fetch(`/api/v1/projects/${projectId}/analyze`, {
+        method: 'POST',
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || 'Failed to start analysis');
+      }
+      
+      const data = await response.json();
+      
+      // Update the project status to analyzing
       setProject(prev => prev ? { ...prev, status: 'analyzing' } : null);
       
-      // Simulate analysis completion after some time
-      setTimeout(() => {
-        setProject(prev => prev ? { ...prev, status: 'completed' } : null);
-        setIsAnalysisRunning(false);
-      }, 15000);
-    }, 2000);
+      // Set up polling to check analysis status
+      const checkAnalysisStatus = async () => {
+        try {
+          const statusResponse = await fetch(`/api/v1/projects/${projectId}/insights`);
+          
+          if (!statusResponse.ok) {
+            console.error('Error checking analysis status, will retry');
+            return false;
+          }
+          
+          const statusData = await statusResponse.json();
+          
+          // If analysis is complete, update the project
+          if (statusData.status === 'completed') {
+            setProject(prev => prev ? { 
+              ...prev, 
+              status: 'completed',
+              insights: statusData.insights 
+            } : null);
+            setIsAnalysisRunning(false);
+            return true;
+          }
+          
+          return false;
+        } catch (err) {
+          console.error('Error checking analysis status:', err);
+          return false;
+        }
+      };
+      
+      // Poll every 5 seconds for up to 5 minutes
+      const maxAttempts = 60; // 5 minutes at 5-second intervals
+      let attempts = 0;
+      
+      const pollInterval = setInterval(async () => {
+        attempts++;
+        const isComplete = await checkAnalysisStatus();
+        
+        if (isComplete || attempts >= maxAttempts) {
+          clearInterval(pollInterval);
+          if (!isComplete && attempts >= maxAttempts) {
+            // If we've reached max attempts and it's still not complete,
+            // we'll stop polling but leave the status as analyzing
+            console.log('Analysis is taking longer than expected, stopped polling');
+          }
+        }
+      }, 5000);
+      
+    } catch (err) {
+      console.error('Error starting analysis:', err);
+      setIsAnalysisRunning(false);
+      // Show error to user
+      alert(`Failed to start analysis: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
   };
 
   // Handle document upload
-  const handleDocumentUpload = (files: File[]) => {
-    // In a real implementation, this would call the API to upload the files
-    // For now, just add them to the documents list
-    const newDocuments = files.map((file, index) => ({
-      id: `new-${Date.now()}-${index}`,
-      filename: file.name,
-      status: 'processing',
-      created_at: new Date().toISOString(),
-    }));
-    
-    setDocuments(prev => [...prev, ...newDocuments]);
-    
-    // Simulate processing completion after some time
-    setTimeout(() => {
-      setDocuments(prev => 
-        prev.map(doc => 
-          doc.id.startsWith('new-') 
-            ? { ...doc, status: 'processed' } 
-            : doc
-        )
-      );
-    }, 3000);
+  const handleDocumentUpload = async (files: File[]) => {
+    try {
+      // Process each file individually to avoid issues with the backend
+      for (const file of files) {
+        // Create FormData for file upload
+        const formData = new FormData();
+        
+        // Add project ID to FormData
+        formData.append('project_id', projectId);
+        
+        // Add description if needed
+        formData.append('description', `Uploaded for project ${projectId}`);
+        
+        // Add file to FormData - IMPORTANT: The key must be 'file' to match the backend
+        formData.append('file', file);
+        
+        // Show processing state for new file
+        const tempDocument = {
+          id: `temp-${Date.now()}`,
+          filename: file.name,
+          status: 'processing',
+          created_at: new Date().toISOString(),
+        };
+        
+        setDocuments(prev => [...prev, tempDocument]);
+        
+        console.log(`Uploading file: ${file.name} for project: ${projectId}`);
+        console.log('FormData contents:');
+        // Log FormData contents without iterating through entries
+        console.log(`project_id: ${projectId}`);
+        console.log(`description: Uploaded for project ${projectId}`);
+        console.log(`file: ${file.name}`);
+        
+        // Use the API configuration instead of hardcoded URL
+        const uploadUrl = API_ENDPOINTS.DOCUMENTS.UPLOAD;
+        console.log(`Uploading to: ${uploadUrl}`);
+        
+        // Upload file to the API
+        console.log('Using fetch API to upload document');
+        const response = await fetch(uploadUrl, {
+          method: 'POST',
+          body: formData,
+          // Don't set Content-Type header for multipart/form-data
+          // The browser will set it automatically with the boundary
+        });
+        
+        // Log detailed information about the request
+        console.log('Upload request completed');
+        console.log('Response status:', response.status);
+        console.log('Response status text:', response.statusText);
+        
+        console.log(`Upload response status: ${response.status}`);
+        console.log(`Response headers:`, response.headers);
+        
+        // Get the response text first to debug
+        const responseText = await response.text();
+        console.log(`Response text: ${responseText}`);
+        
+        if (!response.ok) {
+          let errorDetail = `Failed to upload document (Status: ${response.status})`;
+          try {
+            // Try to parse the response text as JSON
+            if (responseText) {
+              const errorData = JSON.parse(responseText);
+              if (typeof errorData.detail === 'object') {
+                // Handle structured error response
+                errorDetail = errorData.detail.message || errorData.detail.error || errorDetail;
+                console.error('Structured error details:', errorData.detail);
+              } else {
+                errorDetail = errorData.detail || errorDetail;
+              }
+            }
+          } catch (e) {
+            console.error('Error parsing error response:', e);
+            // If we can't parse as JSON, use the response text directly
+            if (responseText) {
+              errorDetail += ` - ${responseText}`;
+            }
+          }
+          console.error('Upload error details:', errorDetail);
+          throw new Error(errorDetail);
+        }
+        
+        // Parse the response text as JSON
+        try {
+          console.log('Attempting to parse response text:', responseText);
+          
+          // Handle empty response
+          if (!responseText.trim()) {
+            console.error('Empty response received from server');
+            throw new Error('Empty response received from server');
+          }
+          
+          const uploadedDocument: Document = JSON.parse(responseText);
+          console.log('Uploaded document:', uploadedDocument);
+          
+          // Validate the document object
+          if (!uploadedDocument.id) {
+            console.error('Invalid document object received:', uploadedDocument);
+            throw new Error('Invalid document object received from server');
+          }
+          
+          // Replace temp document with actual uploaded document
+          setDocuments(prev => {
+            // Filter out the temp document for this file
+            const filteredDocs = prev.filter(doc => doc.id !== tempDocument.id);
+            // Add the newly uploaded document with proper date handling
+            return [...filteredDocs, {
+              ...uploadedDocument,
+              // Ensure created_at is a string (handle null or undefined)
+              created_at: uploadedDocument.created_at || new Date().toISOString()
+            }];
+          });
+        } catch (e) {
+          console.error('Error parsing success response:', e);
+          // Handle the TypeScript error by checking if e is an Error object
+          const errorMessage = e instanceof Error ? e.message : 'Unknown error';
+          throw new Error(`Failed to parse server response: ${errorMessage}`);
+        }
+      }
+    } catch (err) {
+      console.error('Error uploading documents:', err);
+      // Show error to user
+      alert(`Failed to upload documents: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      
+      // Remove temp documents on error
+      setDocuments(prev => prev.filter(doc => !doc.id.startsWith('temp-')));
+    }
   };
 
   // Handle document delete
-  const handleDocumentDelete = (documentId: string) => {
-    // In a real implementation, this would call the API to delete the document
-    // For now, just remove it from the documents list
-    setDocuments(prev => prev.filter(doc => doc.id !== documentId));
+  const handleDocumentDelete = async (documentId: string) => {
+    try {
+      // Call the API to delete the document
+      const response = await fetch(`/api/v1/documents/${documentId}`, {
+        method: 'DELETE',
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || 'Failed to delete document');
+      }
+      
+      // Remove the document from the list
+      setDocuments(prev => prev.filter(doc => doc.id !== documentId));
+    } catch (err) {
+      console.error('Error deleting document:', err);
+      // Show error to user
+      alert(`Failed to delete document: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
   };
 
   if (loading) {

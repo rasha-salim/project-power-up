@@ -160,7 +160,7 @@ export default function DocumentManager({
           </div>
         ) : (
           <ul className="divide-y divide-gray-200">
-            {documents.map((doc) => (
+            {Array.isArray(documents) && documents.map((doc) => (
               <li key={doc.id} className="px-4 py-4 sm:px-6 hover:bg-gray-50">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center">
