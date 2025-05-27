@@ -64,50 +64,99 @@ export default function NewProjectPage() {
         throw new Error('Project name is required');
       }
 
-      // In a real implementation, this would call the API to create the project
-      // For now, simulate API call with a delay
-      await simulateProjectCreation();
+      // Create the project via API
+      const projectData = {
+        name: formData.name,
+        description: formData.description,
+        status: 'draft',
+        metadata: {
+          goal: formData.goal,
+          deadline: formData.deadline,
+          team_size: formData.teamSize,
+          industry: formData.industry,
+          budget: formData.budget
+        }
+      };
 
-      // Simulate document upload if there are documents
+      const projectResponse = await fetch('/api/v1/projects', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(projectData),
+      });
+
+      if (!projectResponse.ok) {
+        const errorData = await projectResponse.json();
+        throw new Error(errorData.detail || 'Failed to create project');
+      }
+
+      const project = await projectResponse.json();
+      const projectId = project.id;
+
+      // Upload documents if there are any
       if (documents.length > 0) {
-        await simulateDocumentUpload();
+        await uploadDocuments(projectId);
       }
 
       // Redirect to the new project page
-      router.push('/projects/1'); // In a real implementation, this would use the actual project ID
+      router.push(`/projects/${projectId}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An unexpected error occurred');
       setLoading(false);
     }
   };
 
-  // Simulate project creation with a delay
-  const simulateProjectCreation = () => {
-    return new Promise<void>(resolve => {
-      setTimeout(() => {
-        resolve();
-      }, 1500);
-    });
-  };
+  // Upload documents to the API with progress tracking
+  const uploadDocuments = async (projectId: string) => {
+    setIsUploading(true);
+    setUploadProgress(0);
 
-  // Simulate document upload with progress
-  const simulateDocumentUpload = () => {
-    return new Promise<void>(resolve => {
-      setIsUploading(true);
-      setUploadProgress(0);
+    try {
+      // Create FormData for file upload
+      const formData = new FormData();
+      
+      // Add project ID to FormData
+      formData.append('project_id', projectId);
+      
+      // Add each file to FormData - IMPORTANT: The key must be 'file' to match the backend
+      // The backend expects 'file', not 'files'
+      documents.forEach(file => {
+        formData.append('file', file);
+      });
 
-      const interval = setInterval(() => {
-        setUploadProgress(prev => {
-          if (prev >= 100) {
-            clearInterval(interval);
+      // Use XMLHttpRequest for progress tracking
+      return new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        
+        xhr.upload.addEventListener('progress', (event) => {
+          if (event.lengthComputable) {
+            const percentComplete = Math.round((event.loaded / event.total) * 100);
+            setUploadProgress(percentComplete);
+          }
+        });
+        
+        xhr.addEventListener('load', () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
             setIsUploading(false);
             resolve();
-            return 100;
+          } else {
+            reject(new Error(`Upload failed with status ${xhr.status}`));
           }
-          return prev + 10;
         });
-      }, 300);
-    });
+        
+        xhr.addEventListener('error', () => {
+          reject(new Error('Upload failed'));
+        });
+        
+        // Use the correct endpoint for document upload
+        xhr.open('POST', '/api/v1/documents/upload');
+        xhr.send(formData);
+      });
+    } catch (err) {
+      setIsUploading(false);
+      throw err;
+    }
   };
 
   // Next step

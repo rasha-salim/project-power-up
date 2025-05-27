@@ -17,38 +17,46 @@ db_url = str(settings.DATABASE_URI)
 if db_url.startswith('sqlite'):
     # For SQLite, use the standard engine (not async)
     from sqlalchemy import create_engine
-    engine = create_engine(db_url, echo=True, connect_args={"check_same_thread": False})
+    sync_engine = create_engine(db_url, echo=True, connect_args={"check_same_thread": False})
     # Use standard session instead of async for SQLite
     from sqlalchemy.orm import sessionmaker as standard_sessionmaker
-    SessionLocal = standard_sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    SyncSessionLocal = standard_sessionmaker(autocommit=False, autoflush=False, bind=sync_engine)
     is_async = False
 else:
     # For PostgreSQL, use async engine
     async_db_url = db_url.replace('postgresql://', 'postgresql+asyncpg://')
-    engine = create_async_engine(async_db_url, echo=True)
+    async_engine = create_async_engine(async_db_url, echo=True)
     # Use async session for PostgreSQL
-    SessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    AsyncSessionLocal = sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
     is_async = True
 
 # ChromaDB setup
 chroma_client = None
 
-async def get_db():
-    """Dependency for getting database session (works with both sync and async)"""
-    if is_async:
-        # For PostgreSQL (async)
-        async with SessionLocal() as session:
-            try:
-                yield session
-            finally:
-                await session.close()
-    else:
-        # For SQLite (sync)
-        session = SessionLocal()
+# Create two separate dependency functions for sync and async DB access
+def get_sync_db():
+    """Dependency for getting synchronous database session"""
+    session = SyncSessionLocal()
+    try:
+        yield session
+    finally:
+        session.close()
+
+async def get_async_db():
+    """Dependency for getting asynchronous database session"""
+    async with AsyncSessionLocal() as session:
         try:
             yield session
         finally:
-            session.close()
+            await session.close()
+
+# Main dependency function that returns the appropriate DB session based on database type
+def get_db():
+    """Main dependency function that returns the appropriate DB session"""
+    if is_async:
+        return get_async_db
+    else:
+        return get_sync_db
 
 def get_chroma_client():
     """Get ChromaDB client for vector storage"""
@@ -62,30 +70,28 @@ def get_chroma_client():
 async def init_db():
     """Initialize database connections and create tables"""
     try:
-        # Create all tables
+        # Create tables if they don't exist
         if is_async:
-            # For PostgreSQL (async)
-            async with engine.begin() as conn:
+            async with async_engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
         else:
-            # For SQLite (sync)
-            Base.metadata.create_all(bind=engine)
+            Base.metadata.create_all(bind=sync_engine)
+        
         logger.info("Database tables created successfully")
         
-        # Initialize ChromaDB collections
-        client = get_chroma_client()
+        # Initialize ChromaDB
+        global chroma_client
+        chroma_client = get_chroma_client()
+        
         # Create collections if they don't exist
-        try:
-            client.get_or_create_collection("documents")
-            client.get_or_create_collection("project_insights")
-            logger.info("ChromaDB collections initialized successfully")
-        except Exception as e:
-            logger.error(f"Error initializing ChromaDB collections: {e}")
-            
-        # Create upload directory if it doesn't exist
-        os.makedirs(settings.UPLOAD_DIRECTORY, exist_ok=True)
-        logger.info(f"Upload directory created at {settings.UPLOAD_DIRECTORY}")
+        chroma_client.get_or_create_collection("documents")
+        chroma_client.get_or_create_collection("projects")
+        logger.info("ChromaDB collections initialized successfully")
+        
+        # Create uploads directory if it doesn't exist
+        os.makedirs("./uploads", exist_ok=True)
+        logger.info("Upload directory created at ./uploads")
         
     except Exception as e:
-        logger.error(f"Error initializing database: {e}")
+        logger.error(f"Error initializing database: {str(e)}")
         raise
