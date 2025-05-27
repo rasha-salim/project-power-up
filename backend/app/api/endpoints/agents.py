@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Dict, Any, Optional
 import logging
-from app.db.init_db import get_db
+from app.db.init_db_simple import get_async_db
 from app.services.agent_service import AgentService
 from app.models.agent import AgentResponse, AgentTask
 
@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 @router.get("/status", response_model=List[AgentResponse])
 async def get_agents_status(
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """
     Get the status of all AI agents
@@ -39,7 +39,7 @@ async def get_agents_status(
 async def create_agent_task(
     background_tasks: BackgroundTasks,
     task: AgentTask,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """
     Create a new task for an AI agent
@@ -79,7 +79,7 @@ async def create_agent_task(
 @router.get("/task/{task_id}", response_model=Dict[str, Any])
 async def get_task_result(
     task_id: str,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """
     Get the result of an agent task
@@ -103,7 +103,7 @@ async def get_task_result(
 async def start_crew_analysis(
     project_id: str,
     background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """
     Start a full crew analysis for a project
@@ -139,7 +139,7 @@ async def start_crew_analysis(
 @router.get("/crew/analysis/{analysis_id}", response_model=Dict[str, Any])
 async def get_analysis_status(
     analysis_id: str,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """
     Get the status and results of a crew analysis

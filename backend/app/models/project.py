@@ -5,9 +5,9 @@ import uuid
 from sqlalchemy import Column, String, Text, DateTime, JSON
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.ext.declarative import declarative_base
 
-Base = declarative_base()
+# Import the centralized Base class
+from app.db.base.base_class import Base
 
 class Project(Base):
     """SQLAlchemy Project model"""

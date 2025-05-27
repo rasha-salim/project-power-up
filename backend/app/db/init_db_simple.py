@@ -1,17 +1,15 @@
+"""
+Simplified database initialization module
+"""
 import os
 import logging
 from typing import AsyncGenerator, Generator
 import chromadb
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from app.core.config import settings
-
-# Import the Base class for SQLAlchemy models
 from app.db.base.base_class import Base
-
-# Import all models to ensure they are registered with the Base metadata
-from app.models.project import Project
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -21,49 +19,28 @@ logger = logging.getLogger(__name__)
 db_url = str(settings.DATABASE_URI)
 logger.info(f"Database URL from settings: {db_url}")
 
-# Configure the engine based on database type
-if db_url.startswith('sqlite'):
-    # For SQLite, use the standard engine (not async)
-    from sqlalchemy import create_engine
-    sync_engine = create_engine(db_url, echo=True, connect_args={"check_same_thread": False})
-    # Use standard session instead of async for SQLite
-    from sqlalchemy.orm import sessionmaker as standard_sessionmaker
-    SyncSessionLocal = standard_sessionmaker(autocommit=False, autoflush=False, bind=sync_engine)
-    is_async = False
-    logger.info("Using SQLite database with synchronous engine")
-else:
-    # For PostgreSQL, use async engine
-    async_db_url = db_url.replace('postgresql://', 'postgresql+asyncpg://')
-    logger.info(f"Using PostgreSQL with async engine: {async_db_url}")
-    
-    # Create the async engine with proper connection arguments
-    async_engine = create_async_engine(
-        async_db_url,
-        echo=True,
-        pool_size=5,
-        max_overflow=10,
-        pool_timeout=30,
-        pool_recycle=1800
-    )
-    
-    # Use async session for PostgreSQL
-    AsyncSessionLocal = sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
-    is_async = True
-    logger.info("PostgreSQL async engine and session factory created")
+# For PostgreSQL, use async engine
+async_db_url = db_url.replace('postgresql://', 'postgresql+asyncpg://')
+logger.info(f"Using PostgreSQL with async engine: {async_db_url}")
+
+# Create the async engine with proper connection arguments
+async_engine = create_async_engine(
+    async_db_url,
+    echo=True,
+    pool_size=5,
+    max_overflow=10,
+    pool_timeout=30,
+    pool_recycle=1800
+)
+
+# Use async session for PostgreSQL
+AsyncSessionLocal = sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
+logger.info("PostgreSQL async engine and session factory created")
 
 # ChromaDB setup
 chroma_client = None
 
-# Create two separate dependency functions for sync and async DB access
-def get_sync_db():
-    """Dependency for getting synchronous database session"""
-    session = SyncSessionLocal()
-    try:
-        yield session
-    finally:
-        session.close()
-
-async def get_async_db():
+async def get_async_db() -> AsyncGenerator[AsyncSession, None]:
     """Dependency for getting asynchronous database session"""
     logger.debug("Creating new async database session")
     try:
@@ -75,15 +52,6 @@ async def get_async_db():
         raise
     finally:
         logger.debug("Async database session closed")
-
-# Main dependency function that returns the appropriate DB session based on database type
-def get_db():
-    """Main dependency function that returns the appropriate DB session"""
-    # This function should directly yield the session, not return another function
-    if is_async:
-        return get_async_db()
-    else:
-        return get_sync_db()
 
 # Mock ChromaDB Collection class
 class MockChromaCollection:
@@ -160,27 +128,8 @@ def get_chroma_client():
 async def init_db():
     """Initialize database connections and create tables"""
     try:
-        # Check if tables exist before creating them
-        logger.info("Checking if tables exist and creating them if needed")
-        
-        # Import all models to ensure they are registered with Base.metadata
-        from app.models.project import Project
-        
-        # Log the tables that will be created
-        table_names = [table.name for table in Base.metadata.sorted_tables]
-        logger.info(f"Tables to be created/checked: {table_names}")
-        
-        # Create tables if they don't exist
-        if is_async:
-            logger.info("Using async engine to create tables")
-            async with async_engine.begin() as conn:
-                # Create tables without dropping existing ones
-                await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, checkfirst=True))
-        else:
-            logger.info("Using sync engine to create tables")
-            Base.metadata.create_all(bind=sync_engine, checkfirst=True)
-        
-        logger.info("Database tables created or verified successfully")
+        # We're connecting to an existing database, so we don't need to create tables
+        logger.info("Using existing PostgreSQL database tables")
         
         # Initialize mock ChromaDB client
         global chroma_client

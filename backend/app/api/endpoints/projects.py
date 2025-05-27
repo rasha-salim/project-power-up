@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Optional
 import logging
 import uuid
-from app.db.init_db import get_db
+from app.db.init_db_simple import get_async_db
 from app.models.project import Project, ProjectCreate, ProjectUpdate, ProjectResponse
 from app.services.project_service import ProjectService
 
@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 @router.post("/", response_model=ProjectResponse)
 async def create_project(
     project_create: ProjectCreate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """
     Create a new project
@@ -39,7 +39,7 @@ async def create_project(
 @router.get("/{project_id}", response_model=ProjectResponse)
 async def get_project(
     project_id: str,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """
     Get project details by ID
@@ -69,7 +69,7 @@ async def get_project(
 
 @router.get("/", response_model=List[ProjectResponse])
 async def list_projects(
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """
     List all projects
@@ -98,7 +98,7 @@ async def list_projects(
 async def update_project(
     project_id: str,
     project_update: ProjectUpdate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """
     Update a project by ID
@@ -131,7 +131,7 @@ async def update_project(
 @router.delete("/{project_id}", response_model=ProjectResponse)
 async def delete_project(
     project_id: str,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """
     Delete a project by ID
@@ -161,7 +161,7 @@ async def delete_project(
 @router.post("/{project_id}/analyze", response_model=ProjectResponse)
 async def analyze_project(
     project_id: str,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_async_db)
 ):
     """
     Trigger AI agent analysis for a project

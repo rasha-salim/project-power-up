@@ -297,7 +297,7 @@ class AgentService:
                 agents=[technical_agent, risk_agent, planning_agent],
                 tasks=[technical_task, risk_task, planning_task],
                 verbose=crew_config.get("verbose", True),
-                process=Process.sequential,  # Execute tasks in sequence
+                process=crew_config.get("process", Process.sequential),  # Execute tasks in sequence
                 memory=crew_config.get("memory", False)
             )
             
@@ -342,13 +342,27 @@ class AgentService:
             }
             
             # Store the results
+            logger.info("Creating ProjectService instance")
             project_service = ProjectService()
-            await project_service.store_project_insights(db, project_id, result)
+            
+            logger.info("Calling store_project_insights")
+            try:
+                await project_service.store_project_insights(db, project_id, result)
+                logger.info("Successfully stored project insights")
+            except Exception as store_error:
+                logger.error(f"Error storing project insights: {str(store_error)}")
+                logger.error(f"Error type: {type(store_error)}")
+                import traceback
+                logger.error(f"Traceback: {traceback.format_exc()}")
+                raise
             
             logger.info(f"Completed crew analysis {analysis_id} for project {project_id}")
             
         except Exception as e:
             logger.error(f"Error executing crew analysis {analysis_id}: {str(e)}")
+            logger.error(f"Error type: {type(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             # In a real implementation, this would update the analysis status to error
     
     async def get_analysis_status(self, db: AsyncSession, analysis_id: str) -> Optional[Dict[str, Any]]:

@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document Upload Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input, button, select, textarea {
+            padding: 8px;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        #response {
+            margin-top: 20px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            background-color: #f9f9f9;
+            white-space: pre-wrap;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .debug-info {
+            margin-top: 20px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            background-color: #f0f8ff;
+        }
+        .tabs {
+            display: flex;
+            margin-bottom: 10px;
+        }
+        .tab {
+            padding: 10px 15px;
+            cursor: pointer;
+            border: 1px solid #ddd;
+            background-color: #f1f1f1;
+            margin-right: 5px;
+        }
+        .tab.active {
+            background-color: #4CAF50;
+            color: white;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <h1>Document Upload Test</h1>
+    
+    <div class="tabs">
+        <div class="tab active" data-tab="upload-form">Upload Form</div>
+        <div class="tab" data-tab="project-list">Project List</div>
+        <div class="tab" data-tab="document-list">Document List</div>
+    </div>
+    
+    <div id="upload-form" class="tab-content active">
+        <form id="uploadForm">
+            <div class="form-group">
+                <label for="file">Select File:</label>
+                <input type="file" id="file" name="file" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="project_id">Project ID:</label>
+                <input type="text" id="project_id" name="project_id" placeholder="Enter project ID">
+                <button type="button" id="getProjects">Get Projects</button>
+            </div>
+            
+            <div class="form-group">
+                <label for="description">Description:</label>
+                <input type="text" id="description" name="description" placeholder="Enter description">
+            </div>
+            
+            <div class="form-group">
+                <label for="server">Server:</label>
+                <select id="server" name="server">
+                    <option value="http://localhost:8000/api/v1/documents/upload">Main Server (8000)</option>
+                </select>
+            </div>
+            
+            <button type="submit">Upload</button>
+        </form>
+        
+        <div class="debug-info">
+            <h3>Debug Information</h3>
+            <div id="debug-info">No debug information yet</div>
+        </div>
+        
+        <div>
+            <h2>Response:</h2>
+            <pre id="response">No response yet</pre>
+        </div>
+    </div>
+    
+    <div id="project-list" class="tab-content">
+        <h2>Projects</h2>
+        <button id="refreshProjects">Refresh Projects</button>
+        <div id="projects-container">Loading projects...</div>
+    </div>
+    
+    <div id="document-list" class="tab-content">
+        <h2>Documents</h2>
+        <div class="form-group">
+            <label for="project_id_docs">Project ID:</label>
+            <input type="text" id="project_id_docs" name="project_id_docs" placeholder="Enter project ID">
+            <button id="getDocuments">Get Documents</button>
+        </div>
+        <div id="documents-container">Select a project ID and click "Get Documents"</div>
+    </div>
+    
+    <script>
+        // Tab functionality
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.addEventListener('click', function() {
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                
+                this.classList.add('active');
+                document.getElementById(this.dataset.tab).classList.add('active');
+            });
+        });
+        
+        // Get projects
+        async function fetchProjects() {
+            const projectsContainer = document.getElementById('projects-container');
+            projectsContainer.innerHTML = 'Loading projects...';
+            
+            try {
+                const response = await fetch('http://localhost:8000/api/v1/projects');
+                const projects = await response.json();
+                
+                if (projects && projects.length > 0) {
+                    let html = '<table border="1" style="width:100%; border-collapse: collapse;">';
+                    html += '<tr><th>ID</th><th>Name</th><th>Status</th><th>Actions</th></tr>';
+                    
+                    projects.forEach(project => {
+                        html += `<tr>
+                            <td>${project.id}</td>
+                            <td>${project.name}</td>
+                            <td>${project.status}</td>
+                            <td>
+                                <button onclick="useProjectId('${project.id}')">Use ID</button>
+                                <button onclick="getProjectDocuments('${project.id}')">View Docs</button>
+                            </td>
+                        </tr>`;
+                    });
+                    
+                    html += '</table>';
+                    projectsContainer.innerHTML = html;
+                } else {
+                    projectsContainer.innerHTML = 'No projects found';
+                }
+            } catch (error) {
+                projectsContainer.innerHTML = `Error loading projects: ${error.message}`;
+            }
+        }
+        
+        // Get documents for a project
+        async function fetchDocuments(projectId) {
+            const documentsContainer = document.getElementById('documents-container');
+            documentsContainer.innerHTML = `Loading documents for project ${projectId}...`;
+            
+            try {
+                const response = await fetch(`http://localhost:8000/api/v1/documents/project/${projectId}`);
+                const responseText = await response.text();
+                
+                try {
+                    const documents = JSON.parse(responseText);
+                    
+                    if (documents && documents.length > 0) {
+                        let html = '<table border="1" style="width:100%; border-collapse: collapse;">';
+                        html += '<tr><th>ID</th><th>Filename</th><th>Status</th><th>Created At</th></tr>';
+                        
+                        documents.forEach(doc => {
+                            html += `<tr>
+                                <td>${doc.id}</td>
+                                <td>${doc.filename}</td>
+                                <td>${doc.status}</td>
+                                <td>${doc.created_at}</td>
+                            </tr>`;
+                        });
+                        
+                        html += '</table>';
+                        documentsContainer.innerHTML = html;
+                    } else {
+                        documentsContainer.innerHTML = 'No documents found for this project';
+                    }
+                } catch (e) {
+                    documentsContainer.innerHTML = `Error parsing response: ${e.message}<br><br>Raw response: ${responseText}`;
+                }
+            } catch (error) {
+                documentsContainer.innerHTML = `Error loading documents: ${error.message}`;
+            }
+        }
+        
+        // Use project ID
+        function useProjectId(projectId) {
+            document.getElementById('project_id').value = projectId;
+            document.getElementById('project_id_docs').value = projectId;
+            
+            // Switch to upload tab
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            document.querySelector('.tab[data-tab="upload-form"]').classList.add('active');
+            document.getElementById('upload-form').classList.add('active');
+        }
+        
+        // Get project documents
+        function getProjectDocuments(projectId) {
+            document.getElementById('project_id_docs').value = projectId;
+            fetchDocuments(projectId);
+            
+            // Switch to documents tab
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            document.querySelector('.tab[data-tab="document-list"]').classList.add('active');
+            document.getElementById('document-list').classList.add('active');
+        }
+        
+        // Upload form submission
+        document.getElementById('uploadForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const fileInput = document.getElementById('file');
+            const projectId = document.getElementById('project_id').value;
+            const description = document.getElementById('description').value;
+            const server = document.getElementById('server').value;
+            const responseElement = document.getElementById('response');
+            const debugInfo = document.getElementById('debug-info');
+            
+            if (!fileInput.files[0]) {
+                responseElement.textContent = 'Please select a file';
+                return;
+            }
+            
+            if (!projectId) {
+                responseElement.textContent = 'Please enter a project ID';
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+            formData.append('project_id', projectId);
+            
+            if (description) {
+                formData.append('description', description);
+            } else {
+                formData.append('description', `Uploaded for project ${projectId}`);
+            }
+            
+            // Show debug info
+            let debugText = 'FormData contents:\n';
+            debugText += `- file: ${fileInput.files[0].name} (${fileInput.files[0].type}, ${fileInput.files[0].size} bytes)\n`;
+            debugText += `- project_id: ${projectId}\n`;
+            debugText += `- description: ${description || `Uploaded for project ${projectId}`}\n`;
+            debugText += `\nUploading to: ${server}`;
+            debugInfo.textContent = debugText;
+            
+            try {
+                responseElement.textContent = `Uploading to ${server}...`;
+                
+                const response = await fetch(server, {
+                    method: 'POST',
+                    body: formData,
+                });
+                
+                const responseText = await response.text();
+                responseElement.textContent = `Status: ${response.status}\n\n`;
+                
+                try {
+                    const responseData = JSON.parse(responseText);
+                    responseElement.textContent += JSON.stringify(responseData, null, 2);
+                } catch (e) {
+                    responseElement.textContent += responseText;
+                }
+                
+                if (!response.ok) {
+                    throw new Error(`Upload failed with status ${response.status}`);
+                } else {
+                    // Refresh documents if upload was successful
+                    fetchDocuments(projectId);
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                responseElement.textContent += `\n\nError: ${error.message}`;
+            }
+        });
+        
+        // Event listeners
+        document.getElementById('getProjects').addEventListener('click', fetchProjects);
+        document.getElementById('refreshProjects').addEventListener('click', fetchProjects);
+        document.getElementById('getDocuments').addEventListener('click', function() {
+            const projectId = document.getElementById('project_id_docs').value;
+            if (projectId) {
+                fetchDocuments(projectId);
+            } else {
+                document.getElementById('documents-container').innerHTML = 'Please enter a project ID';
+            }
+        });
+        
+        // Initialize
+        fetchProjects();
+    </script>
+</body>
+</html>

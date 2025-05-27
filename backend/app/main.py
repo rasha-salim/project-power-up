@@ -5,13 +5,16 @@ import uvicorn
 import logging
 from app.core.config import settings
 from app.api.routes import api_router
-from app.db.init_db import init_db
+from app.db.init_db_simple import init_db
 from app.db.connection_pool import initialize_pool, close_pool
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.StreamHandler()
+    ]
 )
 logger = logging.getLogger(__name__)
 
@@ -21,10 +24,10 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# Set up CORS middleware
+# Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
+    allow_origins=["*"],  # For development - restrict in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

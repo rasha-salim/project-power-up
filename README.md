@@ -149,4 +149,28 @@ All agents, tasks, and crews are defined in YAML configuration files, allowing f
    - Export functionality
    - Polished UI that showcases the AI insights
 
+## Future Roadmap
+
+The following features are planned for future iterations:
+
+1. **Agent Memory System** (Phase 4)
+   - Persistent conversation history between sessions
+   - Context-aware agents that remember previous interactions
+   - Versioned project insights to track evolution over time
+   - Session management for pausing and resuming analyses
+
+2. **Enhanced Personalization** (Phase 5)
+   - User preference tracking and adaptation
+   - Project lead-specific communication styles
+   - Learning from feedback to improve future analyses
+   - Customizable insight presentation
+
+3. **Advanced Analysis Features** (Phase 6)
+   - Incremental analysis updates (vs. full re-analysis)
+   - Comparative analysis between versions
+   - Deeper integration with project management tools
+   - Extended document understanding capabilities
+
+These planned enhancements will build upon the core functionality while maintaining the system's focus on human-AI collaboration and actionable insights.
+
 ## License

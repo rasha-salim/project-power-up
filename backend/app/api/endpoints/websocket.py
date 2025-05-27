@@ -4,7 +4,7 @@ import logging
 import json
 from typing import Dict, List, Any
 import asyncio
-from app.db.init_db import get_db
+from app.db.init_db_simple import get_async_db
 from app.services.websocket_manager import WebSocketManager
 from app.services.agent_service import AgentService
 

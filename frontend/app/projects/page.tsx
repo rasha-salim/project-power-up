@@ -24,46 +24,27 @@ export default function ProjectsPage() {
   useEffect(() => {
     const fetchProjects = async () => {
       try {
-        // In a real implementation, this would fetch from the API
-        // const response = await fetch('/api/v1/projects');
-        // const data = await response.json();
+        // Fetch projects from the API
+        const response = await fetch('/api/v1/projects');
         
-        // For now, use mock data
-        const mockProjects = [
-          {
-            id: '1',
-            name: 'E-Commerce Platform Redesign',
-            description: 'Redesign the company\'s e-commerce platform with improved UX and mobile responsiveness.',
-            status: 'completed',
-            created_at: '2025-05-01T10:00:00Z',
-            updated_at: '2025-05-20T15:30:00Z',
-            document_count: 5
-          },
-          {
-            id: '2',
-            name: 'Mobile App Development',
-            description: 'Develop a new mobile app for both iOS and Android platforms with offline capabilities.',
-            status: 'analyzing',
-            created_at: '2025-05-10T09:15:00Z',
-            updated_at: '2025-05-22T11:45:00Z',
-            document_count: 3
-          },
-          {
-            id: '3',
-            name: 'Cloud Migration Strategy',
-            description: 'Plan and execute the migration of on-premise systems to cloud infrastructure.',
-            status: 'draft',
-            created_at: '2025-05-15T14:20:00Z',
-            updated_at: '2025-05-15T14:20:00Z',
-            document_count: 2
-          },
-        ];
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.detail || 'Failed to load projects');
+        }
         
-        setProjects(mockProjects);
+        const data = await response.json();
+        
+        // Add document count if available, or default to 0
+        const projectsWithDocCount = data.map((project: any) => ({
+          ...project,
+          document_count: project.document_count || 0
+        }));
+        
+        setProjects(projectsWithDocCount);
         setLoading(false);
-      } catch (err) {
+      } catch (err: any) {
         console.error('Error fetching projects:', err);
-        setError('Failed to load projects. Please try again later.');
+        setError(err.message || 'Failed to load projects. Please try again later.');
         setLoading(false);
       }
     };

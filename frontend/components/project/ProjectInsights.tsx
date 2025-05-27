@@ -22,61 +22,78 @@ export default function ProjectInsights({ projectId, projectStatus }: ProjectIns
   // Fetch project insights
   useEffect(() => {
     const fetchInsights = async () => {
-      // Only fetch insights if project analysis is completed
-      if (projectStatus !== 'completed') {
+      // Only fetch insights if project analysis is completed or in progress
+      if (projectStatus === 'draft') {
         setLoading(false);
         return;
       }
 
       try {
-        // In a real implementation, this would fetch from the API
-        // const response = await fetch(`/api/v1/projects/${projectId}/insights`);
-        // const data = await response.json();
+        // Fetch insights from the API
+        const response = await fetch(`/api/v1/projects/${projectId}/insights`);
         
-        // For now, use mock data
-        // This would be replaced with actual data from the AI agents
-        const mockInsights = {
-          technical_analysis: {
-            architecture: "Cloud-based architecture with React frontend and Node.js microservices backend",
-            tech_stack: "React, Next.js, Node.js, Express, PostgreSQL, MongoDB, Docker, Kubernetes",
-            feasibility: "The project is technically feasible with the proposed architecture"
-          },
-          risk_assessment: {
-            key_risks: [
-              "Integration complexity between microservices",
-              "Scalability challenges during peak usage",
-              "Security concerns with multiple services",
-              "Timeline risk due to specialized skill requirements"
-            ],
-            mitigation_strategies: [
-              "Implement comprehensive API documentation",
-              "Set up auto-scaling and perform load testing",
-              "Regular security audits and zero-trust architecture",
-              "Early hiring or training for key technical roles"
-            ]
-          },
-          project_plan: {
-            timeline: "16 weeks total development time",
-            milestones: [
-              "Week 4: Architecture design complete",
-              "Week 8: Core functionality implemented",
-              "Week 12: Feature complete, testing begins",
-              "Week 16: Production deployment"
-            ],
-            resource_requirements: "2 Frontend Developers, 3 Backend Developers, 1 DevOps Engineer, 1 QA Engineer, 1 Project Manager"
-          }
-        };
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.detail || 'Failed to load insights');
+        }
         
-        setInsights(mockInsights);
+        const data = await response.json();
+        
+        // If analysis is still in progress
+        if (data.status === 'analyzing' || data.status === 'not_started') {
+          setLoading(false);
+          return;
+        }
+        
+        // If we have insights, set them
+        if (data.status === 'completed' && data.insights) {
+          setInsights(data.insights);
+        } else {
+          // If no insights but status is completed, something went wrong
+          setError('No insights available. The analysis may have encountered an error.');
+        }
+        
         setLoading(false);
       } catch (err) {
         console.error('Error fetching project insights:', err);
-        setError('Failed to load project insights. Please try again later.');
+        setError(err instanceof Error ? err.message : 'Failed to load project insights. Please try again later.');
         setLoading(false);
       }
     };
 
     fetchInsights();
+    
+    // If project is analyzing, set up polling to check for completion
+    let pollInterval: NodeJS.Timeout | null = null;
+    
+    if (projectStatus === 'analyzing') {
+      pollInterval = setInterval(async () => {
+        try {
+          const response = await fetch(`/api/v1/projects/${projectId}/insights`);
+          
+          if (!response.ok) {
+            console.error('Error polling for insights, will retry');
+            return;
+          }
+          
+          const data = await response.json();
+          
+          // If analysis is complete, update insights
+          if (data.status === 'completed' && data.insights) {
+            setInsights(data.insights);
+            setLoading(false);
+            if (pollInterval) clearInterval(pollInterval);
+          }
+        } catch (err) {
+          console.error('Error polling for insights:', err);
+        }
+      }, 5000); // Poll every 5 seconds
+    }
+    
+    // Clean up interval on unmount
+    return () => {
+      if (pollInterval) clearInterval(pollInterval);
+    };
   }, [projectId, projectStatus]);
 
   if (projectStatus !== 'completed') {
