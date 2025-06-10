@@ -92,6 +92,30 @@ export default function ProjectDetailPage() {
       // Ensure data is an array
       const documentsData = Array.isArray(data) ? data : [];
       console.log('Documents loaded:', documentsData.length);
+      
+      // Log all document filenames to check for duplicates
+      const filenames = documentsData.map(doc => doc.filename);
+      console.log('DIAGNOSTIC - All document filenames:', filenames);
+      
+      // Check for duplicate filenames
+      const filenameCounts: Record<string, number> = {};
+      filenames.forEach(filename => {
+        if (filename) {
+          filenameCounts[filename] = (filenameCounts[filename] || 0) + 1;
+        }
+      });
+      
+      // Log any duplicates found
+      const duplicates = Object.entries(filenameCounts)
+        .filter(([_, count]) => count > 1)
+        .map(([filename, count]) => `${filename} (${count} copies)`);
+      
+      if (duplicates.length > 0) {
+        console.warn('DIAGNOSTIC - DUPLICATE DOCUMENTS DETECTED:', duplicates);
+      } else {
+        console.log('DIAGNOSTIC - No duplicate documents found');
+      }
+      
       console.log('Document data sample:', documentsData.length > 0 ? documentsData[0] : 'No documents');
       
       // Update documents state, ensuring no duplicates by using document IDs
@@ -278,108 +302,89 @@ export default function ProjectDetailPage() {
       return;
     }
     
-    console.log('DIAGNOSTIC: handleDocumentUpload called with', files.length, 'files');
-    files.forEach((file, index) => {
-      console.log(`DIAGNOSTIC: File ${index + 1}:`, file.name, file.size, file.type);
-    });
-    
-    // Create temporary documents for all files upfront with unique IDs
-    const timestamp = Date.now();
-    const tempDocuments = files.map((file, index) => ({
-      id: `temp-${timestamp}-${index}-${Math.random().toString(36).substring(2, 9)}`,
-      filename: file.name,
-      status: 'processing',
-      progress: '0',
-      created_at: new Date().toISOString(),
-    }));
-    console.log('DIAGNOSTIC: Created temp documents:', tempDocuments);
+    console.log('handleDocumentUpload: Processing', files.length, 'files');
     
     // Create a map of existing filenames to avoid adding duplicates
     const existingFilenames = new Set(documents.map(doc => doc.filename));
-    console.log('DIAGNOSTIC: Existing filenames:', Array.from(existingFilenames));
+    console.log('Existing filenames:', Array.from(existingFilenames));
     
     // Filter out any files that already exist in the documents state
     const uniqueFiles = files.filter(file => !existingFilenames.has(file.name));
-    const uniqueTempDocs = tempDocuments.filter(doc => !existingFilenames.has(doc.filename));
-    
-    console.log('DIAGNOSTIC: Unique files after filtering:', uniqueFiles.length);
-    console.log('DIAGNOSTIC: Unique temp docs after filtering:', uniqueTempDocs.length);
+    console.log('Unique files after filtering:', uniqueFiles.length);
     
     if (uniqueFiles.length === 0) {
       alert('All selected files have already been uploaded.');
       return;
     }
     
-    // Add unique temp documents to state
-    setDocuments(prev => [...prev, ...uniqueTempDocs]);
-    console.log('DIAGNOSTIC: Added temp documents to state');
+    // Create temporary documents for unique files with unique IDs
+    const timestamp = Date.now();
+    const tempDocuments = uniqueFiles.map((file, index) => ({
+      id: `temp-${timestamp}-${index}-${Math.random().toString(36).substring(2, 9)}`,
+      filename: file.name,
+      status: 'processing',
+      progress: '0',
+      created_at: new Date().toISOString(),
+    }));
     
-    console.log(`Processing ${uniqueFiles.length} unique files for upload`);
+    // Create a mapping of filenames to temp document IDs for later reference
+    const filenameToTempId: Record<string, string> = {};
+    tempDocuments.forEach(doc => {
+      filenameToTempId[doc.filename] = doc.id;
+    });
+    
+    // Add temp documents to state
+    setDocuments(prev => [...prev, ...tempDocuments]);
+    console.log('Added temp documents to state:', tempDocuments.length);
     
     try {
-      // Use the new multiple file upload function
-      // Create a mapping of filenames to temp document IDs for later reference
-      const filenameToTempId: Record<string, string> = {};
-      uniqueTempDocs.forEach(doc => {
-        filenameToTempId[doc.filename] = doc.id;
-      });
+      // Upload all unique files at once
+      console.log('Uploading files:', uniqueFiles.map(f => f.name));
+      const result = await uploadMultipleFiles(
+        uniqueFiles,
+        projectId,
+        `Uploaded for project ${projectId}`
+      );
       
-      try {
-        // Upload all files at once
-        const result = await uploadMultipleFiles(
-          uniqueFiles,
-          projectId,
-          `Uploaded for project ${projectId}`
-        );
+      if (result && result.documents) {
+        const uploadedDocuments = result.documents;
+        console.log('Upload successful, received', uploadedDocuments.length, 'documents');
         
-        if (result && result.documents) {
-          // Update documents state with the uploaded documents
-          const uploadedDocuments = result.documents;
+        // Replace temp documents with actual ones
+        setDocuments(prev => {
+          const updatedDocs = [...prev];
           
-          // Replace temp documents with actual ones
-          setDocuments(prev => {
-            const updatedDocs = [...prev];
-            
-            // For each uploaded document, find and replace its temp version
-            uploadedDocuments.forEach((uploadedDoc: any) => {
-              if (uploadedDoc.filename && filenameToTempId[uploadedDoc.filename]) {
-                const tempId = filenameToTempId[uploadedDoc.filename];
-                const tempIndex = updatedDocs.findIndex(doc => doc.id === tempId);
-                if (tempIndex !== -1) {
-                  // Add progress field if not present
-                  if (!uploadedDoc.progress) {
-                    uploadedDoc.progress = '0';
-                  }
-                  updatedDocs[tempIndex] = uploadedDoc;
+          // For each uploaded document, find and replace its temp version
+          uploadedDocuments.forEach((uploadedDoc: any) => {
+            if (uploadedDoc.filename && filenameToTempId[uploadedDoc.filename]) {
+              const tempId = filenameToTempId[uploadedDoc.filename];
+              const tempIndex = updatedDocs.findIndex(doc => doc.id === tempId);
+              if (tempIndex !== -1) {
+                // Add progress field if not present
+                if (!uploadedDoc.progress) {
+                  uploadedDoc.progress = '0';
                 }
+                updatedDocs[tempIndex] = uploadedDoc;
               }
-            });
-            
-            return updatedDocs;
+            }
           });
           
-          console.log(`Upload complete: ${uploadedDocuments.length} files uploaded successfully`);
-        }
-      } catch (error: unknown) {
-        console.error('Error in multiple file upload:', error);
+          return updatedDocs;
+        });
         
-        // Update all temp documents with error status
-        setDocuments(prev => prev.map(doc => 
-          uniqueTempDocs.some(tempDoc => tempDoc.id === doc.id) 
-            ? { ...doc, status: 'error', message: error instanceof Error ? error.message : 'Unknown error' } 
-            : doc
-        ));
+        // Wait a moment before refreshing documents to ensure state is updated
+        setTimeout(() => {
+          fetchDocuments();
+        }, 500);
       }
-      
-      // Refresh the document list to ensure we have the latest data
-      fetchDocuments();
-      
-    } catch (err) {
-      console.error('Unexpected error during document upload:', err);
-      alert(`Failed to upload documents: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    } catch (error: unknown) {
+      console.error('Error in multiple file upload:', error);
       
       // Remove temp documents on error
-      setDocuments(prev => prev.filter(doc => !uniqueTempDocs.some(tempDoc => tempDoc.id === doc.id)));
+      setDocuments(prev => prev.filter(doc => !tempDocuments.some(tempDoc => tempDoc.id === doc.id)));
+      
+      // Show error message to user
+      alert(`Upload failed: ${error instanceof Error ? error.message : 'Unknown error'}. Please try again.`);
     }
   };
 

@@ -50,21 +50,37 @@ async def upload_document(
     Uses SQLAlchemy for database access.
     """
     try:
-        logger.info(f"Upload endpoint called with project_id: {project_id}")
+        logger.info(f"DIAGNOSTIC - Upload endpoint called with project_id: {project_id}")
         
         # Check if we received a list of files or a single file
         if isinstance(file, list):
-            logger.info(f"Multiple files received: {len(file)} files")
+            logger.info(f"DIAGNOSTIC - Multiple files received: {len(file)} files")
+            logger.info(f"DIAGNOSTIC - File names: {[f.filename for f in file]}")
+            
+            # Check for duplicate filenames in the request
+            filenames = [f.filename for f in file]
+            filename_counts = {}
+            for name in filenames:
+                if name in filename_counts:
+                    filename_counts[name] += 1
+                else:
+                    filename_counts[name] = 1
+            
+            duplicates = [f"{name} ({count})" for name, count in filename_counts.items() if count > 1]
+            if duplicates:
+                logger.warning(f"DIAGNOSTIC - Duplicate filenames in request: {duplicates}")
             
             # Process each file and collect responses
             responses = []
             for single_file in file:
+                logger.info(f"DIAGNOSTIC - Processing file: {single_file.filename}")
                 document = await process_document(background_tasks, single_file, project_id, description, db)
                 responses.append(document)
             
             return MultipleDocumentResponse(documents=responses)
         else:
             # Single file case - still return in MultipleDocumentResponse format for consistency
+            logger.info(f"DIAGNOSTIC - Single file received: {file.filename}")
             document = await process_document(background_tasks, file, project_id, description, db)
             return MultipleDocumentResponse(documents=[document])
     except Exception as e:

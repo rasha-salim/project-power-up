@@ -121,10 +121,29 @@ export const uploadFile = async (formData) => {
 // Helper function for multiple file uploads
 export const uploadMultipleFiles = async (files, projectId, description) => {
   try {
+    console.log('uploadMultipleFiles: Starting upload of', files.length, 'files');
+    console.log('File names:', files.map(f => f.name));
+    
+    // Check for duplicate files by name
+    const fileNames = files.map(f => f.name);
+    const fileNameCounts = {};
+    fileNames.forEach(name => {
+      fileNameCounts[name] = (fileNameCounts[name] || 0) + 1;
+    });
+    
+    const duplicates = Object.entries(fileNameCounts)
+      .filter(([_, count]) => count > 1)
+      .map(([name, count]) => `${name} (${count} copies)`);
+    
+    if (duplicates.length > 0) {
+      console.warn('WARNING: Duplicate files detected in upload request:', duplicates);
+    }
+    
     const formData = new FormData();
     
     // Add each file to FormData with parameter name 'file'
     files.forEach(file => {
+      console.log(`Adding file to FormData: ${file.name} (${file.size} bytes)`);
       formData.append('file', file);
     });
     
@@ -136,7 +155,18 @@ export const uploadMultipleFiles = async (files, projectId, description) => {
       formData.append('description', description);
     }
     
+    // Log FormData entries for debugging
+    console.log('FormData entries:');
+    for (const pair of formData.entries()) {
+      if (pair[0] === 'file') {
+        console.log(`- ${pair[0]}: ${pair[1].name} (${pair[1].size} bytes)`);
+      } else {
+        console.log(`- ${pair[0]}: ${pair[1]}`);
+      }
+    }
+    
     // Send request to the upload endpoint
+    console.log(`Sending request to ${API_ENDPOINTS.DOCUMENTS.UPLOAD}`);
     const response = await fetch(API_ENDPOINTS.DOCUMENTS.UPLOAD, {
       method: 'POST',
       body: formData,

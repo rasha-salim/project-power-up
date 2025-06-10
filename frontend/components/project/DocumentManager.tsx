@@ -154,28 +154,37 @@ export default function DocumentManager({
   
   // Handle file drop
   const onDrop = useCallback((acceptedFiles: File[]) => {
+    if (!acceptedFiles || acceptedFiles.length === 0) {
+      console.log('No files to upload');
+      return;
+    }
+    
     // Create a copy of files to avoid issues with the FileList object
     const filesCopy = [...acceptedFiles];
     console.log('Files dropped:', filesCopy.length);
     
-    // Simulate upload process
+    // Simulate upload progress
     setIsUploading(true);
     setUploadProgress(0);
     
-    // In a real implementation, this would call the API to upload the files
+    let progress = 0;
     const interval = setInterval(() => {
-      setUploadProgress((prev) => {
-        if (prev >= 100) {
-          clearInterval(interval);
-          setIsUploading(false);
-          
-          // Pass all files to the parent component for upload
-          onDocumentUpload(acceptedFiles);
+      progress += 10;
+      setUploadProgress(progress);
+      
+      if (progress >= 100) {
+        clearInterval(interval);
+        setIsUploading(false);
+        
+        // Pass the copied files array to the parent component for upload
+        console.log('DocumentManager: Uploading files:', filesCopy.map(f => f.name));
+        
+        // Use setTimeout to ensure state updates are complete before calling parent handler
+        setTimeout(() => {
+          onDocumentUpload(filesCopy);
           setShowUploadArea(false);
-          return 100;
-        }
-        return prev + 10;
-      });
+        }, 50);
+      }
     }, 300);
     
   }, [onDocumentUpload]);
