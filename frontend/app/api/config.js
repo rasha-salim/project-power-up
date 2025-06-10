@@ -5,6 +5,7 @@ export const API_ENDPOINTS = {
   // Document endpoints
   DOCUMENTS: {
     UPLOAD: `${API_BASE_URL}/documents/upload`,
+    UPLOAD_MULTIPLE: `${API_BASE_URL}/documents/upload-multiple`,
     LIST: `${API_BASE_URL}/documents`,
     GET: (id) => `${API_BASE_URL}/documents/${id}`,
     STATUS: (id) => `${API_BASE_URL}/documents/${id}/status`,
@@ -59,24 +60,111 @@ export const apiRequest = async (url, options = {}) => {
 };
 
 // Helper function for file uploads
-export const uploadFile = async (url, formData, options = {}) => {
+export const uploadFile = async (formData) => {
   try {
-    const response = await fetch(url, {
+    console.log('Uploading file with FormData');
+    
+    // Log the number of entries in the FormData
+    let entryCount = 0;
+    let fileCount = 0;
+    for (const [key, value] of formData.entries()) {
+      entryCount++;
+      if (key === 'file') {
+        fileCount++;
+        console.log(`FormData entry: ${key}, filename: ${value.name}`);
+      } else {
+        console.log(`FormData entry: ${key}, value: ${value}`);
+      }
+    }
+    console.log(`Total FormData entries: ${entryCount}, File count: ${fileCount}`);
+    
+    const response = await fetch(API_ENDPOINTS.DOCUMENTS.UPLOAD, {
       method: 'POST',
       body: formData,
-      ...options,
-      // Don't set Content-Type header for multipart/form-data
-      // The browser will set it automatically with the boundary
     });
-    
+
     if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.detail || 'File upload failed');
+      let errorDetail = `Upload failed with status: ${response.status}`;
+      try {
+        const errorData = await response.json();
+        if (errorData && errorData.detail) {
+          errorDetail = errorData.detail;
+        }
+      } catch (e) {
+        // If parsing JSON fails, try to get text
+        try {
+          const errorText = await response.text();
+          if (errorText) {
+            errorDetail += ` - ${errorText}`;
+          }
+        } catch (textError) {
+          console.error('Error parsing error response:', textError);
+        }
+      }
+      throw new Error(errorDetail);
     }
-    
-    return await response.json();
+
+    // Try to parse the response as JSON
+    try {
+      const responseText = await response.text();
+      return responseText ? JSON.parse(responseText) : {};
+    } catch (parseError) {
+      console.error('Error parsing upload response:', parseError);
+      throw new Error('Invalid response from server');
+    }
   } catch (error) {
     console.error('File upload error:', error);
+    throw error;
+  }
+};
+
+// Helper function for multiple file uploads
+export const uploadMultipleFiles = async (files, projectId, description) => {
+  try {
+    const formData = new FormData();
+    
+    // Add each file to FormData with parameter name 'file'
+    files.forEach(file => {
+      formData.append('file', file);
+    });
+    
+    // Add other form data
+    if (projectId) {
+      formData.append('project_id', projectId);
+    }
+    if (description) {
+      formData.append('description', description);
+    }
+    
+    // Send request to the upload endpoint
+    const response = await fetch(API_ENDPOINTS.DOCUMENTS.UPLOAD, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      let errorDetail = `File upload failed with status: ${response.status}`;
+      try {
+        const errorData = await response.json();
+        errorDetail = errorData.detail || errorDetail;
+      } catch (e) {
+        console.error('Error parsing error response:', e);
+      }
+      throw new Error(errorDetail);
+    }
+
+    try {
+      // Parse the response
+      const result = await response.json();
+      
+      // The backend now consistently returns a MultipleDocumentResponse with a documents array
+      return result;
+    } catch (parseError) {
+      console.error('Error parsing upload response:', parseError);
+      throw new Error('Invalid response from server');
+    }
+  } catch (error) {
+    console.error('Error in uploadMultipleFiles:', error);
     throw error;
   }
 };
@@ -85,4 +173,5 @@ export default {
   API_ENDPOINTS,
   apiRequest,
   uploadFile,
+  uploadMultipleFiles,
 };

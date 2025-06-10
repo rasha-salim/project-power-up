@@ -154,7 +154,9 @@ export default function DocumentManager({
   
   // Handle file drop
   const onDrop = useCallback((acceptedFiles: File[]) => {
-    if (acceptedFiles.length === 0) return;
+    // Create a copy of files to avoid issues with the FileList object
+    const filesCopy = [...acceptedFiles];
+    console.log('Files dropped:', filesCopy.length);
     
     // Simulate upload process
     setIsUploading(true);
@@ -166,6 +168,8 @@ export default function DocumentManager({
         if (prev >= 100) {
           clearInterval(interval);
           setIsUploading(false);
+          
+          // Pass all files to the parent component for upload
           onDocumentUpload(acceptedFiles);
           setShowUploadArea(false);
           return 100;

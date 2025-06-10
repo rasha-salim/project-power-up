@@ -3,10 +3,11 @@ Document endpoints using SQLAlchemy instead of direct connection pool
 This provides an alternative implementation that's more consistent with the rest of the application
 """
 from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, Form, BackgroundTasks, status
+from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from pydantic import BaseModel
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Union
 import uuid
 import os
 import logging
@@ -31,23 +32,90 @@ class DocumentResponse(BaseModel):
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
-@router.post("/upload", response_model=DocumentResponse)
+
+# Model for multiple document response
+class MultipleDocumentResponse(BaseModel):
+    documents: List[DocumentResponse]
+
+@router.post("/upload", response_model=MultipleDocumentResponse)
 async def upload_document(
     background_tasks: BackgroundTasks,
-    file: UploadFile = File(...),
+    file: Union[UploadFile, List[UploadFile]] = File(...),  # Can be single file or list
     project_id: Optional[str] = Form(None),
     description: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_async_db)
 ):
     """
-    Upload a document (PDF, DOCX, TXT) for processing.
+    Upload one or multiple documents (PDF, DOCX, TXT) for processing.
     Uses SQLAlchemy for database access.
     """
     try:
-        # Log request details
+        logger.info(f"Upload endpoint called with project_id: {project_id}")
+        
+        # Check if we received a list of files or a single file
+        if isinstance(file, list):
+            logger.info(f"Multiple files received: {len(file)} files")
+            
+            # Process each file and collect responses
+            responses = []
+            for single_file in file:
+                document = await process_document(background_tasks, single_file, project_id, description, db)
+                responses.append(document)
+            
+            return MultipleDocumentResponse(documents=responses)
+        else:
+            # Single file case - still return in MultipleDocumentResponse format for consistency
+            document = await process_document(background_tasks, file, project_id, description, db)
+            return MultipleDocumentResponse(documents=[document])
+    except Exception as e:
+        logger.error(f"Error in upload_document: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error uploading document: {str(e)}")
+
+
+
+async def process_document(
+    background_tasks: BackgroundTasks,
+    file: UploadFile,
+    project_id: Optional[str],
+    description: Optional[str],
+    db: AsyncSession
+):
+    """
+    Process a single document upload.
+    Uses SQLAlchemy for database access.
+    """
+    try:
+        # Check if we received a single file or a list of files
         logger.info(f"Document upload request received")
-        logger.info(f"File: {file.filename}, Content-Type: {file.content_type}")
-        logger.info(f"Project ID: {project_id}, Description: {description}")
+        logger.info(f"File type: {type(file)}")
+        
+        # Handle both single file and multiple files cases
+        if isinstance(file, list):
+            logger.info(f"Multiple files received: {len(file)} files")
+            
+            # Process each file and collect responses
+            responses = []
+            for single_file in file:
+                logger.info(f"Processing file: {single_file.filename}")
+                # Process each file individually
+                document = await process_document(background_tasks, single_file, project_id, description, db)
+                responses.append(document)
+            
+            # Return multiple document response
+            return MultipleDocumentResponse(documents=responses)
+        else:
+            # Single file case
+            logger.info(f"Single file received: {file.filename}, Content-Type: {file.content_type}")
+            logger.info(f"Project ID: {project_id}, Description: {description}")
+            return await process_document(background_tasks, file, project_id, description, db)
+    except Exception as e:
+        logger.error(f"Error in process_single_document: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error processing single document: {str(e)}")
+
+
+async def process_document(background_tasks: BackgroundTasks, file: UploadFile, project_id: Optional[str], description: Optional[str], db: AsyncSession):
+    """Process a single document upload"""
+    try:
         
         # Generate unique ID for the document
         document_id = str(uuid.uuid4())
@@ -431,6 +499,201 @@ async def get_document_status(
             message=f"Error: {str(e)}",
             progress="10"
         )
+
+@router.post("/upload-multiple", response_model=MultipleDocumentResponse)
+async def upload_multiple_documents(
+    background_tasks: BackgroundTasks,
+    files: List[UploadFile],  # Changed: removed File(...) as it's not needed for multiple files
+    project_id: Optional[str] = Form(None),
+    description: Optional[str] = Form(None),
+    db: AsyncSession = Depends(get_async_db)
+):
+    """
+    Upload multiple documents (PDF, DOCX, TXT) for processing.
+    Uses SQLAlchemy for database access.
+    """
+    try:
+        # Log request details
+        logger.info(f"DIAGNOSTIC: Multiple document upload request received")
+        logger.info(f"DIAGNOSTIC: Number of files: {len(files)}")
+        logger.info(f"DIAGNOSTIC: Project ID: {project_id}, Description: {description}")
+        
+        # Log detailed information about each file
+        for i, file in enumerate(files):
+            logger.info(f"DIAGNOSTIC: File {i+1}: {file.filename}, Content-Type: {file.content_type}")
+        
+        # Log request headers
+        logger.info(f"DIAGNOSTIC: Request headers: {dict(files[0].headers) if files else 'No files'}")
+        
+        # Log request body
+        logger.info(f"DIAGNOSTIC: Request body type: {type(files)}")
+        logger.info(f"DIAGNOSTIC: Is files a list? {isinstance(files, list)}")
+        logger.info(f"DIAGNOSTIC: Files class: {files.__class__.__name__}")
+        
+        # Create upload directory if it doesn't exist
+        upload_dir = settings.UPLOAD_DIRECTORY
+        os.makedirs(upload_dir, exist_ok=True)
+        logger.info(f"Upload directory: {upload_dir}")
+        
+        # Process each file
+        document_responses = []
+        
+        for file in files:
+            try:
+                # Generate unique ID for the document
+                document_id = str(uuid.uuid4())
+                logger.info(f"Processing file: {file.filename}, Generated document ID: {document_id}")
+                
+                # Get file content and save to disk
+                content = await file.read()
+                file_size = len(content)
+                logger.info(f"File size: {file_size} bytes")
+                
+                # Prepare file path
+                file_extension = os.path.splitext(file.filename)[1].lower()
+                file_path = os.path.join(upload_dir, f"{document_id}{file_extension}")
+                logger.info(f"File will be saved to: {file_path}")
+                
+                # Save file to disk
+                try:
+                    with open(file_path, "wb") as f:
+                        f.write(content)
+                    logger.info(f"File saved successfully to disk")
+                except Exception as e:
+                    logger.error(f"Error saving file to disk: {str(e)}")
+                    raise
+                
+                # Reset file position for potential future reads
+                await file.seek(0)
+                
+                # Store document metadata in database using SQLAlchemy
+                logger.info("Starting database operations for document storage")
+                
+                # First check if the documents table exists
+                result = await db.execute(text(
+                    """SELECT EXISTS (
+                        SELECT FROM information_schema.tables 
+                        WHERE table_name = 'documents'
+                    )"""
+                ))
+                table_exists = result.scalar()
+                
+                if table_exists:
+                    # Get column names
+                    result = await db.execute(text(
+                        """SELECT column_name FROM information_schema.columns 
+                        WHERE table_name = 'documents'"""
+                    ))
+                    columns = result.fetchall()
+                    column_names = [col[0] for col in columns]
+                    
+                    # Build column list and values dynamically based on actual schema
+                    available_columns = [
+                        "id", "filename", "file_path", "content_type", "status", 
+                        "project_id", "description", "created_at", "updated_at", "progress"
+                    ]
+                    
+                    # Check for doc_metadata column
+                    has_metadata = "doc_metadata" in column_names
+                    if has_metadata:
+                        available_columns.append("doc_metadata")
+                    
+                    # Check for size-related columns
+                    size_columns = [col for col in column_names if "size" in col.lower()]
+                    if size_columns:
+                        available_columns.extend(size_columns)
+                    
+                    # Filter to only include columns that exist in the database
+                    columns_to_use = [col for col in available_columns if col in column_names]
+                    
+                    # Build the SQL query
+                    columns_str = ", ".join(columns_to_use)
+                    placeholders = [f":{col}" for col in columns_to_use]
+                    values_str = ", ".join(placeholders)
+                    
+                    # Get current time
+                    now = datetime.utcnow()
+                    
+                    # Prepare parameters
+                    params = {
+                        "id": document_id,
+                        "filename": file.filename,
+                        "file_path": file_path,
+                        "content_type": file.content_type,
+                        "status": "processing",
+                        "progress": "10",
+                        "project_id": project_id,
+                        "description": description,
+                        "created_at": now,
+                        "updated_at": now
+                    }
+                    
+                    # Add size parameter if needed
+                    for size_col in size_columns:
+                        params[size_col] = file_size
+                        
+                    # Add metadata if needed
+                    if has_metadata:
+                        params["doc_metadata"] = json.dumps({
+                            "upload_time": now.isoformat(),
+                            "original_filename": file.filename,
+                            "content_type": file.content_type,
+                            "file_size": file_size
+                        })
+                    
+                    # Execute insert query
+                    try:
+                        await db.execute(
+                            text(f"INSERT INTO documents ({columns_str}) VALUES ({values_str})"),
+                            params
+                        )
+                        logger.info("Document record inserted successfully")
+                    except Exception as e:
+                        logger.error(f"Error executing SQL insert: {str(e)}")
+                        logger.error(f"Error type: {type(e)}")
+                        raise
+                
+                # Schedule background processing
+                background_tasks.add_task(
+                    process_document_background,
+                    document_id,
+                    file_path,
+                    file.filename,
+                    project_id
+                )
+                
+                # Add document response to the list
+                document_responses.append(DocumentResponse(
+                    id=document_id,
+                    filename=file.filename,
+                    status="processing",
+                    progress="10",
+                    project_id=project_id,
+                    description=description,
+                    created_at=now,
+                    updated_at=now
+                ))
+                
+            except Exception as e:
+                logger.error(f"Error processing file {file.filename}: {str(e)}")
+                # Continue with next file instead of failing the entire batch
+        
+        # Commit all changes at once
+        await db.commit()
+        logger.info("All document records committed successfully")
+        
+        # Return all document responses
+        return MultipleDocumentResponse(documents=document_responses)
+        
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Error in multiple document upload: {str(e)}")
+        logger.exception(e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error uploading documents: {str(e)}"
+        )
+
 
 @router.get("/project/{project_id}", response_model=List[DocumentResponse])
 async def get_project_documents(

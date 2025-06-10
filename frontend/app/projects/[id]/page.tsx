@@ -7,7 +7,7 @@ import ProjectHeader from '@/components/project/ProjectHeader';
 import DocumentManager from '@/components/project/DocumentManager';
 import AgentConversation from '@/components/project/AgentConversation';
 import ProjectInsights from '@/components/project/ProjectInsights';
-import { API_ENDPOINTS } from '@/app/api/config';
+import { API_ENDPOINTS, apiRequest, uploadMultipleFiles } from '@/app/api/config';
 
 // Types
 interface Project {
@@ -94,13 +94,33 @@ export default function ProjectDetailPage() {
       console.log('Documents loaded:', documentsData.length);
       console.log('Document data sample:', documentsData.length > 0 ? documentsData[0] : 'No documents');
       
-      // Update documents state, preserving temp documents that aren't in the response
+      // Update documents state, ensuring no duplicates by using document IDs
       setDocuments(prev => {
+        // Keep only temporary documents that are still processing
         const tempDocs = prev.filter(doc => doc.id.startsWith('temp-'));
-        const serverDocs = documentsData.filter(doc => 
-          !tempDocs.some(tempDoc => tempDoc.filename === doc.filename)
-        );
-        return [...serverDocs, ...tempDocs];
+        
+        // Create a map of document IDs for efficient lookup
+        const docIdMap = new Map();
+        
+        // First add all server documents to the map (they take priority)
+        documentsData.forEach(doc => {
+          docIdMap.set(doc.id, doc);
+        });
+        
+        // Then add temporary documents that aren't already in the server data
+        // and don't have filename conflicts with server data
+        const serverFilenames = new Set(documentsData.map(doc => doc.filename));
+        
+        tempDocs.forEach(doc => {
+          // Only add temp docs if their ID isn't in the server data
+          // and their filename isn't already in the server data
+          if (!docIdMap.has(doc.id) && !serverFilenames.has(doc.filename)) {
+            docIdMap.set(doc.id, doc);
+          }
+        });
+        
+        // Convert the map values back to an array
+        return Array.from(docIdMap.values());
       });
     } catch (error) {
       console.error('Error fetching documents:', error);
@@ -253,122 +273,113 @@ export default function ProjectDetailPage() {
 
   // Handle document upload
   const handleDocumentUpload = async (files: File[]) => {
+    if (!files || files.length === 0) {
+      console.log('No files to upload');
+      return;
+    }
+    
+    console.log('DIAGNOSTIC: handleDocumentUpload called with', files.length, 'files');
+    files.forEach((file, index) => {
+      console.log(`DIAGNOSTIC: File ${index + 1}:`, file.name, file.size, file.type);
+    });
+    
+    // Create temporary documents for all files upfront with unique IDs
+    const timestamp = Date.now();
+    const tempDocuments = files.map((file, index) => ({
+      id: `temp-${timestamp}-${index}-${Math.random().toString(36).substring(2, 9)}`,
+      filename: file.name,
+      status: 'processing',
+      progress: '0',
+      created_at: new Date().toISOString(),
+    }));
+    console.log('DIAGNOSTIC: Created temp documents:', tempDocuments);
+    
+    // Create a map of existing filenames to avoid adding duplicates
+    const existingFilenames = new Set(documents.map(doc => doc.filename));
+    console.log('DIAGNOSTIC: Existing filenames:', Array.from(existingFilenames));
+    
+    // Filter out any files that already exist in the documents state
+    const uniqueFiles = files.filter(file => !existingFilenames.has(file.name));
+    const uniqueTempDocs = tempDocuments.filter(doc => !existingFilenames.has(doc.filename));
+    
+    console.log('DIAGNOSTIC: Unique files after filtering:', uniqueFiles.length);
+    console.log('DIAGNOSTIC: Unique temp docs after filtering:', uniqueTempDocs.length);
+    
+    if (uniqueFiles.length === 0) {
+      alert('All selected files have already been uploaded.');
+      return;
+    }
+    
+    // Add unique temp documents to state
+    setDocuments(prev => [...prev, ...uniqueTempDocs]);
+    console.log('DIAGNOSTIC: Added temp documents to state');
+    
+    console.log(`Processing ${uniqueFiles.length} unique files for upload`);
+    
     try {
-      // Process each file individually to avoid issues with the backend
-      for (const file of files) {
-        // Create FormData for file upload
-        const formData = new FormData();
+      // Use the new multiple file upload function
+      // Create a mapping of filenames to temp document IDs for later reference
+      const filenameToTempId: Record<string, string> = {};
+      uniqueTempDocs.forEach(doc => {
+        filenameToTempId[doc.filename] = doc.id;
+      });
+      
+      try {
+        // Upload all files at once
+        const result = await uploadMultipleFiles(
+          uniqueFiles,
+          projectId,
+          `Uploaded for project ${projectId}`
+        );
         
-        // Add project ID to FormData
-        formData.append('project_id', projectId);
-        
-        // Add description if needed
-        formData.append('description', `Uploaded for project ${projectId}`);
-        
-        // Add file to FormData - IMPORTANT: The key must be 'file' to match the backend
-        formData.append('file', file);
-        
-        // Show processing state for new file
-        const tempDocument = {
-          id: `temp-${Date.now()}`,
-          filename: file.name,
-          status: 'processing',
-          progress: '0',
-          created_at: new Date().toISOString(),
-        };
-        
-        setDocuments(prev => [...prev, tempDocument]);
-        
-        console.log(`Uploading file: ${file.name} for project: ${projectId}`);
-        console.log('FormData contents:');
-        // Log FormData contents without iterating through entries
-        console.log(`project_id: ${projectId}`);
-        console.log(`description: Uploaded for project ${projectId}`);
-        console.log(`file: ${file.name}`);
-        
-        // Use the API configuration instead of hardcoded URL
-        const uploadUrl = API_ENDPOINTS.DOCUMENTS.UPLOAD;
-        console.log(`Uploading to: ${uploadUrl}`);
-        
-        // Upload file to the API
-        console.log('Using fetch API to upload document');
-        const response = await fetch(uploadUrl, {
-          method: 'POST',
-          body: formData,
-          // Don't set Content-Type header for multipart/form-data
-          // The browser will set it automatically with the boundary
-        });
-        
-        // Log detailed information about the request
-        console.log('Upload request completed');
-        console.log('Response status:', response.status);
-        console.log('Response status text:', response.statusText);
-        
-        console.log(`Upload response status: ${response.status}`);
-        console.log(`Response headers:`, response.headers);
-        
-        // Get the response text first to debug
-        const responseText = await response.text();
-        console.log(`Response text: ${responseText}`);
-        
-        if (!response.ok) {
-          let errorDetail = `Failed to upload document (Status: ${response.status})`;
-          try {
-            // Try to parse the response text as JSON
-            if (responseText) {
-              const errorData = JSON.parse(responseText);
-              if (typeof errorData.detail === 'object') {
-                // Handle structured error response
-                errorDetail = errorData.detail.message || errorData.detail.error || errorDetail;
-                console.error('Structured error details:', errorData.detail);
-              } else {
-                errorDetail = errorData.detail || errorDetail;
+        if (result && result.documents) {
+          // Update documents state with the uploaded documents
+          const uploadedDocuments = result.documents;
+          
+          // Replace temp documents with actual ones
+          setDocuments(prev => {
+            const updatedDocs = [...prev];
+            
+            // For each uploaded document, find and replace its temp version
+            uploadedDocuments.forEach((uploadedDoc: any) => {
+              if (uploadedDoc.filename && filenameToTempId[uploadedDoc.filename]) {
+                const tempId = filenameToTempId[uploadedDoc.filename];
+                const tempIndex = updatedDocs.findIndex(doc => doc.id === tempId);
+                if (tempIndex !== -1) {
+                  // Add progress field if not present
+                  if (!uploadedDoc.progress) {
+                    uploadedDoc.progress = '0';
+                  }
+                  updatedDocs[tempIndex] = uploadedDoc;
+                }
               }
-            }
-          } catch (e) {
-            console.error('Error parsing error response:', e);
-            // If we can't parse as JSON, use the response text directly
-            if (responseText) {
-              errorDetail += ` - ${responseText}`;
-            }
-          }
-          console.error('Upload error details:', errorDetail);
-          throw new Error(errorDetail);
+            });
+            
+            return updatedDocs;
+          });
+          
+          console.log(`Upload complete: ${uploadedDocuments.length} files uploaded successfully`);
         }
+      } catch (error: unknown) {
+        console.error('Error in multiple file upload:', error);
         
-        // Parse the response text as JSON
-        try {
-          console.log('Attempting to parse response text:', responseText);
-          const uploadedDocument = JSON.parse(responseText);
-          console.log('Successfully parsed document:', uploadedDocument);
-          
-          // Add progress field if not present
-          if (!uploadedDocument.progress) {
-            uploadedDocument.progress = '0';
-          }
-          
-          // Replace the temp document with the actual one
-          setDocuments(prev => prev.map(doc => 
-            doc.id === tempDocument.id ? uploadedDocument : doc
-          ));
-          
-          // Start polling for document status updates
-          fetchDocuments();
-          
-        } catch (e) {
-          console.error('Error parsing success response:', e);
-          // Handle the TypeScript error by checking if e is an Error object
-          const errorMessage = e instanceof Error ? e.message : 'Unknown error';
-          throw new Error(`Failed to parse server response: ${errorMessage}`);
-        }
+        // Update all temp documents with error status
+        setDocuments(prev => prev.map(doc => 
+          uniqueTempDocs.some(tempDoc => tempDoc.id === doc.id) 
+            ? { ...doc, status: 'error', message: error instanceof Error ? error.message : 'Unknown error' } 
+            : doc
+        ));
       }
+      
+      // Refresh the document list to ensure we have the latest data
+      fetchDocuments();
+      
     } catch (err) {
-      console.error('Error uploading documents:', err);
-      // Show error to user
+      console.error('Unexpected error during document upload:', err);
       alert(`Failed to upload documents: ${err instanceof Error ? err.message : 'Unknown error'}`);
       
       // Remove temp documents on error
-      setDocuments(prev => prev.filter(doc => !doc.id.startsWith('temp-')));
+      setDocuments(prev => prev.filter(doc => !uniqueTempDocs.some(tempDoc => tempDoc.id === doc.id)));
     }
   };
 
