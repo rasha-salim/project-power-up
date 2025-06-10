@@ -23,6 +23,7 @@ interface Document {
   id: string;
   filename: string;
   status: string;
+  progress?: string;
   created_at: string;
   description?: string;
 }
@@ -52,6 +53,75 @@ export default function ProjectDetailPage() {
   const [isAnalysisRunning, setIsAnalysisRunning] = useState(false);
   const [activeTab, setActiveTab] = useState('conversation');
 
+  // Handle document updates from DocumentManager
+  const handleDocumentUpdate = (documentId: string, updates: Partial<Document>) => {
+    console.log(`Updating document ${documentId} with:`, updates);
+    setDocuments(prevDocs => 
+      prevDocs.map(doc => 
+        doc.id === documentId ? { ...doc, ...updates } : doc
+      )
+    );
+  };
+
+  // Fetch documents function
+  const fetchDocuments = async () => {
+    if (!projectId) return;
+    
+    try {
+      console.log(`Fetching documents for project: ${projectId}`);
+      const url = API_ENDPOINTS.DOCUMENTS.PROJECT(projectId);
+      console.log(`Using URL: ${url}`);
+      
+      const documentsResponse = await fetch(url);
+      console.log(`Documents response status: ${documentsResponse.status}`);
+      
+      if (!documentsResponse.ok) {
+        let errorMessage = `Error fetching documents: ${documentsResponse.status}`;
+        try {
+          const errorData = await documentsResponse.json();
+          errorMessage = `${errorMessage} - ${errorData.detail || errorData.message || 'Unknown error'}`;
+        } catch (parseError) {
+          // If we can't parse the error response, just use the status code
+        }
+        console.error(errorMessage);
+        setError(errorMessage);
+        return;
+      }
+      
+      const data = await documentsResponse.json();
+      // Ensure data is an array
+      const documentsData = Array.isArray(data) ? data : [];
+      console.log('Documents loaded:', documentsData.length);
+      console.log('Document data sample:', documentsData.length > 0 ? documentsData[0] : 'No documents');
+      
+      // Update documents state, preserving temp documents that aren't in the response
+      setDocuments(prev => {
+        const tempDocs = prev.filter(doc => doc.id.startsWith('temp-'));
+        const serverDocs = documentsData.filter(doc => 
+          !tempDocs.some(tempDoc => tempDoc.filename === doc.filename)
+        );
+        return [...serverDocs, ...tempDocs];
+      });
+    } catch (error) {
+      console.error('Error fetching documents:', error);
+    }
+  };
+  
+  // Poll for document status updates
+  useEffect(() => {
+    // Check if there are any documents in processing state
+    const hasProcessingDocuments = documents.some(doc => doc.status === 'processing');
+    
+    // If there are processing documents, set up polling
+    if (hasProcessingDocuments) {
+      const pollInterval = setInterval(() => {
+        fetchDocuments();
+      }, 5000); // Poll every 5 seconds
+      
+      return () => clearInterval(pollInterval);
+    }
+  }, [documents]);
+  
   // Fetch project data
   useEffect(() => {
     const fetchProjectData = async () => {
@@ -203,6 +273,7 @@ export default function ProjectDetailPage() {
           id: `temp-${Date.now()}`,
           filename: file.name,
           status: 'processing',
+          progress: '0',
           created_at: new Date().toISOString(),
         };
         
@@ -268,33 +339,22 @@ export default function ProjectDetailPage() {
         // Parse the response text as JSON
         try {
           console.log('Attempting to parse response text:', responseText);
+          const uploadedDocument = JSON.parse(responseText);
+          console.log('Successfully parsed document:', uploadedDocument);
           
-          // Handle empty response
-          if (!responseText.trim()) {
-            console.error('Empty response received from server');
-            throw new Error('Empty response received from server');
+          // Add progress field if not present
+          if (!uploadedDocument.progress) {
+            uploadedDocument.progress = '0';
           }
           
-          const uploadedDocument: Document = JSON.parse(responseText);
-          console.log('Uploaded document:', uploadedDocument);
+          // Replace the temp document with the actual one
+          setDocuments(prev => prev.map(doc => 
+            doc.id === tempDocument.id ? uploadedDocument : doc
+          ));
           
-          // Validate the document object
-          if (!uploadedDocument.id) {
-            console.error('Invalid document object received:', uploadedDocument);
-            throw new Error('Invalid document object received from server');
-          }
+          // Start polling for document status updates
+          fetchDocuments();
           
-          // Replace temp document with actual uploaded document
-          setDocuments(prev => {
-            // Filter out the temp document for this file
-            const filteredDocs = prev.filter(doc => doc.id !== tempDocument.id);
-            // Add the newly uploaded document with proper date handling
-            return [...filteredDocs, {
-              ...uploadedDocument,
-              // Ensure created_at is a string (handle null or undefined)
-              created_at: uploadedDocument.created_at || new Date().toISOString()
-            }];
-          });
         } catch (e) {
           console.error('Error parsing success response:', e);
           // Handle the TypeScript error by checking if e is an Error object
@@ -410,6 +470,7 @@ export default function ProjectDetailPage() {
               documents={documents}
               onDocumentUpload={handleDocumentUpload}
               onDocumentDelete={handleDocumentDelete}
+              onDocumentUpdate={handleDocumentUpdate}
             />
           </div>
 

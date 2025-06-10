@@ -14,6 +14,7 @@ import json
 from datetime import datetime
 from app.core.config import settings
 from app.db.init_db_simple import get_async_db
+from app.services.document_processor import DocumentProcessor
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -23,6 +24,7 @@ class DocumentResponse(BaseModel):
     id: str
     filename: str
     status: str
+    progress: Optional[str] = None  # Added progress field
     message: Optional[str] = None
     project_id: Optional[str] = None
     description: Optional[str] = None
@@ -141,7 +143,8 @@ async def upload_document(
                 "filename": file.filename,
                 "file_path": file_path,
                 "content_type": file.content_type,
-                "status": "pending",
+                "status": "processing",
+                "progress": "10",
                 "project_id": project_id,
                 "description": description,
                 "created_at": now,
@@ -192,8 +195,10 @@ async def upload_document(
                 content_type TEXT NOT NULL,
                 file_size INTEGER NOT NULL,
                 status TEXT NOT NULL,
+                progress TEXT DEFAULT '0',
                 project_id TEXT,
                 description TEXT,
+                doc_metadata JSONB,
                 created_at TIMESTAMP NOT NULL,
                 updated_at TIMESTAMP NOT NULL
             )
@@ -203,15 +208,16 @@ async def upload_document(
             now = datetime.utcnow()
             await db.execute(
                 text("""INSERT INTO documents 
-                (id, filename, file_path, content_type, file_size, status, project_id, description, created_at, updated_at) 
-                VALUES (:id, :filename, :file_path, :content_type, :file_size, :status, :project_id, :description, :created_at, :updated_at)"""),
+                (id, filename, file_path, content_type, file_size, status, progress, project_id, description, created_at, updated_at) 
+                VALUES (:id, :filename, :file_path, :content_type, :file_size, :status, :progress, :project_id, :description, :created_at, :updated_at)"""),
                 {
                     "id": document_id,
                     "filename": file.filename,
                     "file_path": file_path,
                     "content_type": file.content_type,
                     "file_size": file_size,
-                    "status": "pending",
+                    "status": "processing",
+                    "progress": "10",
                     "project_id": project_id,
                     "description": description,
                     "created_at": now,
@@ -220,12 +226,36 @@ async def upload_document(
             )
             await db.commit()
         
+        # Initialize document processor and schedule background task
+        doc_processor = DocumentProcessor()
+        
+        # Log detailed information for debugging
+        logger.info(f"Document at upload time: ID={document_id}, filename={file.filename}, path={file_path}")
+        logger.info(f"File exists check: {os.path.exists(file_path)}")
+        logger.info(f"File size: {os.path.getsize(file_path) if os.path.exists(file_path) else 'file not found'}")
+        logger.info(f"Absolute file path: {os.path.abspath(file_path)}")
+        
+        # We should NOT pass the existing db session to a background task
+        # Instead, let the processor create its own session when needed
+        try:
+            background_tasks.add_task(
+                doc_processor.process_document,
+                None,  # Pass None instead of db session
+                document_id,
+                file_path
+            )
+            logger.info(f"Background document processing task scheduled for document {document_id}")
+        except Exception as bg_error:
+            logger.error(f"Error scheduling background task: {str(bg_error)}")
+            logger.error(traceback.format_exc())
+        
         # Return success response
         return DocumentResponse(
             id=document_id,
             filename=file.filename,
-            status="pending",
-            message="Document uploaded successfully and queued for processing",
+            status="processing",
+            progress="10",
+            message="Document uploaded successfully and processing has started",
             project_id=project_id,
             description=description
         )
@@ -270,28 +300,54 @@ async def get_document(
     """
     try:
         # Get document from database
-        result = await db.execute(
-            text("SELECT * FROM documents WHERE id = :id"),
-            {"id": document_id}
-        )
-        document = result.fetchone()
+        try:
+            logger.info(f"[DEBUG] Fetching document with ID: {document_id} using SQLAlchemy")
+            result = await db.execute(
+                text("SELECT * FROM documents WHERE id = :id"),
+                {"id": document_id}
+            )
+            document = result.fetchone()
+            logger.info(f"[DEBUG] Document fetch result: {document is not None}")
+        except Exception as db_error:
+            logger.error(f"[DEBUG] Database error fetching document {document_id}: {str(db_error)}")
+            logger.error(traceback.format_exc())
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Database error: {str(db_error)}"
+            )
         
         if not document:
+            logger.warning(f"[DEBUG] Document not found: {document_id}")
             raise HTTPException(status_code=404, detail="Document not found")
         
-        # Convert to dictionary for easier access
-        doc_dict = dict(zip(result.keys(), document))
-        
-        return DocumentResponse(
-            id=doc_dict["id"],
-            filename=doc_dict["filename"],
-            status=doc_dict["status"],
-            message="Document retrieved successfully",
-            project_id=doc_dict.get("project_id"),
-            description=doc_dict.get("description"),
-            created_at=doc_dict.get("created_at"),
-            updated_at=doc_dict.get("updated_at")
-        )
+        try:
+            # Convert to dictionary for easier access
+            doc_dict = dict(zip(result.keys(), document))
+            logger.info(f"[DEBUG] Document keys: {list(doc_dict.keys())}")
+            
+            # Ensure all required fields exist with fallbacks
+            response = DocumentResponse(
+                id=doc_dict["id"],
+                filename=doc_dict["filename"],
+                status=doc_dict.get("status", "processing"),  # Default to processing if missing
+                progress=doc_dict.get("progress", "10"),  # Default to 10% if missing
+                message="Document retrieved successfully",
+                project_id=doc_dict.get("project_id"),
+                description=doc_dict.get("description"),
+                created_at=doc_dict.get("created_at", datetime.now()),
+                updated_at=doc_dict.get("updated_at", datetime.now())
+            )
+            logger.info(f"[DEBUG] Document response created successfully for {document_id}")
+            return response
+        except Exception as format_error:
+            logger.error(f"[DEBUG] Error formatting document response for {document_id}: {str(format_error)}")
+            logger.error(f"[DEBUG] Document data: {doc_dict}")
+            logger.error(traceback.format_exc())
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error formatting document: {str(format_error)}"
+            )
+
         
     except HTTPException:
         raise
@@ -303,6 +359,77 @@ async def get_document(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error getting document: {str(e)}"
+        )
+
+@router.get("/status/{document_id}", response_model=DocumentResponse)
+async def get_document_status(
+    document_id: str,
+    db: AsyncSession = Depends(get_async_db)
+):
+    """
+    Get document status by ID using SQLAlchemy
+    """
+    try:
+        logger.info(f"[DEBUG] Fetching status for document with ID: {document_id}")
+        
+        # Get document status from database
+        try:
+            result = await db.execute(
+                text("SELECT id, filename, status, progress, created_at, updated_at FROM documents WHERE id = :id"),
+                {"id": document_id}
+            )
+            document = result.fetchone()
+            logger.info(f"[DEBUG] Document status fetch result: {document is not None}")
+            
+        except Exception as db_error:
+            logger.error(f"[DEBUG] Database error fetching document status {document_id}: {str(db_error)}")
+            import traceback
+            logger.error(traceback.format_exc())
+            # Return a default response instead of raising an exception
+            return DocumentResponse(
+                id=document_id,
+                filename="unknown",
+                status="processing",
+                message="Error fetching document status, using default",
+                progress="10"
+            )
+        
+        if not document:
+            logger.warning(f"[DEBUG] Document not found for status check: {document_id}")
+            # Return a default response instead of raising a 404
+            return DocumentResponse(
+                id=document_id,
+                filename="unknown",
+                status="processing",
+                message="Document not found, using default status",
+                progress="10"
+            )
+        
+        # Convert to dictionary for easier access
+        doc_dict = dict(zip(result.keys(), document))
+        logger.info(f"[DEBUG] Document status keys: {list(doc_dict.keys())}")
+        
+        # Return document status
+        return DocumentResponse(
+            id=doc_dict["id"],
+            filename=doc_dict["filename"],
+            status=doc_dict.get("status", "processing"),
+            message="Document status retrieved successfully",
+            progress=doc_dict.get("progress", "10")
+        )
+            
+    except Exception as e:
+        logger.error(f"Unexpected error getting document status: {str(e)}")
+        logger.error(f"Error type: {type(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        # Return a default response instead of raising an exception
+        return DocumentResponse(
+            id=document_id,
+            filename="unknown",
+            status="processing",
+            message=f"Error: {str(e)}",
+            progress="10"
         )
 
 @router.get("/project/{project_id}", response_model=List[DocumentResponse])

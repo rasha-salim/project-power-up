@@ -48,6 +48,17 @@ async def startup_event():
     pool_initialized = await initialize_pool()
     if pool_initialized:
         logger.info("PostgreSQL connection pool initialized")
+        
+        # Run migrations
+        try:
+            from app.db.migrations.add_progress_column import run_migration
+            migration_success = await run_migration()
+            if migration_success:
+                logger.info("Database migrations completed successfully")
+            else:
+                logger.warning("Database migrations failed")
+        except Exception as e:
+            logger.error(f"Error running migrations: {str(e)}")
     else:
         logger.warning("Failed to initialize PostgreSQL connection pool")
 

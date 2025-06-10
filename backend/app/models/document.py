@@ -17,7 +17,8 @@ class Document(Base):
     filename = Column(String, nullable=False)
     file_path = Column(String, nullable=False)
     content_type = Column(String, nullable=True)
-    status = Column(String, nullable=False, default="pending")  # pending, processing, processed, error
+    status = Column(String, nullable=False, default="processing")  # pending, processing, processed, error
+    progress = Column(String, nullable=True, default="0")  # Progress percentage as string (0-100)
     project_id = Column(String, nullable=True)
     description = Column(Text, nullable=True)
     doc_metadata = Column(Text, nullable=True)  # JSON serialized metadata
@@ -37,7 +38,8 @@ class DocumentCreate(DocumentBase):
     id: Optional[str] = Field(default_factory=lambda: str(uuid.uuid4()))
     file_path: str
     content_type: Optional[str] = None
-    status: str = "pending"
+    status: str = "processing"
+    progress: str = "10"
     doc_metadata: Optional[Dict[str, Any]] = None
 
 
@@ -45,6 +47,7 @@ class DocumentUpdate(BaseModel):
     """Pydantic model for updating a Document"""
     filename: Optional[str] = None
     status: Optional[str] = None
+    progress: Optional[str] = None
     project_id: Optional[str] = None
     description: Optional[str] = None
     doc_metadata: Optional[Dict[str, Any]] = None
@@ -56,6 +59,7 @@ class DocumentResponse(BaseModel):
     filename: str
     status: str
     message: str
+    progress: Optional[str] = "0"
     project_id: Optional[str] = None
     description: Optional[str] = None
     created_at: Optional[datetime] = None

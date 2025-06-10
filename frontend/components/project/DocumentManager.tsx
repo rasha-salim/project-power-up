@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { DocumentTextIcon, ArrowUpTrayIcon, XMarkIcon, CheckIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 
@@ -6,6 +6,7 @@ interface Document {
   id: string;
   filename: string;
   status: string;
+  progress?: string;
   created_at: string;
   description?: string;
 }
@@ -15,18 +16,142 @@ interface DocumentManagerProps {
   documents: Document[];
   onDocumentUpload: (files: File[]) => void;
   onDocumentDelete: (documentId: string) => void;
+  onDocumentUpdate?: (documentId: string, updates: Partial<Document>) => void;
 }
 
 export default function DocumentManager({ 
   projectId, 
   documents, 
   onDocumentUpload, 
-  onDocumentDelete 
+  onDocumentDelete,
+  onDocumentUpdate = () => {} // Default no-op function
 }: DocumentManagerProps) {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [showUploadArea, setShowUploadArea] = useState(false);
+  const [processingDocuments, setProcessingDocuments] = useState<string[]>([]);
+  const [notifications, setNotifications] = useState<{id: string, message: string, type: string}[]>([]);
 
+  // Effect to check for processing documents and poll their status
+  useEffect(() => {
+    // Find documents that are in processing state
+    const docsInProcessing = documents.filter(doc => doc.status === 'processing');
+    
+    // Update the processing documents list
+    setProcessingDocuments(docsInProcessing.map(doc => doc.id));
+    
+    // If there are documents in processing state, set up polling
+    if (docsInProcessing.length > 0) {
+      console.log(`Setting up polling for ${docsInProcessing.length} processing documents`);
+      const pollInterval = setInterval(async () => {
+        // For each processing document, check its status
+        for (const doc of docsInProcessing) {
+          try {
+            console.log(`Polling document status for ${doc.id}`);
+            // Use the dedicated status endpoint with the correct route structure
+            const statusUrl = `/api/v1/documents/status/${doc.id}`;  // This routes through Next.js API route
+            console.log(`Status URL: ${statusUrl}`);
+            
+            const response = await fetch(statusUrl);
+            // If we get a 404, try direct backend call
+            if (response.status === 404) {
+              console.log(`Trying direct backend call for ${doc.id} due to 404 from Next.js API route`);
+              try {
+                // Try direct backend call to both possible endpoints
+                const backendResponse = await fetch(`http://localhost:8000/api/v1/documents/status/${doc.id}`);
+                if (backendResponse.ok) {
+                  const updatedDoc = await backendResponse.json();
+                  console.log(`Direct backend call successful for ${doc.id}: Status ${updatedDoc.status}, Progress ${updatedDoc.progress}`);
+                  
+                  // Update document data through parent component
+                  onDocumentUpdate(doc.id, {
+                    status: updatedDoc.status,
+                    progress: updatedDoc.progress || doc.progress
+                  });
+                  
+                  // Check if processing is complete
+                  if (updatedDoc.status === 'processed' || updatedDoc.status === 'error') {
+                    // Show notification that document is processed
+                    console.log(`Document ${doc.id} processing complete with status: ${updatedDoc.status}`);
+                  }
+                  
+                  // Skip the rest of this iteration as we've handled this document
+                  continue;
+                } else {
+                  console.log(`Direct backend call failed with status ${backendResponse.status}`);
+                  // Try the old endpoint format as last resort
+                  const legacyResponse = await fetch(`http://localhost:8000/api/v1/documents/${doc.id}/status`);
+                  if (legacyResponse.ok) {
+                    const updatedDoc = await legacyResponse.json();
+                    console.log(`Legacy endpoint call successful for ${doc.id}`);
+                    
+                    // Update document data through parent component
+                    onDocumentUpdate(doc.id, {
+                      status: updatedDoc.status,
+                      progress: updatedDoc.progress || doc.progress
+                    });
+                    
+                    // Skip the rest of this iteration
+                    continue;
+                  }
+                }
+              } catch (directError) {
+                console.error(`Direct backend call failed for ${doc.id}:`, directError);
+              }
+            }
+            console.log(`Poll response status for ${doc.id}: ${response.status}`);
+            
+            if (response.ok) {
+              const updatedDoc = await response.json();
+              console.log(`Updated doc status: ${updatedDoc.status}, progress: ${updatedDoc.progress}`);
+              console.log('Full document data:', updatedDoc);
+              
+              // Update document data through parent component
+              onDocumentUpdate(doc.id, {
+                status: updatedDoc.status,
+                progress: updatedDoc.progress || doc.progress
+              });
+              
+              // If the document status has changed to processed, show notification
+              if (updatedDoc.status === 'processed' && doc.status === 'processing') {
+                console.log(`Document ${doc.id} processing completed!`);
+                // Add notification
+                setNotifications(prev => [
+                  ...prev, 
+                  {
+                    id: doc.id,
+                    message: `Document ${doc.filename} has been processed successfully!`,
+                    type: 'success'
+                  }
+                ]);
+                
+                // Remove from processing list
+                setProcessingDocuments(prev => prev.filter(id => id !== doc.id));
+              }
+              
+              // If the document is still processing but progress has changed, update the UI
+              // This will be handled by the parent component's state update on the next render
+            } else {
+              console.warn(`Error polling document ${doc.id}: ${response.status}`);
+              // Don't remove from processing list on error, we'll try again next time
+            }
+          } catch (error) {
+            console.error(`Error checking document status for ${doc.id}:`, error);
+            // Continue polling even if there's an error for one document
+          }
+        }
+      }, 5000); // Poll every 5 seconds
+      
+      // Clean up interval on unmount
+      return () => clearInterval(pollInterval);
+    }
+  }, [documents]);
+  
+  // Handle notification dismissal
+  const dismissNotification = (id: string) => {
+    setNotifications(prev => prev.filter(notification => notification.id !== id));
+  };
+  
   // Handle file drop
   const onDrop = useCallback((acceptedFiles: File[]) => {
     if (acceptedFiles.length === 0) return;
@@ -92,7 +217,31 @@ export default function DocumentManager({
   };
 
   return (
-    <div className="bg-white shadow rounded-lg overflow-hidden">
+    <div className="bg-white shadow rounded-lg overflow-hidden relative">      
+      {/* Notifications */}
+      <div className="fixed top-4 right-4 z-50 space-y-2 w-80">
+        {notifications.map((notification) => (
+          <div 
+            key={notification.id} 
+            className={`p-4 rounded-lg shadow-lg flex items-center justify-between ${notification.type === 'success' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}
+          >
+            <div className="flex items-center">
+              {notification.type === 'success' ? (
+                <CheckIcon className="w-5 h-5 mr-2 text-green-500" />
+              ) : (
+                <ExclamationTriangleIcon className="w-5 h-5 mr-2 text-red-500" />
+              )}
+              <p className="text-sm">{notification.message}</p>
+            </div>
+            <button 
+              onClick={() => dismissNotification(notification.id)}
+              className="text-gray-500 hover:text-gray-700"
+            >
+              <XMarkIcon className="w-5 h-5" />
+            </button>
+          </div>
+        ))}
+      </div>
       <div className="px-4 py-5 sm:px-6 border-b border-gray-200">
         <div className="flex justify-between items-center">
           <h3 className="text-lg font-medium text-gray-900">Project Documents</h3>
@@ -175,6 +324,7 @@ export default function DocumentManager({
                   <div className="flex items-center">
                     <span className="text-xs text-gray-500 mr-4">
                       {doc.status.charAt(0).toUpperCase() + doc.status.slice(1)}
+                      {doc.status === 'processing' && ` (${doc.progress || '10'}%)`}
                     </span>
                     <button 
                       onClick={() => onDocumentDelete(doc.id)} 
@@ -187,6 +337,18 @@ export default function DocumentManager({
                 </div>
                 {doc.description && (
                   <p className="mt-1 text-sm text-gray-600 ml-8">{doc.description}</p>
+                )}
+                
+                {/* Progress bar for documents in processing state */}
+                {doc.status === 'processing' && (
+                  <div className="mt-2 ml-8 mr-8">
+                    <div className="w-full bg-gray-200 rounded-full h-1.5">
+                      <div 
+                        className="bg-blue-500 h-1.5 rounded-full transition-all duration-300" 
+                        style={{ width: `${doc.progress || '10'}%` }}
+                      ></div>
+                    </div>
+                  </div>
                 )}
               </li>
             ))}

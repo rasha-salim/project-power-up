@@ -4,7 +4,7 @@ from typing import List, Dict, Any, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from app.models.project import Project, ProjectCreate, ProjectUpdate
-from app.db.init_db import get_chroma_client
+from app.db.init_db_simple import get_chroma_client
 
 logger = logging.getLogger(__name__)
 

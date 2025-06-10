@@ -212,7 +212,7 @@ class AgentService:
             documents = await document_processor.list_documents(db, project_id)
             
             # Check if any documents are still processing
-            processing_docs = [doc for doc in documents if doc.status in ["pending", "processing"]]
+            processing_docs = [doc for doc in documents if doc.status == "processing"]
             if processing_docs:
                 logger.warning(f"Cannot start analysis - {len(processing_docs)} documents still processing for project {project_id}")
                 # We'll try again later - in a real implementation, this would be handled by a background job
