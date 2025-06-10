@@ -106,14 +106,17 @@ class MockChromaClient:
         return self.get_or_create_collection(name)
 
 def get_chroma_client():
-    """Get a mock ChromaDB client for vector storage"""
+    """Get a real ChromaDB client for vector storage"""
     global chroma_client
     try:
-        logger.info("Getting ChromaDB client (mock implementation)")
         if chroma_client is None:
-            logger.info("Initializing new mock ChromaDB client")
-            chroma_client = MockChromaClient()
-            logger.info(f"Mock ChromaDB client initialized: {type(chroma_client)}")
+            # Create ChromaDB directory if it doesn't exist
+            chroma_dir = os.path.join(os.getcwd(), "chromadb")
+            os.makedirs(chroma_dir, exist_ok=True)
+            
+            logger.info(f"Initializing new ChromaDB client with persistent storage at {chroma_dir}")
+            chroma_client = chromadb.PersistentClient(path=chroma_dir)
+            logger.info(f"ChromaDB client initialized: {type(chroma_client)}")
         else:
             logger.info(f"Using existing ChromaDB client: {type(chroma_client)}")
         return chroma_client
@@ -122,8 +125,10 @@ def get_chroma_client():
         logger.error(f"Error type: {type(e)}")
         import traceback
         logger.error(f"Traceback: {traceback.format_exc()}")
-        # Return a new mock client as fallback
-        return MockChromaClient()
+        # Create a new client as fallback
+        chroma_dir = os.path.join(os.getcwd(), "chromadb")
+        os.makedirs(chroma_dir, exist_ok=True)
+        return chromadb.PersistentClient(path=chroma_dir)
 
 async def init_db():
     """Initialize database connections and create tables"""
