@@ -114,6 +114,34 @@ The project management interface enables users to:
 - Track project status
 - View and export project insights
 
+## Document Upload Implementation
+
+The document upload system is designed to handle both single and multiple file uploads with robust duplicate prevention.
+
+### Technical Implementation
+
+- **Unified Upload Helper**: The `uploadMultipleFiles` function in `api/config.js` handles multiple file uploads
+- **Duplicate Prevention**: Files are checked against existing documents to prevent duplicates
+- **Temporary Document States**: UI shows upload progress with temporary document entries
+- **Error Handling**: Comprehensive error handling with user feedback
+- **State Management**: Careful state management to prevent duplicate uploads and UI glitches
+
+### Frontend Components
+
+- **DocumentManager.tsx**: Reusable component for document uploads with drag-and-drop support
+- **Project Page**: Implements document upload in existing projects
+- **New Project Page**: Implements document upload during project creation
+
+### Upload Flow
+
+1. User selects files via drag-and-drop or file picker
+2. Frontend filters out duplicate files based on filename
+3. Temporary document entries are created in the UI with "processing" status
+4. Files are uploaded to the backend via FormData with parameter name `file`
+5. On successful upload, temporary documents are replaced with actual document data
+6. On failure, temporary documents are removed and error is displayed
+7. Document list is refreshed to show the latest status
+
 ## Development
 
 ### Adding New Pages

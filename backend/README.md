@@ -118,6 +118,7 @@ The API will be available at http://localhost:8000.
 
 ## API Endpoints
 
+### Agent Endpoints
 - **GET /api/v1/agents/status**: Get the status of all AI agents
 - **GET /api/v1/agents/{agent_id}**: Get a specific agent by ID
 - **POST /api/v1/agents/tasks**: Create a new task for an AI agent
@@ -125,20 +126,62 @@ The API will be available at http://localhost:8000.
 - **POST /api/v1/agents/analysis/start**: Start a full crew analysis for a project
 - **GET /api/v1/agents/analysis/{analysis_id}/status**: Get the status and results of a crew analysis
 
+### Document Endpoints
+- **POST /api/v1/documents/upload**: Upload one or multiple documents
+  - Accepts both single and multiple files with parameter name `file`
+  - Returns standardized response with array of document objects
+- **GET /api/v1/documents/project/{project_id}**: Get all documents for a project
+- **GET /api/v1/documents/{document_id}**: Get a specific document
+- **DELETE /api/v1/documents/{document_id}**: Delete a document
+
+## Document Upload Implementation
+
+The document upload system is designed to handle both single and multiple file uploads efficiently and prevent duplicates.
+
+### Technical Implementation
+
+- **Unified API Endpoint**: The `/upload` endpoint handles both single and multiple file uploads using the same parameter name `file`
+- **Standardized Response Format**: All responses return a consistent structure with an array of document objects
+- **Asynchronous Processing**: Documents are processed asynchronously using FastAPI background tasks
+- **File Validation**: Validates file types, sizes, and content before processing
+- **Database Integration**: Documents are stored in the database with metadata and processing status
+
+### Code Structure
+
+- **documents_sqlalchemy.py**: Contains the API endpoints for document operations
+- **document_upload_service.py**: Handles the business logic for document processing
+- **document_models.py**: Defines the database models and Pydantic schemas for documents
+
+### Upload Flow
+
+1. Client sends a POST request to `/api/v1/documents/upload` with file(s) in FormData
+2. API validates the request and file types
+3. Files are saved to the filesystem with unique names
+4. Document metadata is stored in the database
+5. Background tasks are initiated for document processing
+6. API returns document metadata immediately while processing continues
+7. Client can poll for document status updates
+
 ## Project Structure
 
 ```
 backend/
 ├── app/
 │   ├── api/                # API endpoints
+│   │   └── endpoints/      
+│   │       └── documents_sqlalchemy.py  # Document API endpoints
 │   ├── config/             # Configuration files and loaders
 │   │   ├── agents.yaml     # Agent, task, and crew configurations
 │   │   └── config_loader.py # YAML configuration loader
 │   ├── core/               # Core application components
 │   ├── db/                 # Database models and initialization
+│   │   └── models/
+│   │       └── document.py # Document database models
 │   ├── models/             # Pydantic models
+│   │   └── document.py     # Document Pydantic schemas
 │   ├── services/           # Business logic services
-│   │   └── agent_service.py # Agent orchestration service
+│   │   ├── agent_service.py # Agent orchestration service
+│   │   └── document_upload_service.py # Document processing service
 │   └── main.py             # Application entry point
 ├── requirements.txt        # Python dependencies
 └── .env                    # Environment variables
