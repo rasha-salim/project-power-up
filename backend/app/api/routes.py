@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.endpoints import documents_sqlalchemy, projects, agents, websocket, test
+from app.api.endpoints import documents_sqlalchemy, projects, agents, websocket, test, simple_ws, debug_ws, simple_agent_ws
 
 
 api_router = APIRouter()
@@ -12,3 +12,6 @@ api_router.include_router(projects.router, prefix="/projects", tags=["projects"]
 api_router.include_router(agents.router, prefix="/agents", tags=["agents"])
 api_router.include_router(websocket.router, prefix="/ws", tags=["websocket"])
 api_router.include_router(test.router, prefix="/test", tags=["test"])
+api_router.include_router(simple_ws.router, prefix="/simple-ws", tags=["simple-websocket"])
+api_router.include_router(debug_ws.router, prefix="/debug-ws", tags=["debug-websocket"])
+api_router.include_router(simple_agent_ws.router, prefix="/simple-agent-ws", tags=["simple-agent-websocket"])

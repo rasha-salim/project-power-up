@@ -22,11 +22,13 @@ class WebSocketManager:
             websocket: WebSocket connection
             project_id: ID of the project the client is connecting to
         """
-        # Accept the connection
-        await websocket.accept()
+        # Note: WebSocket connection is now accepted in the endpoint before calling this method
+        logger.debug(f"WebSocketManager.connect called - Project: {project_id}, WebSocket ID: {id(websocket)}")
+        logger.debug(f"WebSocket state in manager.connect: {websocket.client_state if hasattr(websocket, 'client_state') else 'Not available'}")
         
         # Add to active connections for this project
         if project_id not in self.active_connections:
+            logger.debug(f"Creating new connection list for project {project_id}")
             self.active_connections[project_id] = []
         
         self.active_connections[project_id].append(websocket)

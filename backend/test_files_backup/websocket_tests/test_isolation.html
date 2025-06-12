@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebSocket Isolation Tests</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        button { padding: 10px; margin: 5px; }
+        #log { border: 1px solid #ccc; padding: 10px; height: 300px; overflow-y: auto; }
+        .error { color: red; }
+        .success { color: green; }
+    </style>
+</head>
+<body>
+    <h1>WebSocket Isolation Tests</h1>
+    
+    <h3>Test Servers (Port 8003):</h3>
+    <button onclick="testPort8003()">Test Port 8003</button>
+    
+    <h3>Main App Tests (Port 8000):</h3>
+    <button onclick="testMainDirect()">Test Main Direct WS</button>
+    <button onclick="testMainRouter()">Test Main Router WS</button>
+    
+    <h3>Minimal Server (Port 8003):</h3>
+    <button onclick="testMinimal()">Test Minimal Server</button>
+    
+    <button onclick="clearLog()">Clear Log</button>
+    
+    <h3>Log:</h3>
+    <div id="log"></div>
+    
+    <script>
+        function log(message, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const entry = document.createElement('div');
+            entry.className = type;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logDiv.appendChild(entry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+        
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+        }
+        
+        function testWebSocket(url, testName) {
+            log(`${testName}: Connecting to ${url}`);
+            
+            try {
+                const ws = new WebSocket(url);
+                
+                ws.onopen = (event) => {
+                    log(`${testName}: Connected!`, 'success');
+                };
+                
+                ws.onmessage = (event) => {
+                    log(`${testName}: Received: ${event.data}`, 'success');
+                };
+                
+                ws.onerror = (error) => {
+                    log(`${testName}: Error occurred`, 'error');
+                };
+                
+                ws.onclose = (event) => {
+                    log(`${testName}: Closed - Code: ${event.code}, Clean: ${event.wasClean}`, 
+                        event.code === 1000 ? 'success' : 'error');
+                };
+                
+            } catch (error) {
+                log(`${testName}: Failed to create WebSocket: ${error.message}`, 'error');
+            }
+        }
+        
+        function testPort8003() {
+            testWebSocket('ws://localhost:8003/ws', 'Port 8003');
+        }
+        
+        function testMainDirect() {
+            testWebSocket('ws://localhost:8000/test-ws-direct', 'Main Direct');
+        }
+        
+        function testMainRouter() {
+            testWebSocket('ws://localhost:8000/api/v1/ws/agent-conversation/cafdc31f-3e2f-48fb-92de-af73da4001da', 'Main Router');
+        }
+        
+        function testMinimal() {
+            testWebSocket('ws://localhost:8001/ws', 'Minimal');
+        }
+    </script>
+</body>
+</html>

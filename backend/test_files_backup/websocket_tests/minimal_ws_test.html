@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Minimal WebSocket Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        button { padding: 10px; margin: 5px; }
+        #log { border: 1px solid #ccc; padding: 10px; height: 300px; overflow-y: auto; }
+        .error { color: red; }
+        .success { color: green; }
+    </style>
+</head>
+<body>
+    <h1>Minimal WebSocket Test</h1>
+    
+    <button onclick="testMinimalServer()">Test Minimal Server (Port 8001)</button>
+    <button onclick="testMainApp()">Test Main App (Port 8000)</button>
+    <button onclick="testDirectEndpoint()">Test Direct Endpoint (Port 8000)</button>
+    <button onclick="clearLog()">Clear Log</button>
+    
+    <h3>Log:</h3>
+    <div id="log"></div>
+    
+    <script>
+        function log(message, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const entry = document.createElement('div');
+            entry.className = type;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logDiv.appendChild(entry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+        
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+        }
+        
+        function testMinimalServer() {
+            log('Testing minimal server on port 8001...');
+            testWebSocket('ws://localhost:8001/ws', 'Minimal Server Test');
+        }
+        
+        function testMainApp() {
+            log('Testing main app on port 8000...');
+            const projectId = 'test-' + Date.now();
+            testWebSocket(`ws://localhost:8000/agent-conversation/${projectId}`, 'Main App Test');
+        }
+        
+        function testDirectEndpoint() {
+            log('Testing direct endpoint on port 8000...');
+            testWebSocket('ws://localhost:8000/test-ws-direct', 'Direct Endpoint Test');
+        }
+        
+        function testWebSocket(url, testName) {
+            log(`Connecting to: ${url}`);
+            
+            try {
+                const ws = new WebSocket(url);
+                
+                ws.onopen = (event) => {
+                    log(`${testName}: Connection opened!`, 'success');
+                    ws.send('Hello from test client');
+                };
+                
+                ws.onmessage = (event) => {
+                    log(`${testName}: Received: ${event.data}`, 'success');
+                };
+                
+                ws.onerror = (error) => {
+                    log(`${testName}: Error occurred`, 'error');
+                    console.error('WebSocket error:', error);
+                };
+                
+                ws.onclose = (event) => {
+                    log(`${testName}: Connection closed - Code: ${event.code}, Reason: ${event.reason}, Clean: ${event.wasClean}`, 
+                        event.code === 1000 ? 'success' : 'error');
+                };
+                
+            } catch (error) {
+                log(`${testName}: Failed to create WebSocket: ${error.message}`, 'error');
+            }
+        }
+        
+        // Also log to console for debugging
+        console.log('Minimal WebSocket Test Page Loaded');
+    </script>
+</body>
+</html>

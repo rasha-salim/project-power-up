@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Standalone WebSocket Test Client</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        .connection-panel {
+            margin-bottom: 20px;
+            padding: 15px;
+            background-color: #f5f5f5;
+            border-radius: 5px;
+        }
+        .message-panel {
+            display: flex;
+            margin-bottom: 20px;
+        }
+        .message-input {
+            flex-grow: 1;
+            padding: 10px;
+            margin-right: 10px;
+        }
+        button {
+            padding: 10px 15px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-right: 5px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        .log-container {
+            flex-grow: 1;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 10px;
+            overflow-y: auto;
+            background-color: #f9f9f9;
+        }
+        .log-entry {
+            margin-bottom: 8px;
+            padding: 8px;
+            border-radius: 4px;
+        }
+        .log-info {
+            background-color: #e3f2fd;
+        }
+        .log-error {
+            background-color: #ffebee;
+        }
+        .log-success {
+            background-color: #e8f5e9;
+        }
+        .log-user {
+            background-color: #fff3e0;
+        }
+        .log-agent {
+            background-color: #f3e5f5;
+        }
+        .log-status {
+            background-color: #ede7f6;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Standalone WebSocket Test Client</h1>
+        
+        <div class="connection-panel">
+            <h2>Connection</h2>
+            <div>
+                <input type="text" id="wsUrl" value="ws://localhost:8767" style="width: 250px; padding: 10px; margin-right: 10px;">
+                <button id="connectBtn">Connect</button>
+                <button id="disconnectBtn" disabled>Disconnect</button>
+            </div>
+            <div id="connectionStatus" style="margin-top: 10px; font-weight: bold;">Not connected</div>
+        </div>
+        
+        <div class="message-panel">
+            <input type="text" id="messageInput" class="message-input" placeholder="Type a message..." disabled>
+            <button id="sendBtn" disabled>Send</button>
+            <button id="pingBtn" disabled>Send Ping</button>
+            <button id="startAnalysisBtn" disabled>Start Analysis</button>
+        </div>
+        
+        <div class="log-container" id="logContainer"></div>
+    </div>
+
+    <script>
+        let socket = null;
+        let pingInterval = null;
+        
+        // DOM Elements
+        const connectBtn = document.getElementById('connectBtn');
+        const disconnectBtn = document.getElementById('disconnectBtn');
+        const wsUrlInput = document.getElementById('wsUrl');
+        const messageInput = document.getElementById('messageInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const pingBtn = document.getElementById('pingBtn');
+        const startAnalysisBtn = document.getElementById('startAnalysisBtn');
+        const connectionStatus = document.getElementById('connectionStatus');
+        const logContainer = document.getElementById('logContainer');
+        
+        // Connect to WebSocket
+        connectBtn.addEventListener('click', () => {
+            const wsUrl = wsUrlInput.value.trim();
+            if (!wsUrl) {
+                addLogEntry('Please enter a WebSocket URL', 'error');
+                return;
+            }
+            
+            try {
+                // Connect to WebSocket
+                addLogEntry(`Connecting to: ${wsUrl}`, 'info');
+                socket = new WebSocket(wsUrl);
+                addLogEntry(`Attempting to connect to ${wsUrl}...`, 'info');
+                
+                // WebSocket event handlers
+                socket.onopen = (event) => {
+                    connectionStatus.textContent = 'Connected';
+                    connectionStatus.style.color = 'green';
+                    
+                    // Enable/disable buttons
+                    connectBtn.disabled = true;
+                    disconnectBtn.disabled = false;
+                    messageInput.disabled = false;
+                    sendBtn.disabled = false;
+                    pingBtn.disabled = false;
+                    startAnalysisBtn.disabled = false;
+                    
+                    addLogEntry('WebSocket connection established', 'success');
+                    
+                    // Start sending ping messages every 5 seconds to keep the connection alive
+                    startPingInterval();
+                };
+                
+                socket.onmessage = (event) => {
+                    console.log('Received message:', event.data);
+                    try {
+                        const data = JSON.parse(event.data);
+                        handleWebSocketMessage(data);
+                    } catch (error) {
+                        // Not JSON, treat as plain text
+                        addLogEntry(`Received: ${event.data}`, 'info');
+                    }
+                };
+                
+                socket.onclose = (event) => {
+                    connectionStatus.textContent = 'Disconnected';
+                    connectionStatus.style.color = 'red';
+                    
+                    // Enable/disable buttons
+                    connectBtn.disabled = false;
+                    disconnectBtn.disabled = true;
+                    messageInput.disabled = true;
+                    sendBtn.disabled = true;
+                    pingBtn.disabled = true;
+                    startAnalysisBtn.disabled = true;
+                    
+                    // Stop the ping interval
+                    stopPingInterval();
+                    
+                    // Log close event details
+                    console.log('WebSocket close event:', event);
+                    addLogEntry(`WebSocket connection closed. Code: ${event.code}, Reason: ${event.reason || 'No reason provided'}`, 'info');
+                    
+                    // Add detailed information about the close code
+                    if (event.code === 1006) {
+                        addLogEntry('Close code 1006 indicates an abnormal closure (the connection was closed abnormally, e.g., without sending or receiving a Close control frame)', 'error');
+                    }
+                    
+                    socket = null;
+                };
+                
+                socket.onerror = (error) => {
+                    console.error('WebSocket error:', error);
+                    addLogEntry(`WebSocket error: ${error.message || 'Unknown error'}`, 'error');
+                    addLogEntry('Check browser console for more details', 'error');
+                };
+                
+            } catch (error) {
+                addLogEntry(`Error connecting to WebSocket: ${error.message}`, 'error');
+            }
+        });
+        
+        // Function to start sending ping messages to keep the connection alive
+        function startPingInterval() {
+            // Clear any existing interval
+            if (pingInterval) {
+                clearInterval(pingInterval);
+            }
+            
+            // Send a ping message every 5 seconds
+            pingInterval = setInterval(() => {
+                if (socket && socket.readyState === WebSocket.OPEN) {
+                    try {
+                        const pingMessage = {
+                            type: "ping",
+                            timestamp: Date.now()
+                        };
+                        socket.send(JSON.stringify(pingMessage));
+                        console.log("Sent ping message");
+                    } catch (error) {
+                        console.error("Error sending ping:", error);
+                    }
+                }
+            }, 5000); // 5 seconds
+            
+            addLogEntry('Started ping interval (every 5 seconds)', 'info');
+        }
+        
+        // Function to stop the ping interval
+        function stopPingInterval() {
+            if (pingInterval) {
+                clearInterval(pingInterval);
+                pingInterval = null;
+                console.log("Stopped ping interval");
+            }
+        }
+        
+        // Disconnect from WebSocket
+        disconnectBtn.addEventListener('click', () => {
+            if (socket) {
+                // Stop the ping interval
+                stopPingInterval();
+                // Close the socket
+                socket.close(1000, "User disconnected");
+                addLogEntry('Disconnecting...', 'info');
+            }
+        });
+        
+        // Send message
+        sendBtn.addEventListener('click', () => {
+            sendUserMessage();
+        });
+        
+        // Send message on Enter key
+        messageInput.addEventListener('keypress', (event) => {
+            if (event.key === 'Enter') {
+                sendUserMessage();
+            }
+        });
+        
+        // Send ping
+        pingBtn.addEventListener('click', () => {
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                const pingMessage = {
+                    type: "ping",
+                    timestamp: Date.now()
+                };
+                socket.send(JSON.stringify(pingMessage));
+                addLogEntry('Sent ping message', 'info');
+            }
+        });
+        
+        // Start analysis
+        startAnalysisBtn.addEventListener('click', () => {
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                const startMessage = {
+                    type: "start_analysis",
+                    timestamp: Date.now()
+                };
+                socket.send(JSON.stringify(startMessage));
+                addLogEntry('Sent start analysis request', 'info');
+            }
+        });
+        
+        // Send user message
+        function sendUserMessage() {
+            const message = messageInput.value.trim();
+            if (!message) return;
+            
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                const userMessage = {
+                    type: "user_message",
+                    message: message,
+                    timestamp: Date.now()
+                };
+                socket.send(JSON.stringify(userMessage));
+                addLogEntry(`Sent: ${message}`, 'user');
+                messageInput.value = '';
+            }
+        }
+        
+        // Handle WebSocket messages
+        function handleWebSocketMessage(data) {
+            const messageType = data.type || 'unknown';
+            
+            switch (messageType) {
+                case 'connection_established':
+                    addLogEntry(`Server: ${data.message}`, 'success');
+                    break;
+                    
+                case 'agent_message':
+                    addLogEntry(`Server: ${data.message}`, 'agent');
+                    break;
+                    
+                case 'analysis_started':
+                    addLogEntry(`Analysis started: ${data.message}`, 'status');
+                    break;
+                    
+                case 'analysis_progress':
+                    addLogEntry(`Progress ${data.progress}%: ${data.message}`, 'status');
+                    break;
+                    
+                case 'analysis_complete':
+                    addLogEntry(`Analysis complete: ${data.message}`, 'success');
+                    break;
+                    
+                case 'pong':
+                    console.log('Received pong response');
+                    break;
+                    
+                case 'error':
+                    addLogEntry(`Error: ${data.message}`, 'error');
+                    break;
+                    
+                default:
+                    addLogEntry(`Received: ${JSON.stringify(data)}`, 'info');
+            }
+        }
+        
+        // Add log entry
+        function addLogEntry(message, type = 'info') {
+            const logEntry = document.createElement('div');
+            logEntry.className = `log-entry log-${type}`;
+            
+            const timestamp = new Date().toLocaleTimeString();
+            logEntry.textContent = `[${timestamp}] ${message}`;
+            
+            logContainer.appendChild(logEntry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+    </script>
+</body>
+</html>

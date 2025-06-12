@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
@@ -24,17 +24,38 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# Add CORS middleware
+# TEST: Direct WebSocket endpoint before middleware
+@app.websocket("/test-ws-direct")
+async def test_websocket_direct(websocket: WebSocket):
+    """Test WebSocket endpoint added directly to app"""
+    try:
+        await websocket.accept()
+        await websocket.send_text("Direct WebSocket Test - No Middleware")
+        data = await websocket.receive_text()
+        await websocket.send_text(f"Echo: {data}")
+        await websocket.close()
+    except Exception as e:
+        logger.error(f"Test WebSocket error: {e}")
+
+# Add CORS middleware with explicit WebSocket support
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # For development - restrict in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # Include API router
 app.include_router(api_router, prefix=settings.API_V1_STR)
+
+# Debug: List all registered routes
+logger.info("=== Registered Routes ===")
+for route in app.routes:
+    if hasattr(route, 'path'):
+        logger.info(f"Route: {route.path} - Type: {type(route).__name__}")
+logger.info("=== End Routes ===")
 
 @app.on_event("startup")
 async def startup_event():
