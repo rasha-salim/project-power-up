@@ -495,7 +495,6 @@ export default function ProjectDetailPage() {
             {activeTab === 'conversation' ? (
               <AgentConversation 
                 projectId={projectId}
-                isAnalysisRunning={isAnalysisRunning}
                 onStartAnalysis={handleStartAnalysis}
               />
             ) : (

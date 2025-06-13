@@ -383,37 +383,63 @@ class DocumentProcessor:
             
             # STAGE 5: Vectorize and store chunks (80%)
             try:
-                # Actually store the chunks in ChromaDB
-                client = get_chroma_client()
-                collection = client.get_or_create_collection("documents")
+                # Get the project_id for this document
+                project_id = None
+                try:
+                    result = await db.execute(
+                        text("SELECT project_id FROM documents WHERE id = :id"),
+                        {"id": document_id}
+                    )
+                    row = result.fetchone()
+                    if row:
+                        project_id = row.project_id
+                        logger.info(f"[DEBUG] Found project_id {project_id} for document {document_id}")
+                    else:
+                        logger.error(f"[DEBUG] Could not find project_id for document {document_id}")
+                except Exception as e:
+                    logger.error(f"[DEBUG] Error getting project_id: {e}")
                 
-                # Prepare chunk data for insertion
-                chunk_ids = []
-                documents = []
-                metadatas = []
-                
-                for i, chunk in enumerate(chunks):
-                    chunk_id = f"{document_id}_chunk_{i}"
-                    chunk_ids.append(chunk_id)
-                    documents.append(chunk)
-                    metadatas.append({
-                        "document_id": document_id,
-                        "chunk_number": i,
-                        "total_chunks": len(chunks),
-                        "filename": os.path.basename(file_path),
-                        "file_extension": os.path.splitext(file_path)[1].lower(),
-                        "processing_date": str(datetime.now())
-                    })
-                
-                # Insert chunks into ChromaDB
-                collection.add(
-                    ids=chunk_ids,
-                    documents=documents,
-                    metadatas=metadatas
-                )
-                
-                logger.info(f"[DEBUG] Successfully stored {len(chunks)} chunks in ChromaDB for document {document_id}")
-                doc_metadata["chunks_stored_in_chroma"] = len(chunks)
+                if not project_id:
+                    logger.error(f"[DEBUG] Cannot store document in ChromaDB without project_id")
+                    doc_metadata["vectorization_error"] = "No project_id found"
+                else:
+                    # Actually store the chunks in ChromaDB
+                    client = get_chroma_client()
+                    # Use project-specific collection to match DocumentSearchTool
+                    collection_name = f"project_{project_id}"
+                    collection = client.get_or_create_collection(collection_name)
+                    logger.info(f"[DEBUG] Using ChromaDB collection: {collection_name}")
+                    
+                    # Prepare chunk data for insertion
+                    chunk_ids = []
+                    documents = []
+                    metadatas = []
+                    
+                    for i, chunk in enumerate(chunks):
+                        chunk_id = f"{document_id}_chunk_{i}"
+                        chunk_ids.append(chunk_id)
+                        documents.append(chunk)
+                        metadatas.append({
+                            "document_id": document_id,
+                            "project_id": project_id,
+                            "chunk_number": i,
+                            "total_chunks": len(chunks),
+                            "filename": os.path.basename(file_path),
+                            "source": os.path.basename(file_path),  # Add source for DocumentSearchTool
+                            "file_extension": os.path.splitext(file_path)[1].lower(),
+                            "processing_date": str(datetime.now())
+                        })
+                    
+                    # Insert chunks into ChromaDB
+                    collection.add(
+                        ids=chunk_ids,
+                        documents=documents,
+                        metadatas=metadatas
+                    )
+                    
+                    logger.info(f"[DEBUG] Successfully stored {len(chunks)} chunks in ChromaDB collection {collection_name} for document {document_id}")
+                    doc_metadata["chunks_stored_in_chroma"] = len(chunks)
+                    doc_metadata["chroma_collection"] = collection_name
                 
             except Exception as vectorize_error:
                 logger.error(f"[DEBUG] Error during vectorization: {str(vectorize_error)}")
@@ -498,6 +524,79 @@ class DocumentProcessor:
             
             # Log completion regardless of success/failure
             logger.info(f"[DEBUG] Document processing task for {document_id} has completed execution")
+            
+            with open("document_processing_completed.txt", "a") as f:
+                f.write(f"{datetime.now()} - Completed processing document {document_id}\n")
+    
+    async def ensure_documents_indexed(self, db: AsyncSession, project_id: str) -> bool:
+        """
+        Ensure all processed documents for a project are indexed in ChromaDB.
+        This is useful for documents that were processed before ChromaDB indexing was implemented.
+        
+        Args:
+            db: Database session
+            project_id: ID of the project
+            
+        Returns:
+            bool: True if all documents are indexed, False otherwise
+        """
+        try:
+            logger.info(f"Ensuring all documents for project {project_id} are indexed in ChromaDB")
+            
+            # Get all processed documents for this project
+            from sqlalchemy import select
+            from app.models.document import Document
+            
+            stmt = select(Document).where(
+                Document.project_id == project_id,
+                Document.status == "processed"
+            )
+            result = await db.execute(stmt)
+            documents = result.scalars().all()
+            
+            if not documents:
+                logger.info(f"No processed documents found for project {project_id}")
+                return True
+            
+            # Get ChromaDB client and collection
+            client = get_chroma_client()
+            collection_name = f"project_{project_id}"
+            collection = client.get_or_create_collection(collection_name)
+            
+            # Check which documents are already indexed
+            try:
+                # Get all document IDs in the collection
+                all_ids = collection.get()["ids"] if collection.get()["ids"] else []
+                indexed_doc_ids = set()
+                for chunk_id in all_ids:
+                    # Extract document ID from chunk ID (format: "docid_chunk_0")
+                    if "_chunk_" in chunk_id:
+                        doc_id = chunk_id.split("_chunk_")[0]
+                        indexed_doc_ids.add(doc_id)
+                
+                logger.info(f"Found {len(indexed_doc_ids)} documents already indexed in ChromaDB")
+                
+                # Index documents that are not yet indexed
+                for doc in documents:
+                    if doc.id not in indexed_doc_ids:
+                        logger.info(f"Document {doc.id} ({doc.filename}) not indexed, attempting to index...")
+                        
+                        # Check if file exists
+                        if doc.file_path and os.path.exists(doc.file_path):
+                            # Re-process the document to index it
+                            await self.process_document(db, doc.id, doc.file_path)
+                        else:
+                            logger.warning(f"File not found for document {doc.id}: {doc.file_path}")
+                
+                return True
+                
+            except Exception as e:
+                logger.error(f"Error checking/indexing documents: {e}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error ensuring documents indexed for project {project_id}: {e}")
+            return False
     
     def _split_text_into_chunks(self, text: str, chunk_size: int = 1000, overlap: int = 200) -> List[str]:
         """

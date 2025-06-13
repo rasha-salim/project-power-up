@@ -106,29 +106,38 @@ class MockChromaClient:
         return self.get_or_create_collection(name)
 
 def get_chroma_client():
-    """Get a real ChromaDB client for vector storage"""
+    """Get a ChromaDB client for vector storage, preferring real client but falling back to mock if needed"""
     global chroma_client
-    try:
-        if chroma_client is None:
-            # Create ChromaDB directory if it doesn't exist
-            chroma_dir = os.path.join(os.getcwd(), "chromadb")
-            os.makedirs(chroma_dir, exist_ok=True)
-            
-            logger.info(f"Initializing new ChromaDB client with persistent storage at {chroma_dir}")
-            chroma_client = chromadb.PersistentClient(path=chroma_dir)
-            logger.info(f"ChromaDB client initialized: {type(chroma_client)}")
+    
+    # If we already have a client, return it
+    if chroma_client is not None:
+        # Check if it's already a mock client
+        if isinstance(chroma_client, MockChromaClient):
+            logger.info("Using existing mock ChromaDB client")
         else:
-            logger.info(f"Using existing ChromaDB client: {type(chroma_client)}")
+            logger.info(f"Using existing real ChromaDB client: {type(chroma_client)}")
+        return chroma_client
+    
+    # Try to create a real ChromaDB client first
+    try:
+        # Create ChromaDB directory if it doesn't exist
+        chroma_dir = os.path.join(os.getcwd(), "chromadb")
+        os.makedirs(chroma_dir, exist_ok=True)
+        
+        logger.info(f"Initializing new real ChromaDB client with persistent storage at {chroma_dir}")
+        chroma_client = chromadb.PersistentClient(path=chroma_dir)
+        logger.info(f"Real ChromaDB client initialized successfully: {type(chroma_client)}")
         return chroma_client
     except Exception as e:
-        logger.error(f"Error getting ChromaDB client: {str(e)}")
+        logger.error(f"Error initializing real ChromaDB client: {str(e)}")
         logger.error(f"Error type: {type(e)}")
         import traceback
         logger.error(f"Traceback: {traceback.format_exc()}")
-        # Create a new client as fallback
-        chroma_dir = os.path.join(os.getcwd(), "chromadb")
-        os.makedirs(chroma_dir, exist_ok=True)
-        return chromadb.PersistentClient(path=chroma_dir)
+        
+        # Fall back to mock client if real client fails
+        logger.warning("Falling back to mock ChromaDB client due to initialization error")
+        chroma_client = MockChromaClient()
+        return chroma_client
 
 async def init_db():
     """Initialize database connections and create tables"""
@@ -136,16 +145,27 @@ async def init_db():
         # We're connecting to an existing database, so we don't need to create tables
         logger.info("Using existing PostgreSQL database tables")
         
-        # Initialize mock ChromaDB client
+        # Initialize ChromaDB client (real or mock depending on what's available)
         global chroma_client
         chroma_client = get_chroma_client()
-        logger.info("Using mock ChromaDB implementation for vector storage")
         
-        # Create mock collections
-        chroma_client.get_or_create_collection("documents")
-        chroma_client.get_or_create_collection("projects")
-        chroma_client.get_or_create_collection("project_insights")
-        logger.info("Mock ChromaDB collections initialized successfully")
+        # Initialize document collections
+        collection_names = ["documents", "projects", "project_insights"]
+        try:
+            # Get or create all necessary collections
+            if isinstance(chroma_client, MockChromaClient):
+                # For mock client
+                for name in collection_names:
+                    chroma_client.get_or_create_collection(name)
+                logger.info("All mock ChromaDB collections initialized successfully")
+            else:
+                # For real client
+                for name in collection_names:
+                    chroma_client.get_or_create_collection(name=name)
+                logger.info("All real ChromaDB collections initialized successfully")
+        except Exception as coll_error:
+            logger.error(f"Error initializing ChromaDB collections: {str(coll_error)}")
+            logger.warning("Some document search features may not work properly")
         
         # Create uploads directory if it doesn't exist
         os.makedirs("./uploads", exist_ok=True)

@@ -1,34 +1,32 @@
 import { useState, useEffect, useRef } from 'react';
-import { PaperAirplaneIcon, MicrophoneIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
+import { PaperAirplaneIcon, XMarkIcon, CheckIcon } from '@heroicons/react/24/outline';
 
 interface Message {
   id: string;
-  type: 'user_message' | 'agent_message' | 'system_message';
-  sender: string;
-  sender_name?: string;
+  type: 'user' | 'agent' | 'system' | 'error' | 'result';
+  sender?: string;
+  senderName?: string;
   message: string;
   timestamp: string;
+  result?: any;
 }
 
 interface AgentConversationProps {
   projectId: string;
-  isAnalysisRunning: boolean;
   onStartAnalysis: () => void;
 }
 
-export default function AgentConversation({ 
-  projectId, 
-  isAnalysisRunning,
-  onStartAnalysis 
-}: AgentConversationProps) {
+export default function AgentConversation({ projectId, onStartAnalysis }: AgentConversationProps) {
   const [messages, setMessages] = useState<Message[]>([]);
-  const [newMessage, setNewMessage] = useState('');
+  const [input, setInput] = useState('');
   const [isConnected, setIsConnected] = useState(false);
-  const [isConnecting, setIsConnecting] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [currentAnalysisId, setCurrentAnalysisId] = useState<string | null>(null);
+  const [analysisComplete, setAnalysisComplete] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Scroll to bottom of messages
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
@@ -37,367 +35,359 @@ export default function AgentConversation({
     scrollToBottom();
   }, [messages]);
 
-  // Connect to WebSocket
-  useEffect(() => {
-    // In a real implementation, this would connect to the WebSocket server
-    // For now, we'll simulate the connection
+  const connectWebSocket = () => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      return;
+    }
+
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.hostname}:8000/api/v1/ws/agent-conversation/${projectId}`;
     
-    const connectWebSocket = () => {
-      setIsConnecting(true);
-      
-      // Simulate connection delay
-      setTimeout(() => {
-        setIsConnected(true);
-        setIsConnecting(false);
-        
-        // Add welcome message
-        setMessages([
-          {
-            id: '1',
-            type: 'system_message',
-            sender: 'system',
-            message: 'Welcome to the Agent Conversation. You can ask questions or start an analysis to see the AI agents in action.',
-            timestamp: new Date().toISOString()
-          }
-        ]);
-      }, 1500);
-      
-      return {
-        close: () => {
-          setIsConnected(false);
-        }
-      };
+    console.log('Connecting to WebSocket:', wsUrl);
+    const ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => {
+      console.log('WebSocket connected');
+      setIsConnected(true);
+      setMessages(prev => [...prev, {
+        id: Date.now().toString(),
+        type: 'system',
+        message: 'Connected to AI agent',
+        timestamp: new Date().toISOString()
+      }]);
     };
-    
-    wsRef.current = connectWebSocket() as any;
-    
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        console.log('Received message:', data);
+        
+        switch (data.type) {
+          case 'user_message':
+          case 'agent_message':
+          case 'system_message':
+            setMessages(prev => [...prev, {
+              id: Date.now().toString(),
+              type: data.type === 'agent_message' ? 'agent' : (data.type === 'user_message' ? 'user' : 'system'),
+              sender: data.sender,
+              senderName: data.sender_name,
+              message: data.message,
+              timestamp: new Date().toISOString()
+            }]);
+            break;
+
+          case 'analysis_started':
+            setCurrentAnalysisId(data.analysis_id);
+            setIsAnalyzing(true);
+            setAnalysisComplete(false);
+            break;
+
+          case 'analysis_complete':
+            setMessages(prev => [...prev, {
+              id: Date.now().toString(),
+              type: 'result',
+              sender: 'system',
+              senderName: 'System',
+              message: data.message || 'Analysis completed successfully!',
+              timestamp: new Date().toISOString(),
+              result: data.result
+            }]);
+            setIsAnalyzing(false);
+            setAnalysisComplete(true);
+            break;
+
+          case 'analysis_saved':
+            setMessages(prev => [...prev, {
+              id: Date.now().toString(),
+              type: 'system',
+              sender: 'system',
+              senderName: 'System',
+              message: data.message || 'Analysis saved to insights!',
+              timestamp: new Date().toISOString()
+            }]);
+            setCurrentAnalysisId(null);
+            setAnalysisComplete(false);
+            onStartAnalysis(); // Update parent component
+            break;
+
+          case 'analysis_cancelled':
+            setCurrentAnalysisId(null);
+            setIsAnalyzing(false);
+            setAnalysisComplete(false);
+            setMessages(prev => [...prev, {
+              id: Date.now().toString(),
+              type: 'system',
+              message: data.message || 'Analysis was cancelled',
+              timestamp: new Date().toISOString()
+            }]);
+            break;
+
+          case 'error':
+            setMessages(prev => [...prev, {
+              id: Date.now().toString(),
+              type: 'error',
+              message: data.message || 'An error occurred',
+              timestamp: new Date().toISOString()
+            }]);
+            setIsAnalyzing(false);
+            break;
+
+          case 'ping':
+            // Ignore ping messages
+            break;
+
+          default:
+            console.log('Unknown message type:', data.type);
+        }
+      } catch (error) {
+        console.error('Error parsing WebSocket message:', error);
+      }
+    };
+
+    ws.onerror = (error) => {
+      console.error('WebSocket error:', error);
+      setMessages(prev => [...prev, {
+        id: Date.now().toString(),
+        type: 'error',
+        message: 'Connection error occurred',
+        timestamp: new Date().toISOString()
+      }]);
+    };
+
+    ws.onclose = () => {
+      console.log('WebSocket disconnected');
+      setIsConnected(false);
+      wsRef.current = null;
+      
+      // Attempt to reconnect after 3 seconds
+      reconnectTimeoutRef.current = setTimeout(() => {
+        console.log('Attempting to reconnect...');
+        connectWebSocket();
+      }, 3000);
+    };
+
+    wsRef.current = ws;
+  };
+
+  useEffect(() => {
+    connectWebSocket();
+
     return () => {
-      wsRef.current?.close();
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
     };
   }, [projectId]);
 
-  // Handle sending a message
-  const handleSendMessage = () => {
-    if (!newMessage.trim() || !isConnected) return;
-    
-    // Create new message
-    const userMessage: Message = {
-      id: Date.now().toString(),
-      type: 'user_message',
-      sender: 'user',
-      message: newMessage,
-      timestamp: new Date().toISOString()
+  const sendMessage = () => {
+    if (!input.trim() || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    // If analysis is complete, treat this as a question about the analysis
+    if (analysisComplete && currentAnalysisId) {
+      const message = {
+        type: 'user_question',
+        analysis_id: currentAnalysisId,
+        question: input.trim()
+      };
+
+      wsRef.current.send(JSON.stringify(message));
+      
+      // Add user message to UI
+      setMessages(prev => [...prev, {
+        id: Date.now().toString(),
+        type: 'user',
+        message: input.trim(),
+        timestamp: new Date().toISOString()
+      }]);
+    } else {
+      // Regular message (not during analysis)
+      const message = {
+        type: 'user_message',
+        message: input.trim()
+      };
+
+      wsRef.current.send(JSON.stringify(message));
+    }
+
+    setInput('');
+  };
+
+  const startAnalysis = (force: boolean = false) => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    const message = {
+      type: 'start_analysis',
+      force: force
     };
-    
-    // Add to messages
-    setMessages((prev) => [...prev, userMessage]);
-    
-    // Clear input
-    setNewMessage('');
-    
-    // In a real implementation, this would send the message to the WebSocket server
-    // For now, we'll simulate the agent responses
-    simulateAgentResponses(newMessage);
+
+    wsRef.current.send(JSON.stringify(message));
   };
 
-  // Simulate agent responses
-  const simulateAgentResponses = (userMessage: string) => {
-    // Technical Agent response
-    setTimeout(() => {
-      const technicalResponse: Message = {
-        id: Date.now().toString(),
-        type: 'agent_message',
-        sender: 'technical_agent',
-        sender_name: 'Technical Analysis Agent',
-        message: `I've analyzed the technical aspects of your question: "${userMessage}". Based on my analysis, I recommend considering a microservices architecture with the following components...`,
-        timestamp: new Date().toISOString()
-      };
-      
-      setMessages((prev) => [...prev, technicalResponse]);
-    }, 1500);
-    
-    // Risk Agent response
-    setTimeout(() => {
-      const riskResponse: Message = {
-        id: Date.now().toString(),
-        type: 'agent_message',
-        sender: 'risk_agent',
-        sender_name: 'Risk Assessment Agent',
-        message: `After reviewing the technical recommendations, I've identified several potential risk factors that should be considered. The main concerns are: 1) Integration complexity, 2) Scalability challenges, 3) Security considerations...`,
-        timestamp: new Date().toISOString()
-      };
-      
-      setMessages((prev) => [...prev, riskResponse]);
-    }, 3500);
-    
-    // Planning Agent response
-    setTimeout(() => {
-      const planningResponse: Message = {
-        id: Date.now().toString(),
-        type: 'agent_message',
-        sender: 'planning_agent',
-        sender_name: 'Project Planning Agent',
-        message: `Taking into account both the technical architecture and risk assessment, I've developed an initial project plan. The timeline would be approximately 12 weeks, with key milestones at weeks 4, 8, and 12. Resource requirements include...`,
-        timestamp: new Date().toISOString()
-      };
-      
-      setMessages((prev) => [...prev, planningResponse]);
-    }, 6000);
+  const cancelAnalysis = () => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN || !currentAnalysisId) {
+      return;
+    }
+
+    const message = {
+      type: 'cancel_analysis',
+      analysis_id: currentAnalysisId
+    };
+
+    wsRef.current.send(JSON.stringify(message));
   };
 
-  // Simulate full analysis
-  const simulateFullAnalysis = () => {
-    // System message
-    setMessages((prev) => [
-      ...prev, 
-      {
-        id: Date.now().toString(),
-        type: 'system_message',
-        sender: 'system',
-        message: 'Starting comprehensive project analysis...',
-        timestamp: new Date().toISOString()
-      }
-    ]);
-    
-    // Technical Agent response
-    setTimeout(() => {
-      const technicalResponse: Message = {
-        id: Date.now().toString(),
-        type: 'agent_message',
-        sender: 'technical_agent',
-        sender_name: 'Technical Analysis Agent',
-        message: `I've analyzed the project documents and identified the key technical requirements. Based on my analysis, I recommend a cloud-based architecture with the following components:
-        
-1. Frontend: React with Next.js for server-side rendering
-2. Backend: Node.js microservices with Express
-3. Database: PostgreSQL for structured data, MongoDB for unstructured data
-4. Authentication: OAuth 2.0 with JWT tokens
-5. Deployment: Docker containers orchestrated with Kubernetes
+  const confirmAndSaveAnalysis = () => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN || !currentAnalysisId) {
+      return;
+    }
 
-This architecture provides scalability, maintainability, and aligns with modern development practices.`,
-        timestamp: new Date().toISOString()
-      };
-      
-      setMessages((prev) => [...prev, technicalResponse]);
-    }, 2000);
-    
-    // Risk Agent response
-    setTimeout(() => {
-      const riskResponse: Message = {
-        id: Date.now().toString(),
-        type: 'agent_message',
-        sender: 'risk_agent',
-        sender_name: 'Risk Assessment Agent',
-        message: `Based on the technical architecture and project requirements, I've identified several key risks:
+    const message = {
+      type: 'confirm_analysis',
+      analysis_id: currentAnalysisId
+    };
 
-1. Integration Risk: The microservices architecture introduces complexity in service communication
-   - Mitigation: Implement comprehensive API documentation and service contracts
-
-2. Scalability Risk: High user load during peak periods may affect performance
-   - Mitigation: Implement auto-scaling and load testing before launch
-
-3. Security Risk: Multiple services increase the attack surface
-   - Mitigation: Regular security audits and implementing zero-trust architecture
-
-4. Timeline Risk: The proposed architecture may require specialized skills
-   - Mitigation: Early hiring or training for key technical roles
-
-The overall risk profile is moderate, but manageable with proper planning and monitoring.`,
-        timestamp: new Date().toISOString()
-      };
-      
-      setMessages((prev) => [...prev, riskResponse]);
-    }, 5000);
-    
-    // Planning Agent response
-    setTimeout(() => {
-      const planningResponse: Message = {
-        id: Date.now().toString(),
-        type: 'agent_message',
-        sender: 'planning_agent',
-        sender_name: 'Project Planning Agent',
-        message: `Taking into account both the technical architecture and risk assessment, I've developed a comprehensive project plan:
-
-Timeline: 16 weeks total development time
-
-Key Milestones:
-1. Week 4: Architecture design complete, development environment set up
-2. Week 8: Core functionality implemented, integration testing begins
-3. Week 12: Feature complete, system testing and optimization
-4. Week 16: Production deployment and handover
-
-Resource Requirements:
-- 2 Frontend Developers (React, Next.js)
-- 3 Backend Developers (Node.js, microservices)
-- 1 DevOps Engineer (Docker, Kubernetes)
-- 1 QA Engineer
-- 1 Project Manager
-
-Critical Path Items:
-- Database schema design (Weeks 1-2)
-- API development (Weeks 3-8)
-- Integration testing (Weeks 8-12)
-
-This plan accounts for the identified risks and includes buffer time for addressing unexpected challenges.`,
-        timestamp: new Date().toISOString()
-      };
-      
-      setMessages((prev) => [...prev, planningResponse]);
-    }, 9000);
-    
-    // System message - completion
-    setTimeout(() => {
-      setMessages((prev) => [
-        ...prev, 
-        {
-          id: Date.now().toString(),
-          type: 'system_message',
-          sender: 'system',
-          message: 'Analysis complete. You can view the detailed results in the Project Insights dashboard.',
-          timestamp: new Date().toISOString()
-        }
-      ]);
-      
-      // Notify parent that analysis is complete
-      // In a real implementation, this would be triggered by the WebSocket
-    }, 11000);
+    wsRef.current.send(JSON.stringify(message));
   };
 
   return (
-    <div className="bg-white shadow rounded-lg overflow-hidden flex flex-col h-[600px]">
-      <div className="px-4 py-5 sm:px-6 border-b border-gray-200">
-        <h3 className="text-lg font-medium text-gray-900">Agent Conversation</h3>
-      </div>
-      
-      {/* Connection status */}
-      {!isConnected && (
-        <div className="flex-1 flex items-center justify-center p-6 bg-gray-50">
-          {isConnecting ? (
-            <div className="text-center">
-              <svg className="animate-spin h-8 w-8 text-primary-600 mx-auto mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-              </svg>
-              <p className="text-gray-600">Connecting to agents...</p>
-            </div>
-          ) : (
-            <div className="text-center">
-              <div className="bg-red-100 text-red-700 p-3 rounded-lg mb-4">
-                <p>Connection to agents lost</p>
-              </div>
-              <button 
-                onClick={() => {
-                  setIsConnecting(true);
-                  setTimeout(() => {
-                    setIsConnected(true);
-                    setIsConnecting(false);
-                  }, 1500);
-                }} 
-                className="btn btn-primary"
-              >
-                <ArrowPathIcon className="w-4 h-4 mr-1" />
-                Reconnect
-              </button>
-            </div>
-          )}
-        </div>
-      )}
-      
-      {/* Messages */}
-      {isConnected && (
-        <>
-          <div className="flex-1 overflow-y-auto p-4 bg-gray-50">
-            {messages.map((message) => (
-              <div key={message.id} className="mb-4">
-                {message.type === 'user_message' && (
-                  <div className="user-message">
-                    <div className="flex items-center mb-1">
-                      <span className="font-medium text-gray-900">You</span>
-                      <span className="text-xs text-gray-500 ml-2">
-                        {new Date(message.timestamp).toLocaleTimeString()}
-                      </span>
-                    </div>
-                    <p>{message.message}</p>
-                  </div>
-                )}
-                
-                {message.type === 'agent_message' && (
-                  <div className={`agent-message ${
-                    message.sender === 'technical_agent' 
-                      ? 'agent-message-technical' 
-                      : message.sender === 'risk_agent'
-                        ? 'agent-message-risk'
-                        : 'agent-message-planning'
-                  }`}>
-                    <div className="flex items-center mb-1">
-                      <span className="font-medium text-gray-900">{message.sender_name}</span>
-                      <span className="text-xs text-gray-500 ml-2">
-                        {new Date(message.timestamp).toLocaleTimeString()}
-                      </span>
-                    </div>
-                    <div className="whitespace-pre-line">{message.message}</div>
-                  </div>
-                )}
-                
-                {message.type === 'system_message' && (
-                  <div className="bg-gray-100 p-3 rounded-lg text-sm text-gray-600 text-center">
-                    {message.message}
-                  </div>
-                )}
-              </div>
-            ))}
-            <div ref={messagesEndRef} />
+    <div className="flex flex-col h-full">
+      {/* Header */}
+      <div className="bg-white border-b px-6 py-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-medium text-gray-900">AI Agent Conversation</h3>
+            <p className="text-sm text-gray-500">
+              {isConnected ? 'Connected' : 'Connecting...'} • 
+              {isAnalyzing ? ' Analysis in progress' : 
+               analysisComplete ? ' Review analysis and ask questions' : ' Ready'}
+            </p>
           </div>
-          
-          {/* Input area */}
-          <div className="p-4 border-t border-gray-200">
-            {isAnalysisRunning ? (
-              <div className="bg-blue-50 p-3 rounded-lg text-blue-700 text-center">
-                <div className="flex items-center justify-center mb-2">
-                  <svg className="animate-spin h-5 w-5 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                  </svg>
-                  <span>Analysis in progress...</span>
-                </div>
-                <p className="text-sm">Agents are analyzing your project. Please wait.</p>
-              </div>
-            ) : messages.length === 0 || (messages.length === 1 && messages[0].type === 'system_message') ? (
-              <div className="text-center">
-                <p className="text-gray-600 mb-4">Start a conversation with the AI agents or run a full project analysis</p>
-                <button 
-                  onClick={() => {
-                    onStartAnalysis();
-                    simulateFullAnalysis();
-                  }} 
-                  className="btn btn-primary w-full"
+          <div className="flex gap-2">
+            {!isAnalyzing && !analysisComplete && (
+              <>
+                <button
+                  onClick={() => startAnalysis(false)}
+                  disabled={!isConnected}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  Start Project Analysis
+                  Start Analysis
                 </button>
-              </div>
-            ) : (
-              <div className="flex items-center">
-                <input
-                  type="text"
-                  value={newMessage}
-                  onChange={(e) => setNewMessage(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
-                  placeholder="Ask a question or provide additional information..."
-                  className="input flex-1 mr-2"
-                />
-                <button 
-                  onClick={handleSendMessage}
-                  disabled={!newMessage.trim()}
-                  className="btn btn-primary p-2"
-                  aria-label="Send message"
+                <button
+                  onClick={() => startAnalysis(true)}
+                  disabled={!isConnected}
+                  className="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  <PaperAirplaneIcon className="w-5 h-5" />
+                  Force New Analysis
                 </button>
-              </div>
+              </>
+            )}
+            {isAnalyzing && (
+              <button
+                onClick={cancelAnalysis}
+                disabled={!isConnected || !currentAnalysisId}
+                className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                <XMarkIcon className="h-5 w-5" />
+                Cancel Analysis
+              </button>
+            )}
+            {analysisComplete && (
+              <button
+                onClick={confirmAndSaveAnalysis}
+                disabled={!isConnected || !currentAnalysisId}
+                className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                <CheckIcon className="h-5 w-5" />
+                Save to Insights
+              </button>
             )}
           </div>
-        </>
-      )}
+        </div>
+      </div>
+
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto p-6 space-y-4">
+        {messages.map((message) => (
+          <div
+            key={message.id}
+            className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}
+          >
+            <div
+              className={`max-w-3xl rounded-lg px-4 py-2 ${
+                message.type === 'user'
+                  ? 'bg-blue-600 text-white'
+                  : message.type === 'error'
+                  ? 'bg-red-100 text-red-800'
+                  : message.type === 'system'
+                  ? 'bg-gray-100 text-gray-800'
+                  : message.type === 'result'
+                  ? 'bg-green-100 text-green-800'
+                  : 'bg-gray-200 text-gray-900'
+              }`}
+            >
+              {message.senderName && (
+                <div className="font-semibold text-sm mb-1">
+                  {message.senderName}
+                </div>
+              )}
+              <div className="whitespace-pre-wrap">{message.message}</div>
+              {message.result && (
+                <div className="mt-2 pt-2 border-t border-gray-300">
+                  <div className="text-sm font-semibold mb-1">Analysis Results:</div>
+                  <pre className="text-xs overflow-x-auto bg-white bg-opacity-50 p-2 rounded">
+                    {typeof message.result.technical_analysis === 'string' 
+                      ? message.result.technical_analysis 
+                      : JSON.stringify(message.result, null, 2)}
+                  </pre>
+                </div>
+              )}
+              <div className="text-xs opacity-75 mt-1">
+                {new Date(message.timestamp).toLocaleTimeString()}
+              </div>
+            </div>
+          </div>
+        ))}
+        <div ref={messagesEndRef} />
+      </div>
+
+      {/* Input */}
+      <div className="bg-white border-t px-6 py-4">
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
+            disabled={!isConnected || (isAnalyzing && !analysisComplete)}
+            placeholder={
+              !isConnected ? "Connecting..." : 
+              isAnalyzing && !analysisComplete ? "Analysis in progress..." :
+              analysisComplete ? "Ask questions about the analysis..." :
+              "Type a message..."
+            }
+            className="flex-1 px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+          />
+          <button
+            onClick={sendMessage}
+            disabled={!isConnected || !input.trim() || (isAnalyzing && !analysisComplete)}
+            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <PaperAirplaneIcon className="h-5 w-5" />
+          </button>
+        </div>
+        {analysisComplete && (
+          <p className="text-sm text-gray-600 mt-2">
+            Ask questions about the analysis or click "Save to Insights" when you're ready.
+          </p>
+        )}
+      </div>
     </div>
   );
 }

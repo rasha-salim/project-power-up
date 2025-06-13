@@ -148,10 +148,15 @@ async def start_analysis_v2(
     """
     try:
         logger.info(f"Starting analysis v2 for project {project_id}")
+        
+        # Import WebSocketManager here to avoid circular imports
+        from app.services.websocket_manager import WebSocketManager
+        ws_manager = WebSocketManager()
+        
         agent_service = AgentServiceV2()
         
-        # Start analysis
-        analysis_id = await agent_service.start_analysis(db, project_id)
+        # Start analysis with WebSocket manager for real-time updates
+        analysis_id = await agent_service.start_analysis(db, project_id, ws_manager)
         
         return {
             "analysis_id": analysis_id,

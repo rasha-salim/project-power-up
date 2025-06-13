@@ -5,6 +5,8 @@ import asyncio
 import uuid
 import sys
 import traceback
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from app.core.config import settings
 
 # Configure detailed logging
 logger = logging.getLogger(__name__)
@@ -96,22 +98,197 @@ async def agent_conversation_websocket(
                         logger.debug(f"Sent pong response - Project: {project_id}, Client ID: {client_id}")
                     
                     elif message_type == "user_message":
-                        # Echo the message back for now
-                        # In a real implementation, this would trigger agent processing
-                        echo_message = {
-                            "type": "echo",
-                            "original_message": message_data,
-                            "message": f"Echo: {message_data.get('message', '')}"
+                        # Process user message
+                        user_message_content = message_data.get('message', '')
+                        logger.info(f"Processing user message - Project: {project_id}, Content: {user_message_content}")
+                        
+                        # Echo back acknowledgment
+                        ack_message = {
+                            "type": "acknowledgment",
+                            "message": f"Received: {user_message_content}"
                         }
-                        await websocket.send_text(json.dumps(echo_message))
-                        logger.info(f"Sent echo response - Project: {project_id}, Client ID: {client_id}")
+                        await websocket.send_text(json.dumps(ack_message))
                         
                         # Broadcast message to all clients in the same project
                         await broadcast_message(project_id, client_id, {
                             "type": "broadcast",
                             "from_client": client_id,
-                            "message": message_data.get('message', '')
+                            "message": user_message_content
                         })
+                        
+                    elif message_type == "start_analysis":
+                        # Trigger agent analysis
+                        force_analysis = message_data.get("force", False)
+                        logger.info(f"Starting agent analysis for project {project_id} requested by client {client_id}, force={force_analysis}")
+                        
+                        # Send acknowledgment to client
+                        await websocket.send_text(json.dumps({
+                            "type": "system_message",
+                            "message": f"Starting agent analysis{' (forced)' if force_analysis else ''}..."
+                        }))
+                        
+                        try:
+                            # Import dependencies here to avoid circular imports
+                            from sqlalchemy.ext.asyncio import AsyncSession
+                            from app.db.init_db_simple import get_async_db
+                            from app.services.agent_service_v2 import AgentServiceV2
+                            from app.services.websocket_manager import WebSocketManager
+                            
+                            # Get database session
+                            from app.db.init_db_simple import get_async_db
+                            db = await anext(get_async_db().__aiter__())
+                            
+                            # Create WebSocket manager and register connections
+                            ws_manager = WebSocketManager()
+                            
+                            # Register all active connections for this project
+                            if project_id in active_connections:
+                                for client_id, client_ws in active_connections[project_id].items():
+                                    await ws_manager.connect(client_ws, project_id)
+                            
+                            # Start agent analysis
+                            agent_service = AgentServiceV2()
+                            analysis_id = await agent_service.start_analysis(db, project_id, ws_manager, force=force_analysis)
+                            
+                            # Send confirmation to client
+                            await websocket.send_text(json.dumps({
+                                "type": "analysis_started",
+                                "analysis_id": analysis_id,
+                                "message": "Agent analysis started successfully"
+                            }))
+                            
+                        except Exception as e:
+                            logger.error(f"Error starting agent analysis: {str(e)}")
+                            await websocket.send_text(json.dumps({
+                                "type": "error",
+                                "message": f"Failed to start analysis: {str(e)}"
+                            }))
+                    
+                    elif message_type == "cancel_analysis":
+                        # Cancel agent analysis
+                        analysis_id = message_data.get("analysis_id")
+                        logger.info(f"Cancelling agent analysis {analysis_id} for project {project_id} requested by client {client_id}")
+                        
+                        try:
+                            # Import dependencies here to avoid circular imports
+                            from app.services.agent_service_v2 import AgentServiceV2
+                            
+                            # Cancel the analysis
+                            agent_service = AgentServiceV2()
+                            success = await agent_service.cancel_analysis(analysis_id)
+                            
+                            if success:
+                                # Send confirmation to client
+                                await websocket.send_text(json.dumps({
+                                    "type": "system_message",
+                                    "message": "Analysis cancelled successfully"
+                                }))
+                                
+                                # Broadcast cancellation to all clients
+                                await broadcast_message(project_id, client_id, {
+                                    "type": "analysis_cancelled",
+                                    "analysis_id": analysis_id,
+                                    "message": "Analysis has been cancelled"
+                                })
+                            else:
+                                await websocket.send_text(json.dumps({
+                                    "type": "error",
+                                    "message": "Failed to cancel analysis - it may have already completed"
+                                }))
+                                
+                        except Exception as e:
+                            logger.error(f"Error cancelling agent analysis: {str(e)}")
+                            await websocket.send_text(json.dumps({
+                                "type": "error",
+                                "message": f"Failed to cancel analysis: {str(e)}"
+                            }))
+                    
+                    elif message_type == "user_question":
+                        # Handle user question about analysis
+                        analysis_id = message_data.get("analysis_id")
+                        question = message_data.get("question", "")
+                        
+                        if not analysis_id or not question:
+                            await websocket.send_text(json.dumps({
+                                "type": "error",
+                                "message": "Missing analysis_id or question"
+                            }))
+                            continue
+                        
+                        logger.info(f"User question for analysis {analysis_id}: {question}")
+                        
+                        try:
+                            # Import dependencies
+                            from sqlalchemy.ext.asyncio import AsyncSession
+                            from app.db.init_db_simple import get_async_db
+                            from app.services.agent_service_v2 import AgentServiceV2
+                            from app.services.websocket_manager import WebSocketManager
+                            
+                            # Get database session
+                            db = await anext(get_async_db().__aiter__())
+                            
+                            # Create WebSocket manager and register connections
+                            ws_manager = WebSocketManager()
+                            if project_id in active_connections:
+                                for client_id, client_ws in active_connections[project_id].items():
+                                    await ws_manager.connect(client_ws, project_id)
+                            
+                            # Handle the question
+                            agent_service = AgentServiceV2()
+                            await agent_service.handle_user_question(db, analysis_id, question, ws_manager)
+                            
+                        except Exception as e:
+                            logger.error(f"Error handling user question: {str(e)}")
+                            await websocket.send_text(json.dumps({
+                                "type": "error",
+                                "message": f"Failed to process question: {str(e)}"
+                            }))
+                    
+                    elif message_type == "confirm_analysis":
+                        # Confirm and save analysis
+                        analysis_id = message_data.get("analysis_id")
+                        
+                        if not analysis_id:
+                            await websocket.send_text(json.dumps({
+                                "type": "error",
+                                "message": "Missing analysis_id"
+                            }))
+                            continue
+                        
+                        logger.info(f"Confirming and saving analysis {analysis_id}")
+                        
+                        try:
+                            # Import dependencies
+                            from sqlalchemy.ext.asyncio import AsyncSession
+                            from app.db.init_db_simple import get_async_db
+                            from app.services.agent_service_v2 import AgentServiceV2
+                            from app.services.websocket_manager import WebSocketManager
+                            
+                            # Get database session
+                            db = await anext(get_async_db().__aiter__())
+                            
+                            # Create WebSocket manager and register connections
+                            ws_manager = WebSocketManager()
+                            if project_id in active_connections:
+                                for client_id, client_ws in active_connections[project_id].items():
+                                    await ws_manager.connect(client_ws, project_id)
+                            
+                            # Confirm and save
+                            agent_service = AgentServiceV2()
+                            success = await agent_service.confirm_and_save_analysis(db, analysis_id, ws_manager)
+                            
+                            if not success:
+                                await websocket.send_text(json.dumps({
+                                    "type": "error",
+                                    "message": "Failed to save analysis"
+                                }))
+                            
+                        except Exception as e:
+                            logger.error(f"Error confirming analysis: {str(e)}")
+                            await websocket.send_text(json.dumps({
+                                "type": "error",
+                                "message": f"Failed to save analysis: {str(e)}"
+                            }))
                     
                     else:
                         # Handle unknown message types

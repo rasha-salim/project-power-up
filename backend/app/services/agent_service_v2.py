@@ -1,8 +1,8 @@
 import logging
 import json
 import uuid
-import asyncio
 import os
+import asyncio
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 
@@ -27,8 +27,10 @@ class AgentServiceV2:
     def __init__(self):
         """Initialize the agent service"""
         self.config_loader = ConfigLoader()
+        self.running_tasks = {}
+        self.pending_analyses = {}
     
-    async def start_analysis(self, db: AsyncSession, project_id: str, ws_manager: Optional[WebSocketManager] = None) -> str:
+    async def start_analysis(self, db: AsyncSession, project_id: str, ws_manager: Optional[WebSocketManager] = None, force: bool = False) -> str:
         """
         Start an agent analysis for a project
         
@@ -44,7 +46,7 @@ class AgentServiceV2:
         analysis_id = str(uuid.uuid4())
         
         # Log the start of the analysis
-        logger.info(f"Starting analysis {analysis_id} for project {project_id}")
+        logger.info(f"Starting agent analysis for project {project_id} (force={force})")
         
         # Notify clients if WebSocket manager is provided
         if ws_manager:
@@ -58,8 +60,20 @@ class AgentServiceV2:
                 }
             )
         
-        # Start the analysis in a background task
-        asyncio.create_task(self._execute_analysis(analysis_id, project_id, db, ws_manager))
+        # Start the analysis in the background
+        task = asyncio.create_task(
+            self._execute_analysis(analysis_id, project_id, db, ws_manager, force)
+        )
+        
+        # Track the running task
+        self.running_tasks[analysis_id] = task
+        
+        # Clean up completed tasks
+        def cleanup_task(task):
+            if analysis_id in self.running_tasks:
+                del self.running_tasks[analysis_id]
+        
+        task.add_done_callback(cleanup_task)
         
         return analysis_id
     
@@ -98,35 +112,228 @@ class AgentServiceV2:
             "results": None
         }
     
-    async def _execute_analysis(self, analysis_id: str, project_id: str, db: AsyncSession, ws_manager: Optional[WebSocketManager] = None) -> None:
+    async def cancel_analysis(self, analysis_id: str) -> bool:
         """
-        Execute an agent analysis
+        Cancel a running analysis
         
         Args:
-            analysis_id: ID of the analysis
-            project_id: ID of the project to analyze
-            db: Database session
-            ws_manager: Optional WebSocket manager for real-time updates
+            analysis_id: ID of the analysis to cancel
+            
+        Returns:
+            bool: True if cancelled successfully, False otherwise
         """
         try:
-            logger.info(f"Executing analysis {analysis_id} for project {project_id}")
+            # Check if analysis is in running tasks
+            if analysis_id in self.running_tasks:
+                task = self.running_tasks[analysis_id]
+                
+                # Cancel the task
+                task.cancel()
+                
+                # Remove from running tasks
+                del self.running_tasks[analysis_id]
+                
+                logger.info(f"Successfully cancelled analysis {analysis_id}")
+                return True
+            else:
+                logger.warning(f"Analysis {analysis_id} not found in running tasks")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error cancelling analysis {analysis_id}: {e}")
+            return False
+    
+    async def handle_user_question(self, db: AsyncSession, analysis_id: str, question: str, ws_manager: Optional[WebSocketManager] = None) -> str:
+        """
+        Handle a user question about the analysis
+        
+        Args:
+            db: Database session
+            analysis_id: ID of the analysis
+            question: User's question
+            ws_manager: WebSocket manager for real-time updates
             
-            # Check if all documents for this project are processed
-            # Import here to avoid circular imports
-            from app.services.document_processor import DocumentProcessor
-            document_processor = DocumentProcessor()
+        Returns:
+            str: Agent's response
+        """
+        try:
+            # Check if we have the analysis in memory
+            if analysis_id not in self.pending_analyses:
+                logger.error(f"Analysis {analysis_id} not found in pending analyses")
+                return "I'm sorry, but I can't find the analysis context. The analysis may have expired or been completed."
             
-            # Send status update via WebSocket
+            pending = self.pending_analyses[analysis_id]
+            project_id = pending["project_id"]
+            technical_agent = pending["technical_agent"]
+            document_search_tool = pending["document_search_tool"]
+            
+            logger.info(f"Handling user question for analysis {analysis_id}: {question}")
+            
+            # Send status update
             if ws_manager:
                 await ws_manager.broadcast(
                     project_id,
                     {
-                        "type": "analysis_status",
-                        "status": "processing_documents",
-                        "analysis_id": analysis_id,
-                        "message": "Processing project documents"
+                        "type": "agent_message",
+                        "sender": "technical_agent",
+                        "sender_name": "Technical Analysis Agent",
+                        "message": "Let me analyze your question...",
+                        "analysis_id": analysis_id
                     }
                 )
+            
+            # Create a follow-up task for the agent
+            follow_up_task = Task(
+                description=f"""
+                Based on the previous analysis and the project documents, answer this user question:
+                
+                {question}
+                
+                Provide a detailed and helpful response that directly addresses their question.
+                Reference specific parts of the project documentation if relevant.
+                """,
+                agent=technical_agent,
+                tools=[document_search_tool],
+                expected_output="A clear and detailed answer to the user's question"
+            )
+            
+            # Execute the task
+            response = technical_agent.execute_task(follow_up_task)
+            
+            # Convert response to string
+            if hasattr(response, 'raw'):
+                response_text = response.raw
+            else:
+                response_text = str(response)
+            
+            # Send the response
+            if ws_manager:
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "agent_message",
+                        "sender": "technical_agent",
+                        "sender_name": "Technical Analysis Agent",
+                        "message": response_text,
+                        "analysis_id": analysis_id
+                    }
+                )
+            
+            return response_text
+            
+        except Exception as e:
+            logger.error(f"Error handling user question for analysis {analysis_id}: {e}")
+            error_msg = "I apologize, but I encountered an error while processing your question. Please try again."
+            
+            if ws_manager and analysis_id in self.pending_analyses:
+                await ws_manager.broadcast(
+                    self.pending_analyses[analysis_id]["project_id"],
+                    {
+                        "type": "error",
+                        "analysis_id": analysis_id,
+                        "message": error_msg
+                    }
+                )
+            
+            return error_msg
+    
+    async def confirm_and_save_analysis(self, db: AsyncSession, analysis_id: str, ws_manager: Optional[WebSocketManager] = None) -> bool:
+        """
+        Confirm and save the analysis to project insights
+        
+        Args:
+            db: Database session
+            analysis_id: ID of the analysis to save
+            ws_manager: WebSocket manager for real-time updates
+            
+        Returns:
+            bool: True if saved successfully, False otherwise
+        """
+        try:
+            # Check if we have the analysis in memory
+            if analysis_id not in self.pending_analyses:
+                logger.error(f"Analysis {analysis_id} not found in pending analyses")
+                return False
+            
+            pending = self.pending_analyses[analysis_id]
+            project_id = pending["project_id"]
+            analysis_result = pending["result"]
+            
+            logger.info(f"Saving confirmed analysis {analysis_id} for project {project_id}")
+            
+            # Send status update
+            if ws_manager:
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "system_message",
+                        "message": "Saving analysis to project insights...",
+                        "analysis_id": analysis_id
+                    }
+                )
+            
+            # Store the results in the database
+            project_service = ProjectService()
+            await project_service.store_project_insights(db, project_id, analysis_result)
+            
+            # Remove from pending analyses
+            del self.pending_analyses[analysis_id]
+            
+            logger.info(f"Successfully saved analysis {analysis_id} to project insights")
+            
+            # Send confirmation
+            if ws_manager:
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "analysis_saved",
+                        "analysis_id": analysis_id,
+                        "message": "Analysis has been saved to project insights!"
+                    }
+                )
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error saving analysis {analysis_id}: {e}")
+            
+            if ws_manager and analysis_id in self.pending_analyses:
+                await ws_manager.broadcast(
+                    self.pending_analyses[analysis_id]["project_id"],
+                    {
+                        "type": "error",
+                        "analysis_id": analysis_id,
+                        "message": f"Failed to save analysis: {str(e)}"
+                    }
+                )
+            
+            return False
+    
+    async def _execute_analysis(self, analysis_id: str, project_id: str, db: AsyncSession, ws_manager: Optional[WebSocketManager] = None, force: bool = False) -> None:
+        try:
+            logger.info(f"Starting agent analysis execution for project {project_id} (analysis_id: {analysis_id}, force: {force})")
+            
+            # Send initial status
+            if ws_manager:
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "agent_message",
+                        "sender": "system",
+                        "sender_name": "System",
+                        "message": "Initializing agent analysis...",
+                        "analysis_id": analysis_id
+                    }
+                )
+            
+            # Check for cancellation
+            if asyncio.current_task().cancelled():
+                logger.info(f"Analysis {analysis_id} was cancelled before starting")
+                return
+            
+            # Import document processor
+            from app.services.document_processor import DocumentProcessor
+            document_processor = DocumentProcessor()
             
             # Get all documents for this project
             documents = await document_processor.list_documents(db, project_id)
@@ -148,14 +355,43 @@ class AgentServiceV2:
                 # We'll try again later - in a real implementation, this would be handled by a background job
                 return
             
+            # Ensure all processed documents are indexed in ChromaDB
+            if documents:
+                logger.info(f"Ensuring {len(documents)} documents are indexed in ChromaDB for project {project_id}")
+                indexed = await document_processor.ensure_documents_indexed(db, project_id)
+                if not indexed:
+                    logger.warning(f"Failed to ensure all documents are indexed for project {project_id}")
+                else:
+                    logger.info(f"All documents are indexed in ChromaDB for project {project_id}")
+            
+            # Check for cancellation
+            if asyncio.current_task().cancelled():
+                logger.info(f"Analysis {analysis_id} was cancelled during document indexing")
+                return
+            
             # Check if we already have analysis results for this project
             from app.services.project_service import ProjectService
             project_service = ProjectService()
             project = await project_service.get_project(db, project_id)
             
-            if project and project.insights:
-                logger.info(f"Analysis results already exist for project {project_id}")
+            # Only skip if we have insights AND we're not forcing a new analysis
+            if project and project.insights and not force:
+                logger.info(f"Analysis results already exist for project {project_id} (not forced)")
+                
+                # Send existing results to client via WebSocket
+                if ws_manager:
+                    await ws_manager.broadcast(
+                        project_id,
+                        {
+                            "type": "analysis_result",
+                            "analysis_id": analysis_id,
+                            "result": project.insights,
+                            "message": "Analysis results are ready (previously generated)"
+                        }
+                    )
                 return
+            elif force and project and project.insights:
+                logger.info(f"Force flag set - running new analysis for project {project_id} despite existing results")
             
             # Set up Anthropic LLM
             if ws_manager:
@@ -187,12 +423,27 @@ class AgentServiceV2:
                 raise ValueError(error_msg)
             
             # Initialize the Anthropic LLM
-            llm = ChatAnthropic(
-                model_name=anthropic_model,
-                anthropic_api_key=anthropic_api_key,
-                temperature=0.2,
-                max_tokens=4000
-            )
+            logger.info(f"Initializing Anthropic LLM with model {anthropic_model}")
+            try:
+                llm = ChatAnthropic(
+                    model_name=anthropic_model,
+                    anthropic_api_key=anthropic_api_key,
+                    temperature=0.2,
+                    max_tokens=4000
+                )
+                logger.info("Anthropic LLM initialized successfully")
+            except Exception as llm_error:
+                logger.error(f"Error initializing Anthropic LLM: {str(llm_error)}")
+                if ws_manager:
+                    await ws_manager.broadcast(
+                        project_id,
+                        {
+                            "type": "error",
+                            "analysis_id": analysis_id,
+                            "message": f"Failed to initialize LLM: {str(llm_error)}"
+                        }
+                    )
+                raise
             
             # Create the document search tool
             document_search_tool = DocumentSearchTool(project_id)
@@ -281,162 +532,97 @@ class AgentServiceV2:
             )
             
             # Run the crew
-            logger.info("Starting crew execution")
-            if ws_manager:
-                await ws_manager.broadcast(
-                    project_id,
-                    {
-                        "type": "analysis_status",
-                        "status": "executing_analysis",
-                        "analysis_id": analysis_id,
-                        "message": "AI agent is analyzing the project"
-                    }
-                )
+            logger.info(f"Starting CrewAI execution for project {project_id}")
             
-            # Create a callback handler for real-time updates
-            class WebSocketCallback:
-                @staticmethod
-                async def on_agent_start(agent: CrewAgent):
-                    if ws_manager:
-                        await ws_manager.broadcast(
-                            project_id,
-                            {
-                                "type": "agent_message",
-                                "sender": "technical_agent",
-                                "sender_name": "Technical Analysis Agent",
-                                "message": f"Starting analysis as {agent.role}",
-                                "analysis_id": analysis_id
-                            }
-                        )
-                
-                @staticmethod
-                async def on_agent_task(agent: CrewAgent, task: CrewTask):
-                    if ws_manager:
-                        await ws_manager.broadcast(
-                            project_id,
-                            {
-                                "type": "agent_message",
-                                "sender": "technical_agent",
-                                "sender_name": "Technical Analysis Agent",
-                                "message": f"Working on task: {task.description[:100]}...",
-                                "analysis_id": analysis_id
-                            }
-                        )
-                
-                @staticmethod
-                async def on_agent_thinking(agent: CrewAgent, thought: str):
-                    if ws_manager and thought:
-                        await ws_manager.broadcast(
-                            project_id,
-                            {
-                                "type": "agent_thought",
-                                "sender": "technical_agent",
-                                "sender_name": "Technical Analysis Agent",
-                                "message": thought[:500] + ("..." if len(thought) > 500 else ""),
-                                "analysis_id": analysis_id
-                            }
-                        )
+            # Check for cancellation before running crew
+            if asyncio.current_task().cancelled():
+                logger.info(f"Analysis {analysis_id} was cancelled before crew execution")
+                return
             
-            # Register callbacks if we have a WebSocket manager
-            if ws_manager:
-                # Note: In a real implementation, we would register these callbacks with CrewAI
-                # For now, we'll simulate some updates during execution
-                await WebSocketCallback.on_agent_start(technical_agent)
+            result = crew.kickoff()
             
-            try:
-                result = crew.kickoff()
-                logger.info("Crew execution completed")
-                
-                if ws_manager:
-                    await ws_manager.broadcast(
-                        project_id,
-                        {
-                            "type": "analysis_status",
-                            "status": "analysis_completed",
-                            "analysis_id": analysis_id,
-                            "message": "AI analysis completed successfully"
-                        }
-                    )
-            except Exception as crew_error:
-                error_msg = f"Error during crew execution: {str(crew_error)}"
-                logger.error(error_msg)
-                import traceback
-                trace = traceback.format_exc()
-                logger.error(f"Traceback: {trace}")
-                
-                if ws_manager:
-                    await ws_manager.broadcast(
-                        project_id,
-                        {
-                            "type": "error",
-                            "analysis_id": analysis_id,
-                            "message": error_msg
-                        }
-                    )
-                raise
+            # Check for cancellation after crew execution
+            if asyncio.current_task().cancelled():
+                logger.info(f"Analysis {analysis_id} was cancelled after crew execution")
+                return
+            
+            logger.info(f"CrewAI execution completed for project {project_id}")
+            
+            # Convert CrewOutput to serializable format
+            if hasattr(result, 'raw'):
+                crew_result = result.raw
+            elif hasattr(result, '__str__'):
+                crew_result = str(result)
+            else:
+                # Convert object to dict and then to string as fallback
+                try:
+                    crew_result = json.dumps(result.__dict__)
+                except:
+                    crew_result = f"Unserializable result type: {type(result).__name__}"
             
             # Format the results
             analysis_result = {
-                "technical_analysis": {
-                    "raw_output": result,
-                    "completed_at": str(datetime.now())
-                },
-                "analysis_id": analysis_id
+                "project_id": project_id,
+                "analysis_id": analysis_id,
+                "timestamp": datetime.utcnow().isoformat(),
+                "technical_analysis": crew_result,
             }
             
-            # Store the results
-            logger.info("Storing analysis results")
+            # Store the analysis results in memory (not in database yet)
+            if not hasattr(self, 'pending_analyses'):
+                self.pending_analyses = {}
+            
+            self.pending_analyses[analysis_id] = {
+                "project_id": project_id,
+                "result": analysis_result,
+                "crew": crew,  # Keep the crew instance for follow-up questions
+                "technical_agent": technical_agent,
+                "document_search_tool": document_search_tool
+            }
+            
+            logger.info(f"Analysis {analysis_id} completed and stored in memory for project {project_id}")
+            
+            # Send the analysis results via WebSocket for user review
             if ws_manager:
                 await ws_manager.broadcast(
                     project_id,
                     {
-                        "type": "analysis_status",
-                        "status": "storing_results",
+                        "type": "analysis_complete",
                         "analysis_id": analysis_id,
-                        "message": "Storing analysis results"
+                        "result": {
+                            "technical_analysis": crew_result,
+                            "completed_at": str(datetime.now())
+                        },
+                        "message": "Initial analysis complete. Please review and ask any follow-up questions."
+                    }
+                )
+                
+                # Send a follow-up message prompting for questions
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "agent_message",
+                        "sender": "technical_agent",
+                        "sender_name": "Technical Analysis Agent",
+                        "message": "I've completed my initial analysis of your project. Feel free to ask any questions about the analysis, request clarifications, or ask for additional insights. When you're satisfied, you can confirm to save these insights.",
+                        "analysis_id": analysis_id
                     }
                 )
             
-            project_service = ProjectService()
+            logger.info(f"Completed initial analysis {analysis_id} for project {project_id}")
             
-            try:
-                await project_service.store_project_insights(db, project_id, analysis_result)
-                logger.info("Successfully stored project insights")
-                
-                # Send the final results via WebSocket
-                if ws_manager:
-                    await ws_manager.broadcast(
-                        project_id,
-                        {
-                            "type": "analysis_result",
-                            "analysis_id": analysis_id,
-                            "result": {
-                                "technical_analysis": result[:1000] + ("..." if len(result) > 1000 else ""),
-                                "completed_at": str(datetime.now())
-                            },
-                            "message": "Analysis results are ready"
-                        }
-                    )
-            except Exception as store_error:
-                error_msg = f"Error storing project insights: {str(store_error)}"
-                logger.error(error_msg)
-                import traceback
-                trace = traceback.format_exc()
-                logger.error(f"Traceback: {trace}")
-                
-                if ws_manager:
-                    await ws_manager.broadcast(
-                        project_id,
-                        {
-                            "type": "error",
-                            "analysis_id": analysis_id,
-                            "message": error_msg
-                        }
-                    )
-                raise
-            
-            logger.info(f"Completed analysis {analysis_id} for project {project_id}")
-            
+        except asyncio.CancelledError:
+            logger.info(f"Analysis {analysis_id} was cancelled")
+            if ws_manager:
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "analysis_cancelled",
+                        "analysis_id": analysis_id,
+                        "message": "Analysis was cancelled"
+                    }
+                )
+            raise  # Re-raise to properly handle cancellation
         except Exception as e:
             logger.error(f"Error executing analysis {analysis_id}: {str(e)}")
             import traceback
