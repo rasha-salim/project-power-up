@@ -7,6 +7,8 @@ import sys
 import traceback
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from app.core.config import settings
+from app.services.websocket_manager import WebSocketManager
+from app.services.agent_service_v2 import AgentServiceV2
 
 # Configure detailed logging
 logger = logging.getLogger(__name__)
@@ -20,9 +22,14 @@ if not logger.handlers:
 
 router = APIRouter()
 
+# Create a single global instance of WebSocketManager
+ws_manager = WebSocketManager()
+
+# Create a single global instance of AgentServiceV2
+agent_service = AgentServiceV2()
+
 # Dictionary to store active connections by project_id and client_id
 active_connections = {}
-
 
 async def broadcast_message(project_id: str, sender_id: str, message: dict):
     """
@@ -131,23 +138,16 @@ async def agent_conversation_websocket(
                             # Import dependencies here to avoid circular imports
                             from sqlalchemy.ext.asyncio import AsyncSession
                             from app.db.init_db_simple import get_async_db
-                            from app.services.agent_service_v2 import AgentServiceV2
-                            from app.services.websocket_manager import WebSocketManager
                             
                             # Get database session
                             from app.db.init_db_simple import get_async_db
                             db = await anext(get_async_db().__aiter__())
                             
-                            # Create WebSocket manager and register connections
-                            ws_manager = WebSocketManager()
-                            
-                            # Register all active connections for this project
-                            if project_id in active_connections:
-                                for client_id, client_ws in active_connections[project_id].items():
-                                    await ws_manager.connect(client_ws, project_id)
+                            # Register the current connection if not already registered
+                            if websocket not in ws_manager.active_connections.get(project_id, []):
+                                await ws_manager.connect(websocket, project_id)
                             
                             # Start agent analysis
-                            agent_service = AgentServiceV2()
                             analysis_id = await agent_service.start_analysis(db, project_id, ws_manager, force=force_analysis)
                             
                             # Send confirmation to client
@@ -170,11 +170,7 @@ async def agent_conversation_websocket(
                         logger.info(f"Cancelling agent analysis {analysis_id} for project {project_id} requested by client {client_id}")
                         
                         try:
-                            # Import dependencies here to avoid circular imports
-                            from app.services.agent_service_v2 import AgentServiceV2
-                            
                             # Cancel the analysis
-                            agent_service = AgentServiceV2()
                             success = await agent_service.cancel_analysis(analysis_id)
                             
                             if success:
@@ -221,20 +217,15 @@ async def agent_conversation_websocket(
                             # Import dependencies
                             from sqlalchemy.ext.asyncio import AsyncSession
                             from app.db.init_db_simple import get_async_db
-                            from app.services.agent_service_v2 import AgentServiceV2
-                            from app.services.websocket_manager import WebSocketManager
                             
                             # Get database session
                             db = await anext(get_async_db().__aiter__())
                             
-                            # Create WebSocket manager and register connections
-                            ws_manager = WebSocketManager()
-                            if project_id in active_connections:
-                                for client_id, client_ws in active_connections[project_id].items():
-                                    await ws_manager.connect(client_ws, project_id)
+                            # Register the current connection if not already registered
+                            if websocket not in ws_manager.active_connections.get(project_id, []):
+                                await ws_manager.connect(websocket, project_id)
                             
                             # Handle the question
-                            agent_service = AgentServiceV2()
                             await agent_service.handle_user_question(db, analysis_id, question, ws_manager)
                             
                         except Exception as e:
@@ -242,6 +233,47 @@ async def agent_conversation_websocket(
                             await websocket.send_text(json.dumps({
                                 "type": "error",
                                 "message": f"Failed to process question: {str(e)}"
+                            }))
+                    
+                    elif message_type == "chat_message":
+                        # Handle general chat messages (no analysis required)
+                        message_text = message_data.get("message")
+                        
+                        if not message_text:
+                            await websocket.send_text(json.dumps({
+                                "type": "error",
+                                "message": "Message text is required"
+                            }))
+                            continue
+                        
+                        # Handle the chat message
+                        try:
+                            # Import dependencies
+                            from sqlalchemy.ext.asyncio import AsyncSession
+                            from app.db.init_db_simple import get_async_db
+                            
+                            # Get database session
+                            db = await anext(get_async_db().__aiter__())
+                            
+                            # Register the current connection if not already registered
+                            if websocket not in ws_manager.active_connections.get(project_id, []):
+                                await ws_manager.connect(websocket, project_id)
+                            
+                            # Handle the chat message
+                            response = await agent_service.chat_with_agent(
+                                db,
+                                project_id,
+                                message_text,
+                                ws_manager
+                            )
+                            
+                            logger.info(f"Agent chat response: {response}")
+                        
+                        except Exception as e:
+                            logger.error(f"Error handling chat message: {str(e)}")
+                            await websocket.send_text(json.dumps({
+                                "type": "error",
+                                "message": f"Failed to process chat message: {str(e)}"
                             }))
                     
                     elif message_type == "confirm_analysis":
@@ -261,20 +293,15 @@ async def agent_conversation_websocket(
                             # Import dependencies
                             from sqlalchemy.ext.asyncio import AsyncSession
                             from app.db.init_db_simple import get_async_db
-                            from app.services.agent_service_v2 import AgentServiceV2
-                            from app.services.websocket_manager import WebSocketManager
                             
                             # Get database session
                             db = await anext(get_async_db().__aiter__())
                             
-                            # Create WebSocket manager and register connections
-                            ws_manager = WebSocketManager()
-                            if project_id in active_connections:
-                                for client_id, client_ws in active_connections[project_id].items():
-                                    await ws_manager.connect(client_ws, project_id)
+                            # Register the current connection if not already registered
+                            if websocket not in ws_manager.active_connections.get(project_id, []):
+                                await ws_manager.connect(websocket, project_id)
                             
                             # Confirm and save
-                            agent_service = AgentServiceV2()
                             success = await agent_service.confirm_and_save_analysis(db, analysis_id, ws_manager)
                             
                             if not success:
@@ -337,6 +364,9 @@ async def agent_conversation_websocket(
             if not active_connections[project_id]:
                 del active_connections[project_id]
                 logger.info(f"Removed empty project from active connections - Project: {project_id}")
+        
+        # Remove from WebSocketManager
+        ws_manager.disconnect(websocket, project_id)
         
         # Try to close the connection gracefully if it's still open
         try:

@@ -157,10 +157,25 @@ class AgentServiceV2:
             str: Agent's response
         """
         try:
+            logger.info(f"Handling user question for analysis {analysis_id}")
+            logger.info(f"Current pending analyses: {list(self.pending_analyses.keys())}")
+            
             # Check if we have the analysis in memory
             if analysis_id not in self.pending_analyses:
                 logger.error(f"Analysis {analysis_id} not found in pending analyses")
-                return "I'm sorry, but I can't find the analysis context. The analysis may have expired or been completed."
+                # Try to use general chat instead
+                if ws_manager:
+                    await ws_manager.broadcast(
+                        analysis_id,  # This might be wrong, but we don't have project_id
+                        {
+                            "type": "agent_message",
+                            "sender": "assistant",
+                            "sender_name": "Project Assistant",
+                            "message": "I notice the analysis context has been lost. Let me help you with your question using the general chat feature instead.",
+                            "analysis_id": analysis_id
+                        }
+                    )
+                return "I'm sorry, but I can't find the analysis context. The analysis may have expired or been completed. Please try asking your question as a general chat message instead."
             
             pending = self.pending_analyses[analysis_id]
             project_id = pending["project_id"]
@@ -231,6 +246,150 @@ class AgentServiceV2:
                     {
                         "type": "error",
                         "analysis_id": analysis_id,
+                        "message": error_msg
+                    }
+                )
+            
+            return error_msg
+    
+    async def chat_with_agent(self, db: AsyncSession, project_id: str, message: str, ws_manager: Optional[WebSocketManager] = None) -> str:
+        """
+        Handle a general chat message with the agent for a project
+        
+        Args:
+            db: Database session
+            project_id: ID of the project
+            message: User's message
+            ws_manager: WebSocket manager for real-time updates
+            
+        Returns:
+            str: Agent's response
+        """
+        try:
+            logger.info(f"Handling chat message for project {project_id}: {message}")
+            
+            # Send status update
+            if ws_manager:
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "agent_message",
+                        "sender": "assistant",
+                        "sender_name": "Project Assistant",
+                        "message": "Let me help you with that...",
+                        "is_thinking": True
+                    }
+                )
+            
+            # Set up Anthropic LLM
+            anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
+            anthropic_model = os.getenv("ANTHROPIC_MODEL", "claude-3-haiku-20240307")
+            
+            if not anthropic_api_key:
+                error_msg = "AI service not configured properly"
+                logger.error("ANTHROPIC_API_KEY not found")
+                return error_msg
+            
+            # Initialize the LLM
+            llm = ChatAnthropic(
+                model_name=anthropic_model,
+                anthropic_api_key=anthropic_api_key,
+                temperature=0.3,
+                max_tokens=2000
+            )
+            
+            # Create the document search tool for this project
+            document_search_tool = DocumentSearchTool(project_id)
+            
+            # Get project details for context
+            from app.services.project_service import ProjectService
+            project_service = ProjectService()
+            project = await project_service.get_project(db, project_id)
+            
+            # Create a conversational agent with a more flexible role
+            chat_agent = Agent(
+                role="Project Assistant",
+                goal="Help users understand their project, answer questions about documents, provide technical guidance, and assist with project-related queries",
+                backstory="""You are a knowledgeable project assistant with expertise in:
+                - Technical analysis and software architecture
+                - Project management and planning
+                - Risk assessment and mitigation
+                - Understanding and explaining project documentation
+                
+                You have access to all project documents and can search through them to provide accurate information.
+                You should be helpful, conversational, and provide clear explanations tailored to the user's needs.
+                When referencing project documents, cite specific sections or files when possible.""",
+                verbose=True,
+                allow_delegation=False,
+                llm=llm,
+                tools=[document_search_tool]
+            )
+            
+            # Build context about the project
+            context = f"""
+            Project: {project.name if project else 'Unknown'}
+            Description: {project.description if project else 'No description available'}
+            
+            User Message: {message}
+            """
+            
+            # Check if the message is asking about project insights
+            if project and project.insights and any(keyword in message.lower() for keyword in ['analysis', 'insights', 'recommendations', 'technical', 'risks', 'plan']):
+                context += f"\n\nPrevious Analysis Results:\n{json.dumps(project.insights, indent=2)}"
+            
+            # Create a task for the agent
+            chat_task = Task(
+                description=f"""
+                Respond to the user's message in a helpful and conversational manner.
+                
+                Context:
+                {context}
+                
+                Guidelines:
+                1. If the user is asking about project documents, search and reference specific content
+                2. If asking about previous analysis, reference the insights if available
+                3. Provide clear, actionable advice when appropriate
+                4. Be conversational but professional
+                5. If you're not sure about something, say so and suggest alternatives
+                """,
+                agent=chat_agent,
+                tools=[document_search_tool],
+                expected_output="A helpful and relevant response to the user's message"
+            )
+            
+            # Execute the task
+            response = chat_agent.execute_task(chat_task)
+            
+            # Convert response to string
+            if hasattr(response, 'raw'):
+                response_text = response.raw
+            else:
+                response_text = str(response)
+            
+            # Send the response
+            if ws_manager:
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "agent_message",
+                        "sender": "assistant",
+                        "sender_name": "Project Assistant",
+                        "message": response_text,
+                        "is_thinking": False
+                    }
+                )
+            
+            return response_text
+            
+        except Exception as e:
+            logger.error(f"Error in chat_with_agent for project {project_id}: {e}")
+            error_msg = "I apologize, but I encountered an error. Please try again."
+            
+            if ws_manager:
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "error",
                         "message": error_msg
                     }
                 )
@@ -581,6 +740,7 @@ class AgentServiceV2:
             }
             
             logger.info(f"Analysis {analysis_id} completed and stored in memory for project {project_id}")
+            logger.info(f"Current pending analyses: {list(self.pending_analyses.keys())}")
             
             # Send the analysis results via WebSocket for user review
             if ws_manager:
