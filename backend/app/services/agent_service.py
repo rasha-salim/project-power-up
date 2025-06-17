@@ -1,183 +1,43 @@
 import logging
 import json
 import uuid
-import asyncio
 import os
+import asyncio
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from crewai import Agent, Task, Crew, Process
-from langchain.llms import Anthropic
-from langchain.chat_models import ChatAnthropic
+from langchain_anthropic import ChatAnthropic
+from crewai.agent import Agent as CrewAgent
+from crewai.task import Task as CrewTask
 
 from app.models.agent import AgentTask as AgentTaskModel
 from app.services.project_service import ProjectService
 from app.config.config_loader import ConfigLoader
 from app.core.config import settings
+from app.tools.document_search import DocumentSearchTool
+from app.services.websocket_manager import WebSocketManager
 
 logger = logging.getLogger(__name__)
 
 class AgentService:
-    """Service for managing AI agents using CrewAI"""
+    """Service for managing AI agents using CrewAI with Anthropic integration"""
     
     def __init__(self):
         """Initialize the agent service"""
         self.config_loader = ConfigLoader()
+        self.running_tasks = {}
+        self.pending_analyses = {}
     
-    async def get_agents_status(self, db: AsyncSession) -> List[Dict[str, Any]]:
+    async def start_analysis(self, db: AsyncSession, project_id: str, ws_manager: Optional[WebSocketManager] = None, force: bool = False) -> str:
         """
-        Get the status of all AI agents
-        
-        Args:
-            db: Database session
-            
-        Returns:
-            List[Dict[str, Any]]: List of agent status information
-        """
-        # In a real implementation, this would query the database
-        # For now, we'll return hardcoded agent information
-        return [
-            {
-                "id": "technical-agent",
-                "name": "Technical Analysis Agent",
-                "role": "Technical Analyst",
-                "status": "idle",
-                "last_active": datetime.utcnow().isoformat()
-            },
-            {
-                "id": "risk-agent",
-                "name": "Risk Assessment Agent",
-                "role": "Risk Analyst",
-                "status": "idle",
-                "last_active": datetime.utcnow().isoformat()
-            },
-            {
-                "id": "planning-agent",
-                "name": "Project Planning Agent",
-                "role": "Project Planner",
-                "status": "idle",
-                "last_active": datetime.utcnow().isoformat()
-            }
-        ]
-    
-    async def get_agent(self, db: AsyncSession, agent_id: str) -> Optional[Dict[str, Any]]:
-        """
-        Get an agent by ID
-        
-        Args:
-            db: Database session
-            agent_id: ID of the agent to retrieve
-            
-        Returns:
-            Optional[Dict[str, Any]]: Agent information if found, None otherwise
-        """
-        # In a real implementation, this would query the database
-        # For now, we'll return hardcoded agent information based on ID
-        agents = {
-            "technical-agent": {
-                "id": "technical-agent",
-                "name": "Technical Analysis Agent",
-                "role": "Technical Analyst",
-                "status": "idle",
-                "last_active": datetime.utcnow().isoformat()
-            },
-            "risk-agent": {
-                "id": "risk-agent",
-                "name": "Risk Assessment Agent",
-                "role": "Risk Analyst",
-                "status": "idle",
-                "last_active": datetime.utcnow().isoformat()
-            },
-            "planning-agent": {
-                "id": "planning-agent",
-                "name": "Project Planning Agent",
-                "role": "Project Planner",
-                "status": "idle",
-                "last_active": datetime.utcnow().isoformat()
-            }
-        }
-        
-        return agents.get(agent_id)
-    
-    async def create_agent_task(self, db: AsyncSession, task: AgentTaskModel) -> Dict[str, Any]:
-        """
-        Create a new task for an AI agent
-        
-        Args:
-            db: Database session
-            task: Task creation data
-            
-        Returns:
-            Dict[str, Any]: Task information
-        """
-        # Generate a unique task ID
-        task_id = str(uuid.uuid4())
-        
-        # In a real implementation, this would create a task record in the database
-        # For now, we'll just return the task ID
-        return {
-            "task_id": task_id,
-            "agent_id": task.agent_id,
-            "project_id": task.project_id,
-            "status": "created"
-        }
-    
-    async def execute_agent_task(self, task_id: str, db: AsyncSession) -> None:
-        """
-        Execute an agent task
-        
-        Args:
-            task_id: ID of the task to execute
-            db: Database session
-        """
-        # In a real implementation, this would:
-        # 1. Retrieve the task from the database
-        # 2. Create and execute the appropriate CrewAI agent
-        # 3. Update the task with the results
-        
-        # For now, we'll just log that the task is being executed
-        logger.info(f"Executing agent task {task_id}")
-        
-        # Simulate task execution time
-        await asyncio.sleep(5)
-        
-        # Log completion
-        logger.info(f"Completed agent task {task_id}")
-    
-    async def get_task_result(self, db: AsyncSession, task_id: str) -> Optional[Dict[str, Any]]:
-        """
-        Get the result of an agent task
-        
-        Args:
-            db: Database session
-            task_id: ID of the task to retrieve
-            
-        Returns:
-            Optional[Dict[str, Any]]: Task result if found, None otherwise
-        """
-        # In a real implementation, this would query the database
-        # For now, we'll return a simulated result
-        return {
-            "task_id": task_id,
-            "status": "completed",
-            "result": {
-                "analysis": "This is a simulated task result.",
-                "recommendations": [
-                    "First recommendation",
-                    "Second recommendation",
-                    "Third recommendation"
-                ]
-            }
-        }
-    
-    async def start_crew_analysis(self, db: AsyncSession, project_id: str) -> str:
-        """
-        Start a full crew analysis for a project
+        Start an agent analysis for a project
         
         Args:
             db: Database session
             project_id: ID of the project to analyze
+            ws_manager: Optional WebSocket manager for real-time updates
             
         Returns:
             str: ID of the analysis
@@ -185,189 +45,41 @@ class AgentService:
         # Generate a unique analysis ID
         analysis_id = str(uuid.uuid4())
         
-        # In a real implementation, this would create an analysis record in the database
-        # For now, we'll just return the analysis ID
-        logger.info(f"Starting crew analysis {analysis_id} for project {project_id}")
+        # Log the start of the analysis
+        logger.info(f"Starting agent analysis for project {project_id} (force={force})")
+        
+        # Notify clients if WebSocket manager is provided
+        if ws_manager:
+            await ws_manager.broadcast(
+                project_id,
+                {
+                    "type": "analysis_status",
+                    "status": "starting",
+                    "analysis_id": analysis_id,
+                    "message": "Starting agent analysis"
+                }
+            )
+        
+        # Start the analysis in the background
+        task = asyncio.create_task(
+            self._execute_analysis(analysis_id, project_id, db, ws_manager, force)
+        )
+        
+        # Track the running task
+        self.running_tasks[analysis_id] = task
+        
+        # Clean up completed tasks
+        def cleanup_task(task):
+            if analysis_id in self.running_tasks:
+                del self.running_tasks[analysis_id]
+        
+        task.add_done_callback(cleanup_task)
         
         return analysis_id
     
-    async def execute_crew_analysis(self, analysis_id: str, project_id: str, db: AsyncSession) -> None:
-        """
-        Execute a crew analysis
-        
-        Args:
-            analysis_id: ID of the analysis
-            project_id: ID of the project to analyze
-            db: Database session
-        """
-        try:
-            logger.info(f"Executing crew analysis {analysis_id} for project {project_id}")
-            
-            # Check if all documents for this project are processed
-            # Import here to avoid circular imports
-            from app.services.document_processor import DocumentProcessor
-            document_processor = DocumentProcessor()
-            
-            # Get all documents for this project
-            documents = await document_processor.list_documents(db, project_id)
-            
-            # Check if any documents are still processing
-            processing_docs = [doc for doc in documents if doc.status == "processing"]
-            if processing_docs:
-                logger.warning(f"Cannot start analysis - {len(processing_docs)} documents still processing for project {project_id}")
-                # We'll try again later - in a real implementation, this would be handled by a background job
-                return
-            
-            # Check if we already have analysis results for this project
-            from app.services.project_service import ProjectService
-            project_service = ProjectService()
-            project = await project_service.get_project(db, project_id)
-            
-            if project and project.insights:
-                logger.info(f"Analysis results already exist for project {project_id}")
-                return
-            
-            # Set up Anthropic LLM
-            anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
-            anthropic_model = os.getenv("ANTHROPIC_MODEL", "claude-2")
-            
-            if not anthropic_api_key:
-                logger.error("ANTHROPIC_API_KEY not found in environment variables")
-                raise ValueError("ANTHROPIC_API_KEY not found in environment variables")
-            
-            # Initialize the Anthropic LLM
-            llm = ChatAnthropic(model=anthropic_model, anthropic_api_key=anthropic_api_key)
-            
-            # Load crew configuration
-            crew_config = self.config_loader.get_crew_config("project_analysis_crew")
-            if not crew_config:
-                logger.error("Crew configuration not found")
-                raise ValueError("Crew configuration not found")
-            
-            # Create the technical analysis agent
-            technical_agent = self._create_technical_agent()
-            technical_agent.llm = llm
-            
-            # Create the risk assessment agent
-            risk_agent = self._create_risk_agent()
-            risk_agent.llm = llm
-            
-            # Create the project planning agent
-            planning_agent = self._create_planning_agent()
-            planning_agent.llm = llm
-            
-            # Prepare document content for agents
-            document_content = []
-            for doc in documents:
-                # Get document chunks from ChromaDB
-                client = get_chroma_client()
-                collection = client.get_collection("documents")
-                results = collection.get(
-                    where={"document_id": doc.id}
-                )
-                
-                if results and results["documents"]:
-                    # Add document metadata and content
-                    document_content.append({
-                        "id": doc.id,
-                        "filename": doc.filename,
-                        "description": doc.description,
-                        "content": "\n".join(results["documents"])
-                    })
-            
-            # Create tasks for each agent with document content
-            context = {
-                "project_id": project_id,
-                "documents": document_content
-            }
-            
-            # Convert context to string for agents
-            context_str = f"Project ID: {project_id}\n\nDocuments:\n"
-            for doc in document_content:
-                context_str += f"\n--- Document: {doc['filename']} ---\n"
-                context_str += f"Description: {doc['description']}\n\n"
-                context_str += doc['content'][:1000] + "...\n"  # Limit content size
-            
-            technical_task = self._create_technical_task(technical_agent, context_str)
-            risk_task = self._create_risk_task(risk_agent, context_str)
-            planning_task = self._create_planning_task(planning_agent, project_id, [technical_task, risk_task])
-            
-            # Create the crew
-            crew = Crew(
-                agents=[technical_agent, risk_agent, planning_agent],
-                tasks=[technical_task, risk_task, planning_task],
-                verbose=crew_config.get("verbose", True),
-                process=crew_config.get("process", Process.sequential),  # Execute tasks in sequence
-                memory=crew_config.get("memory", False)
-            )
-            
-            # Run the crew
-            # In a real implementation, this would be run asynchronously
-            # For now, we'll simulate the results
-            # result = crew.kickoff()
-            
-            # Simulate analysis time
-            await asyncio.sleep(2)
-            
-            # Simulate results
-            result = {
-                "technical_analysis": {
-                    "architecture": "The project requires a microservices architecture with the following components...",
-                    "tech_stack": "Based on the requirements, we recommend using Python/FastAPI for the backend...",
-                    "feasibility": "The project is technically feasible with the proposed architecture..."
-                },
-                "risk_assessment": {
-                    "key_risks": [
-                        "Integration complexity between AI agents",
-                        "Performance bottlenecks in real-time communication",
-                        "Data privacy concerns with document processing"
-                    ],
-                    "mitigation_strategies": [
-                        "Implement clear agent communication protocols",
-                        "Use WebSockets with message queuing",
-                        "Implement robust data encryption and access controls"
-                    ]
-                },
-                "project_plan": {
-                    "timeline": "12 weeks total development time",
-                    "milestones": [
-                        "Week 4: Basic agent communication working",
-                        "Week 8: Human-AI collaboration interface complete",
-                        "Week 12: Dashboard and visualization features complete"
-                    ],
-                    "resource_requirements": "2 backend developers, 1 frontend developer, 1 AI specialist"
-                },
-                "analysis_id": analysis_id,
-                "completed_at": str(datetime.datetime.now())
-            }
-            
-            # Store the results
-            logger.info("Creating ProjectService instance")
-            project_service = ProjectService()
-            
-            logger.info("Calling store_project_insights")
-            try:
-                await project_service.store_project_insights(db, project_id, result)
-                logger.info("Successfully stored project insights")
-            except Exception as store_error:
-                logger.error(f"Error storing project insights: {str(store_error)}")
-                logger.error(f"Error type: {type(store_error)}")
-                import traceback
-                logger.error(f"Traceback: {traceback.format_exc()}")
-                raise
-            
-            logger.info(f"Completed crew analysis {analysis_id} for project {project_id}")
-            
-        except Exception as e:
-            logger.error(f"Error executing crew analysis {analysis_id}: {str(e)}")
-            logger.error(f"Error type: {type(e)}")
-            import traceback
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            # In a real implementation, this would update the analysis status to error
-    
     async def get_analysis_status(self, db: AsyncSession, analysis_id: str) -> Optional[Dict[str, Any]]:
         """
-        Get the status and results of a crew analysis
+        Get the status and results of an analysis
         
         Args:
             db: Database session
@@ -378,196 +90,701 @@ class AgentService:
         """
         # In a real implementation, this would query the database
         # For now, we'll return a simulated result
+        from app.services.project_service import ProjectService
+        project_service = ProjectService()
+        
+        # Get all projects (in a real implementation, we would filter by analysis_id)
+        projects = await project_service.list_projects(db)
+        
+        # Find the project with this analysis
+        for project in projects:
+            if project.insights and project.insights.get("analysis_id") == analysis_id:
+                return {
+                    "analysis_id": analysis_id,
+                    "status": "completed",
+                    "results": project.insights
+                }
+        
+        # If not found, return a pending status
         return {
             "analysis_id": analysis_id,
-            "status": "completed",
-            "results": {
-                "technical_analysis": {
-                    "architecture": "The project requires a microservices architecture with the following components...",
-                    "tech_stack": "Based on the requirements, we recommend using Python/FastAPI for the backend...",
-                    "feasibility": "The project is technically feasible with the proposed architecture..."
-                },
-                "risk_assessment": {
-                    "key_risks": [
-                        "Integration complexity between AI agents",
-                        "Performance bottlenecks in real-time communication",
-                        "Data privacy concerns with document processing"
-                    ],
-                    "mitigation_strategies": [
-                        "Implement clear agent communication protocols",
-                        "Use WebSockets with message queuing",
-                        "Implement robust data encryption and access controls"
-                    ]
-                },
-                "project_plan": {
-                    "timeline": "12 weeks total development time",
-                    "milestones": [
-                        "Week 4: Basic agent communication working",
-                        "Week 8: Human-AI collaboration interface complete",
-                        "Week 12: Dashboard and visualization features complete"
-                    ],
-                    "resource_requirements": "2 backend developers, 1 frontend developer, 1 AI specialist"
-                }
-            }
+            "status": "pending",
+            "results": None
         }
     
-    def _create_technical_agent(self) -> Agent:
+    async def cancel_analysis(self, analysis_id: str) -> bool:
         """
-        Create the technical analysis agent
-        
-        Returns:
-            Agent: Technical analysis agent
-        """
-        # Load agent configuration from YAML
-        agent_config = self.config_loader.get_agent_config("technical_analyst")
-        if not agent_config:
-            logger.error("Technical analyst agent configuration not found")
-            raise ValueError("Technical analyst agent configuration not found")
-        
-        # Create agent from configuration
-        return Agent(
-            role=agent_config["role"],
-            goal=agent_config["goal"],
-            backstory=agent_config["backstory"],
-            verbose=agent_config["verbose"],
-            allow_delegation=agent_config["allow_delegation"],
-            # In a real implementation, this would use the Anthropic API
-            # llm=ChatAnthropic(
-            #     model=agent_config["llm"]["model"], 
-            #     temperature=agent_config["llm"]["temperature"]
-            # ),
-            # For now, we'll use the default LLM
-        )
-    
-    def _create_risk_agent(self) -> Agent:
-        """
-        Create the risk assessment agent
-        
-        Returns:
-            Agent: Risk assessment agent
-        """
-        # Load agent configuration from YAML
-        agent_config = self.config_loader.get_agent_config("risk_analyst")
-        if not agent_config:
-            logger.error("Risk analyst agent configuration not found")
-            raise ValueError("Risk analyst agent configuration not found")
-        
-        # Create agent from configuration
-        return Agent(
-            role=agent_config["role"],
-            goal=agent_config["goal"],
-            backstory=agent_config["backstory"],
-            verbose=agent_config["verbose"],
-            allow_delegation=agent_config["allow_delegation"],
-            # In a real implementation, this would use the Anthropic API
-            # llm=ChatAnthropic(
-            #     model=agent_config["llm"]["model"], 
-            #     temperature=agent_config["llm"]["temperature"]
-            # ),
-            # For now, we'll use the default LLM
-        )
-    
-    def _create_planning_agent(self) -> Agent:
-        """
-        Create the project planning agent
-        
-        Returns:
-            Agent: Project planning agent
-        """
-        # Load agent configuration from YAML
-        agent_config = self.config_loader.get_agent_config("project_planner")
-        if not agent_config:
-            logger.error("Project planner agent configuration not found")
-            raise ValueError("Project planner agent configuration not found")
-        
-        # Create agent from configuration
-        return Agent(
-            role=agent_config["role"],
-            goal=agent_config["goal"],
-            backstory=agent_config["backstory"],
-            verbose=agent_config["verbose"],
-            allow_delegation=agent_config["allow_delegation"],
-            # In a real implementation, this would use the Anthropic API
-            # llm=ChatAnthropic(
-            #     model=agent_config["llm"]["model"], 
-            #     temperature=agent_config["llm"]["temperature"]
-            # ),
-            # For now, we'll use the default LLM
-        )
-    
-    def _create_technical_task(self, agent: Agent, project_id: str) -> Task:
-        """
-        Create a technical analysis task
+        Cancel a running analysis
         
         Args:
-            agent: Technical analysis agent
-            project_id: ID of the project to analyze
+            analysis_id: ID of the analysis to cancel
             
         Returns:
-            Task: Technical analysis task
+            bool: True if cancelled successfully, False otherwise
         """
-        # Load task configuration from YAML
-        task_config = self.config_loader.get_task_config("technical_analysis")
-        if not task_config:
-            logger.error("Technical analysis task configuration not found")
-            raise ValueError("Technical analysis task configuration not found")
-        
-        # Create task from configuration
-        return Task(
-            description=task_config["description"],
-            agent=agent,
-            expected_output=task_config["expected_output"],
-            context=f"Project ID: {project_id}"
-        )
+        try:
+            # Check if analysis is in running tasks
+            if analysis_id in self.running_tasks:
+                task = self.running_tasks[analysis_id]
+                
+                # Cancel the task
+                task.cancel()
+                
+                # Remove from running tasks
+                del self.running_tasks[analysis_id]
+                
+                logger.info(f"Successfully cancelled analysis {analysis_id}")
+                return True
+            else:
+                logger.warning(f"Analysis {analysis_id} not found in running tasks")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error cancelling analysis {analysis_id}: {e}")
+            return False
     
-    def _create_risk_task(self, agent: Agent, project_id: str) -> Task:
+    async def handle_user_question(self, db: AsyncSession, analysis_id: str, question: str, ws_manager: Optional[WebSocketManager] = None) -> str:
         """
-        Create a risk assessment task
+        Handle a user question about the analysis
         
         Args:
-            agent: Risk assessment agent
-            project_id: ID of the project to analyze
+            db: Database session
+            analysis_id: ID of the analysis
+            question: User's question
+            ws_manager: WebSocket manager for real-time updates
             
         Returns:
-            Task: Risk assessment task
+            str: Agent's response
         """
-        # Load task configuration from YAML
-        task_config = self.config_loader.get_task_config("risk_assessment")
-        if not task_config:
-            logger.error("Risk assessment task configuration not found")
-            raise ValueError("Risk assessment task configuration not found")
-        
-        # Create task from configuration
-        return Task(
-            description=task_config["description"],
-            agent=agent,
-            expected_output=task_config["expected_output"],
-            context=f"Project ID: {project_id}"
-        )
+        try:
+            logger.info(f"Handling user question for analysis {analysis_id}")
+            logger.info(f"Current pending analyses: {list(self.pending_analyses.keys())}")
+            
+            # Check if we have the analysis in memory
+            if analysis_id not in self.pending_analyses:
+                logger.error(f"Analysis {analysis_id} not found in pending analyses")
+                # Try to use general chat instead
+                if ws_manager:
+                    await ws_manager.broadcast(
+                        analysis_id,  # This might be wrong, but we don't have project_id
+                        {
+                            "type": "agent_message",
+                            "sender": "assistant",
+                            "sender_name": "Project Assistant",
+                            "message": "I notice the analysis context has been lost. Let me help you with your question using the general chat feature instead.",
+                            "analysis_id": analysis_id
+                        }
+                    )
+                return "I'm sorry, but I can't find the analysis context. The analysis may have expired or been completed. Please try asking your question as a general chat message instead."
+            
+            pending = self.pending_analyses[analysis_id]
+            project_id = pending["project_id"]
+            technical_agent = pending["technical_agent"]
+            document_search_tool = pending["document_search_tool"]
+            
+            logger.info(f"Handling user question for analysis {analysis_id}: {question}")
+            
+            # Send status update
+            if ws_manager:
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "agent_message",
+                        "sender": "technical_agent",
+                        "sender_name": "Technical Analysis Agent",
+                        "message": "Let me analyze your question...",
+                        "analysis_id": analysis_id
+                    }
+                )
+            
+            # Create a follow-up task for the agent
+            follow_up_task = Task(
+                description=f"""
+                Based on the previous analysis and the project documents, answer this user question:
+                
+                {question}
+                
+                Provide a detailed and helpful response that directly addresses their question.
+                Reference specific parts of the project documentation if relevant.
+                """,
+                agent=technical_agent,
+                tools=[document_search_tool],
+                expected_output="A clear and detailed answer to the user's question"
+            )
+            
+            # Execute the task
+            response = technical_agent.execute_task(follow_up_task)
+            
+            # Convert response to string
+            if hasattr(response, 'raw'):
+                response_text = response.raw
+            else:
+                response_text = str(response)
+            
+            # Send the response
+            if ws_manager:
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "agent_message",
+                        "sender": "technical_agent",
+                        "sender_name": "Technical Analysis Agent",
+                        "message": response_text,
+                        "analysis_id": analysis_id
+                    }
+                )
+            
+            return response_text
+            
+        except Exception as e:
+            logger.error(f"Error handling user question for analysis {analysis_id}: {e}")
+            error_msg = "I apologize, but I encountered an error while processing your question. Please try again."
+            
+            if ws_manager and analysis_id in self.pending_analyses:
+                await ws_manager.broadcast(
+                    self.pending_analyses[analysis_id]["project_id"],
+                    {
+                        "type": "error",
+                        "analysis_id": analysis_id,
+                        "message": error_msg
+                    }
+                )
+            
+            return error_msg
     
-    def _create_planning_task(self, agent: Agent, project_id: str, dependent_tasks: List[Task]) -> Task:
+    async def chat_with_agent(self, db: AsyncSession, project_id: str, message: str, ws_manager: Optional[WebSocketManager] = None) -> str:
         """
-        Create a project planning task
+        Handle a general chat message with the agent for a project
         
         Args:
-            agent: Project planning agent
-            project_id: ID of the project to analyze
-            dependent_tasks: Tasks that this task depends on
+            db: Database session
+            project_id: ID of the project
+            message: User's message
+            ws_manager: WebSocket manager for real-time updates
             
         Returns:
-            Task: Project planning task
+            str: Agent's response
         """
-        # Load task configuration from YAML
-        task_config = self.config_loader.get_task_config("project_planning")
-        if not task_config:
-            logger.error("Project planning task configuration not found")
-            raise ValueError("Project planning task configuration not found")
+        try:
+            logger.info(f"Handling chat message for project {project_id}: {message}")
+            
+            # Send status update
+            if ws_manager:
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "agent_message",
+                        "sender": "assistant",
+                        "sender_name": "Project Assistant",
+                        "message": "Let me help you with that...",
+                        "is_thinking": True
+                    }
+                )
+            
+            # Set up Anthropic LLM
+            anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
+            anthropic_model = os.getenv("ANTHROPIC_MODEL", "claude-3-haiku-20240307")
+            
+            if not anthropic_api_key:
+                error_msg = "AI service not configured properly"
+                logger.error("ANTHROPIC_API_KEY not found")
+                return error_msg
+            
+            # Initialize the LLM
+            llm = ChatAnthropic(
+                model_name=anthropic_model,
+                anthropic_api_key=anthropic_api_key,
+                temperature=0.3,
+                max_tokens=2000
+            )
+            
+            # Create the document search tool for this project
+            document_search_tool = DocumentSearchTool(project_id)
+            
+            # Get project details for context
+            from app.services.project_service import ProjectService
+            project_service = ProjectService()
+            project = await project_service.get_project(db, project_id)
+            
+            # Create a conversational agent with a more flexible role
+            chat_agent = Agent(
+                role="Project Assistant",
+                goal="Help users understand their project, answer questions about documents, provide technical guidance, and assist with project-related queries",
+                backstory="""You are a knowledgeable project assistant with expertise in:
+                - Technical analysis and software architecture
+                - Project management and planning
+                - Risk assessment and mitigation
+                - Understanding and explaining project documentation
+                
+                You have access to all project documents and can search through them to provide accurate information.
+                You should be helpful, conversational, and provide clear explanations tailored to the user's needs.
+                When referencing project documents, cite specific sections or files when possible.""",
+                verbose=True,
+                allow_delegation=False,
+                llm=llm,
+                tools=[document_search_tool]
+            )
+            
+            # Build context about the project
+            context = f"""
+            Project: {project.name if project else 'Unknown'}
+            Description: {project.description if project else 'No description available'}
+            
+            User Message: {message}
+            """
+            
+            # Check if the message is asking about project insights
+            if project and project.insights and any(keyword in message.lower() for keyword in ['analysis', 'insights', 'recommendations', 'technical', 'risks', 'plan']):
+                context += f"\n\nPrevious Analysis Results:\n{json.dumps(project.insights, indent=2)}"
+            
+            # Create a task for the agent
+            chat_task = Task(
+                description=f"""
+                Respond to the user's message in a helpful and conversational manner.
+                
+                Context:
+                {context}
+                
+                Guidelines:
+                1. If the user is asking about project documents, search and reference specific content
+                2. If asking about previous analysis, reference the insights if available
+                3. Provide clear, actionable advice when appropriate
+                4. Be conversational but professional
+                5. If you're not sure about something, say so and suggest alternatives
+                """,
+                agent=chat_agent,
+                tools=[document_search_tool],
+                expected_output="A helpful and relevant response to the user's message"
+            )
+            
+            # Execute the task
+            response = chat_agent.execute_task(chat_task)
+            
+            # Convert response to string
+            if hasattr(response, 'raw'):
+                response_text = response.raw
+            else:
+                response_text = str(response)
+            
+            # Send the response
+            if ws_manager:
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "agent_message",
+                        "sender": "assistant",
+                        "sender_name": "Project Assistant",
+                        "message": response_text,
+                        "is_thinking": False
+                    }
+                )
+            
+            return response_text
+            
+        except Exception as e:
+            logger.error(f"Error in chat_with_agent for project {project_id}: {e}")
+            error_msg = "I apologize, but I encountered an error. Please try again."
+            
+            if ws_manager:
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "error",
+                        "message": error_msg
+                    }
+                )
+            
+            return error_msg
+    
+    async def confirm_and_save_analysis(self, db: AsyncSession, analysis_id: str, ws_manager: Optional[WebSocketManager] = None) -> bool:
+        """
+        Confirm and save the analysis to project insights
         
-        # Create task from configuration
-        return Task(
-            description=task_config["description"],
-            agent=agent,
-            expected_output=task_config["expected_output"],
-            context=f"Project ID: {project_id}",
-            depends_on=dependent_tasks
-        )
+        Args:
+            db: Database session
+            analysis_id: ID of the analysis to save
+            ws_manager: WebSocket manager for real-time updates
+            
+        Returns:
+            bool: True if saved successfully, False otherwise
+        """
+        try:
+            # Check if we have the analysis in memory
+            if analysis_id not in self.pending_analyses:
+                logger.error(f"Analysis {analysis_id} not found in pending analyses")
+                return False
+            
+            pending = self.pending_analyses[analysis_id]
+            project_id = pending["project_id"]
+            analysis_result = pending["result"]
+            
+            logger.info(f"Saving confirmed analysis {analysis_id} for project {project_id}")
+            
+            # Send status update
+            if ws_manager:
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "system_message",
+                        "message": "Saving analysis to project insights...",
+                        "analysis_id": analysis_id
+                    }
+                )
+            
+            # Store the results in the database
+            project_service = ProjectService()
+            await project_service.store_project_insights(db, project_id, analysis_result)
+            
+            # Remove from pending analyses
+            del self.pending_analyses[analysis_id]
+            
+            logger.info(f"Successfully saved analysis {analysis_id} to project insights")
+            
+            # Send confirmation
+            if ws_manager:
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "analysis_saved",
+                        "analysis_id": analysis_id,
+                        "message": "Analysis has been saved to project insights!"
+                    }
+                )
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error saving analysis {analysis_id}: {e}")
+            
+            if ws_manager and analysis_id in self.pending_analyses:
+                await ws_manager.broadcast(
+                    self.pending_analyses[analysis_id]["project_id"],
+                    {
+                        "type": "error",
+                        "analysis_id": analysis_id,
+                        "message": f"Failed to save analysis: {str(e)}"
+                    }
+                )
+            
+            return False
+    
+    async def _execute_analysis(self, analysis_id: str, project_id: str, db: AsyncSession, ws_manager: Optional[WebSocketManager] = None, force: bool = False) -> None:
+        try:
+            logger.info(f"Starting agent analysis execution for project {project_id} (analysis_id: {analysis_id}, force: {force})")
+            
+            # Send initial status
+            if ws_manager:
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "agent_message",
+                        "sender": "system",
+                        "sender_name": "System",
+                        "message": "Initializing agent analysis...",
+                        "analysis_id": analysis_id
+                    }
+                )
+            
+            # Check for cancellation
+            if asyncio.current_task().cancelled():
+                logger.info(f"Analysis {analysis_id} was cancelled before starting")
+                return
+            
+            # Import document processor
+            from app.services.document_processor import DocumentProcessor
+            document_processor = DocumentProcessor()
+            
+            # Get all documents for this project
+            documents = await document_processor.list_documents(db, project_id)
+            
+            # Check if any documents are still processing
+            processing_docs = [doc for doc in documents if doc.status == "processing"]
+            if processing_docs:
+                logger.warning(f"Cannot start analysis - {len(processing_docs)} documents still processing for project {project_id}")
+                # Send error via WebSocket
+                if ws_manager:
+                    await ws_manager.broadcast(
+                        project_id,
+                        {
+                            "type": "error",
+                            "analysis_id": analysis_id,
+                            "message": f"Cannot start analysis - {len(processing_docs)} documents still processing"
+                        }
+                    )
+                # We'll try again later - in a real implementation, this would be handled by a background job
+                return
+            
+            # Ensure all processed documents are indexed in ChromaDB
+            if documents:
+                logger.info(f"Ensuring {len(documents)} documents are indexed in ChromaDB for project {project_id}")
+                indexed = await document_processor.ensure_documents_indexed(db, project_id)
+                if not indexed:
+                    logger.warning(f"Failed to ensure all documents are indexed for project {project_id}")
+                else:
+                    logger.info(f"All documents are indexed in ChromaDB for project {project_id}")
+            
+            # Check for cancellation
+            if asyncio.current_task().cancelled():
+                logger.info(f"Analysis {analysis_id} was cancelled during document indexing")
+                return
+            
+            # Check if we already have analysis results for this project
+            from app.services.project_service import ProjectService
+            project_service = ProjectService()
+            project = await project_service.get_project(db, project_id)
+            
+            # Only skip if we have insights AND we're not forcing a new analysis
+            if project and project.insights and not force:
+                logger.info(f"Analysis results already exist for project {project_id} (not forced)")
+                
+                # Send existing results to client via WebSocket
+                if ws_manager:
+                    await ws_manager.broadcast(
+                        project_id,
+                        {
+                            "type": "analysis_result",
+                            "analysis_id": analysis_id,
+                            "result": project.insights,
+                            "message": "Analysis results are ready (previously generated)"
+                        }
+                    )
+                return
+            elif force and project and project.insights:
+                logger.info(f"Force flag set - running new analysis for project {project_id} despite existing results")
+            
+            # Set up Anthropic LLM
+            if ws_manager:
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "analysis_status",
+                        "status": "initializing_llm",
+                        "analysis_id": analysis_id,
+                        "message": "Initializing AI language model"
+                    }
+                )
+                
+            anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
+            anthropic_model = os.getenv("ANTHROPIC_MODEL", "claude-3-haiku-20240307")
+            
+            if not anthropic_api_key:
+                error_msg = "ANTHROPIC_API_KEY not found in environment variables"
+                logger.error(error_msg)
+                if ws_manager:
+                    await ws_manager.broadcast(
+                        project_id,
+                        {
+                            "type": "error",
+                            "analysis_id": analysis_id,
+                            "message": error_msg
+                        }
+                    )
+                raise ValueError(error_msg)
+            
+            # Initialize the Anthropic LLM
+            logger.info(f"Initializing Anthropic LLM with model {anthropic_model}")
+            try:
+                llm = ChatAnthropic(
+                    model_name=anthropic_model,
+                    anthropic_api_key=anthropic_api_key,
+                    temperature=0.2,
+                    max_tokens=4000
+                )
+                logger.info("Anthropic LLM initialized successfully")
+            except Exception as llm_error:
+                logger.error(f"Error initializing Anthropic LLM: {str(llm_error)}")
+                if ws_manager:
+                    await ws_manager.broadcast(
+                        project_id,
+                        {
+                            "type": "error",
+                            "analysis_id": analysis_id,
+                            "message": f"Failed to initialize LLM: {str(llm_error)}"
+                        }
+                    )
+                raise
+            
+            # Create the document search tool
+            document_search_tool = DocumentSearchTool(project_id)
+            
+            # Load agent configuration
+            if ws_manager:
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "analysis_status",
+                        "status": "creating_agents",
+                        "analysis_id": analysis_id,
+                        "message": "Creating AI agents for analysis"
+                    }
+                )
+                
+            agent_config = self.config_loader.get_agent_config("technical_analyst")
+            if not agent_config:
+                error_msg = "Technical analyst agent configuration not found"
+                logger.error(error_msg)
+                if ws_manager:
+                    await ws_manager.broadcast(
+                        project_id,
+                        {
+                            "type": "error",
+                            "analysis_id": analysis_id,
+                            "message": error_msg
+                        }
+                    )
+                raise ValueError(error_msg)
+            
+            # Create the technical analysis agent
+            technical_agent = Agent(
+                role=agent_config["role"],
+                goal=agent_config["goal"],
+                backstory=agent_config["backstory"],
+                verbose=agent_config["verbose"],
+                allow_delegation=agent_config["allow_delegation"],
+                llm=llm,
+                tools=[document_search_tool]
+            )
+            
+            # Prepare document content for the agent
+            document_content = []
+            for doc in documents:
+                document_content.append({
+                    "id": doc.id,
+                    "filename": doc.filename,
+                    "description": doc.description or "",
+                    "content_preview": doc.content[:500] if hasattr(doc, "content") and doc.content else "Content not available"
+                })
+            
+            # Create context for the agent
+            context_str = f"Project ID: {project_id}\n\nDocuments:\n"
+            for doc in document_content:
+                context_str += f"\n--- Document: {doc['filename']} ---\n"
+                context_str += f"Description: {doc['description']}\n\n"
+                context_str += f"Preview: {doc['content_preview']}\n"
+            
+            # Create the technical analysis task
+            task = Task(
+                description=f"""
+                Analyze the project with ID {project_id} and provide technical recommendations.
+                
+                Use the document_search tool to find relevant information in the project documents.
+                
+                Your analysis should include:
+                1. Architecture recommendations
+                2. Technology stack suggestions
+                3. Feasibility assessment
+                4. Implementation approach
+                
+                Project context:
+                {context_str}
+                """,
+                expected_output="Technical analysis report with architecture recommendations and technology stack",
+                agent=technical_agent
+            )
+            
+            # Create the crew with just the technical agent
+            crew = Crew(
+                agents=[technical_agent],
+                tasks=[task],
+                verbose=True,
+                process=Process.sequential
+            )
+            
+            # Run the crew
+            logger.info(f"Starting CrewAI execution for project {project_id}")
+            
+            # Check for cancellation before running crew
+            if asyncio.current_task().cancelled():
+                logger.info(f"Analysis {analysis_id} was cancelled before crew execution")
+                return
+            
+            result = crew.kickoff()
+            
+            # Check for cancellation after crew execution
+            if asyncio.current_task().cancelled():
+                logger.info(f"Analysis {analysis_id} was cancelled after crew execution")
+                return
+            
+            logger.info(f"CrewAI execution completed for project {project_id}")
+            
+            # Convert CrewOutput to serializable format
+            if hasattr(result, 'raw'):
+                crew_result = result.raw
+            elif hasattr(result, '__str__'):
+                crew_result = str(result)
+            else:
+                # Convert object to dict and then to string as fallback
+                try:
+                    crew_result = json.dumps(result.__dict__)
+                except:
+                    crew_result = f"Unserializable result type: {type(result).__name__}"
+            
+            # Format the results
+            analysis_result = {
+                "project_id": project_id,
+                "analysis_id": analysis_id,
+                "timestamp": datetime.utcnow().isoformat(),
+                "technical_analysis": crew_result,
+            }
+            
+            # Store the analysis results in memory (not in database yet)
+            if not hasattr(self, 'pending_analyses'):
+                self.pending_analyses = {}
+            
+            self.pending_analyses[analysis_id] = {
+                "project_id": project_id,
+                "result": analysis_result,
+                "crew": crew,  # Keep the crew instance for follow-up questions
+                "technical_agent": technical_agent,
+                "document_search_tool": document_search_tool
+            }
+            
+            logger.info(f"Analysis {analysis_id} completed and stored in memory for project {project_id}")
+            logger.info(f"Current pending analyses: {list(self.pending_analyses.keys())}")
+            
+            # Send the analysis results via WebSocket for user review
+            if ws_manager:
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "analysis_complete",
+                        "analysis_id": analysis_id,
+                        "result": {
+                            "technical_analysis": crew_result,
+                            "completed_at": str(datetime.now())
+                        },
+                        "message": "Initial analysis complete. Please review and ask any follow-up questions."
+                    }
+                )
+                
+                # Send a follow-up message prompting for questions
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "agent_message",
+                        "sender": "technical_agent",
+                        "sender_name": "Technical Analysis Agent",
+                        "message": "I've completed my initial analysis of your project. Feel free to ask any questions about the analysis, request clarifications, or ask for additional insights. When you're satisfied, you can confirm to save these insights.",
+                        "analysis_id": analysis_id
+                    }
+                )
+            
+            logger.info(f"Completed initial analysis {analysis_id} for project {project_id}")
+            
+        except asyncio.CancelledError:
+            logger.info(f"Analysis {analysis_id} was cancelled")
+            if ws_manager:
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "analysis_cancelled",
+                        "analysis_id": analysis_id,
+                        "message": "Analysis was cancelled"
+                    }
+                )
+            raise  # Re-raise to properly handle cancellation
+        except Exception as e:
+            logger.error(f"Error executing analysis {analysis_id}: {str(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            # In a real implementation, this would update the analysis status to error

@@ -8,7 +8,7 @@ import traceback
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from app.core.config import settings
 from app.services.websocket_manager import WebSocketManager
-from app.services.agent_service_v2 import AgentServiceV2
+from app.services.agent_service import AgentService
 
 # Configure detailed logging
 logger = logging.getLogger(__name__)
@@ -25,8 +25,8 @@ router = APIRouter()
 # Create a single global instance of WebSocketManager
 ws_manager = WebSocketManager()
 
-# Create a single global instance of AgentServiceV2
-agent_service = AgentServiceV2()
+# Create a single global instance of AgentService
+agent_service = AgentService()
 
 # Dictionary to store active connections by project_id and client_id
 active_connections = {}
