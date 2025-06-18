@@ -10,6 +10,7 @@ interface Message {
   timestamp: string;
   result?: any;
   message_id?: string; // Server-generated unique ID
+  isLoading?: boolean; // Flag to indicate loading state
 }
 
 interface AgentConversationProps {
@@ -30,6 +31,7 @@ export default function AgentConversation({ projectId, onStartAnalysis }: AgentC
   // Track processed message IDs to prevent duplicates
   const processedMessageIds = useRef<Set<string>>(new Set());
   const messageCounter = useRef(0);
+  const connectionMessageId = useRef<string | null>(null);
 
   const generateMessageId = () => {
     // Use a combination of timestamp and counter to ensure uniqueness
@@ -68,12 +70,27 @@ export default function AgentConversation({ projectId, onStartAnalysis }: AgentC
     ws.onopen = () => {
       console.log('WebSocket connected');
       setIsConnected(true);
-      setMessages(prev => [...prev, {
-        id: generateMessageId(),
-        type: 'system',
-        message: 'Connected to AI agent',
-        timestamp: new Date().toISOString()
-      }]);
+      
+      // Update the connecting message if it exists
+      if (connectionMessageId.current) {
+        setMessages(prev => prev.map(msg => {
+          if (msg.id === connectionMessageId.current) {
+            return {
+              ...msg,
+              message: 'Connected to AI agents',
+              isLoading: false // Remove the spinner
+            };
+          }
+          return msg;
+        }));
+        
+        // Clear the connection message ID after a delay so it can be removed from the UI
+        setTimeout(() => {
+          // Remove the connection message after 3 seconds
+          setMessages(prev => prev.filter(msg => msg.id !== connectionMessageId.current));
+          connectionMessageId.current = null;
+        }, 3000);
+      }
     };
 
     ws.onmessage = (event) => {
@@ -103,15 +120,23 @@ export default function AgentConversation({ projectId, onStartAnalysis }: AgentC
           case 'user_message':
           case 'agent_message':
           case 'system_message':
-            setMessages(prev => [...prev, {
-              id: generateMessageId(),
-              type: data.type === 'agent_message' ? 'agent' : (data.type === 'user_message' ? 'user' : 'system'),
-              sender: data.sender,
-              senderName: data.sender_name,
-              message: data.message,
-              timestamp: new Date().toISOString(),
-              message_id: data.message_id
-            }]);
+            // Filter out connection status messages
+            if (data.type === 'system_message' && 
+                (data.message.includes('Connected to agent conversation') || 
+                 data.message.includes('connection') || 
+                 data.message.includes('Connection'))) {
+              console.log('Filtering out connection status message:', data.message);
+            } else {
+              setMessages(prev => [...prev, {
+                id: generateMessageId(),
+                type: data.type === 'agent_message' ? 'agent' : (data.type === 'user_message' ? 'user' : 'system'),
+                sender: data.sender,
+                senderName: data.sender_name,
+                message: data.message,
+                timestamp: new Date().toISOString(),
+                message_id: data.message_id
+              }]);
+            }
             break;
 
           case 'analysis_started':
@@ -199,12 +224,20 @@ export default function AgentConversation({ projectId, onStartAnalysis }: AgentC
     ws.onerror = (error) => {
       // WebSocket error events don't contain much detail in browsers
       console.error('WebSocket error occurred');
-      setMessages(prev => [...prev, {
-        id: generateMessageId(),
-        type: 'error',
-        message: 'Connection error occurred',
-        timestamp: new Date().toISOString()
-      }]);
+      
+      // Only add the connecting message if we don't already have one
+      if (!connectionMessageId.current) {
+        const newId = generateMessageId();
+        connectionMessageId.current = newId;
+        
+        setMessages(prev => [...prev, {
+          id: newId,
+          type: 'system',
+          message: 'Connecting to AI agents...',
+          isLoading: true, // Flag to indicate loading state
+          timestamp: new Date().toISOString()
+        }]);
+      }
     };
 
     ws.onclose = (event) => {
@@ -226,12 +259,7 @@ export default function AgentConversation({ projectId, onStartAnalysis }: AgentC
         }, 3000);
       }
       
-      setMessages(prev => [...prev, {
-        id: generateMessageId(),
-        type: 'system',
-        message: 'Disconnected from server',
-        timestamp: new Date().toISOString()
-      }]);
+      // Don't add disconnection message to chat - show in header instead
     };
 
     wsRef.current = ws;
@@ -453,7 +481,12 @@ export default function AgentConversation({ projectId, onStartAnalysis }: AgentC
                   {message.senderName}
                 </div>
               )}
-              <div className="whitespace-pre-wrap">{message.message}</div>
+              <div className="whitespace-pre-wrap flex items-center gap-2">
+                {message.message}
+                {message.isLoading && (
+                  <span className="inline-block animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-blue-500"></span>
+                )}
+              </div>
               {message.result && (
                 <div className="mt-2 pt-2 border-t border-gray-300">
                   <div className="text-sm font-semibold mb-1">Analysis Results:</div>
