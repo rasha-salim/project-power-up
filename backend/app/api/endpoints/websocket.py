@@ -202,7 +202,7 @@ async def agent_conversation_websocket(
                     elif message_type == "user_question":
                         # Handle user question about analysis
                         analysis_id = message_data.get("analysis_id")
-                        question = message_data.get("question", "")
+                        question = message_data.get("question")
                         
                         if not analysis_id or not question:
                             await websocket.send_text(json.dumps({
@@ -211,7 +211,7 @@ async def agent_conversation_websocket(
                             }))
                             continue
                         
-                        logger.info(f"User question for analysis {analysis_id}: {question}")
+                        logger.info(f"Handling user question for analysis {analysis_id}")
                         
                         try:
                             # Import dependencies
@@ -225,8 +225,12 @@ async def agent_conversation_websocket(
                             if websocket not in ws_manager.active_connections.get(project_id, []):
                                 await ws_manager.connect(websocket, project_id)
                             
-                            # Handle the question
-                            await agent_service.handle_user_question(db, analysis_id, question, ws_manager)
+                            # Handle the question using the new unified handler
+                            response = await agent_service.handle_user_message(
+                                db, project_id, question, analysis_id, ws_manager
+                            )
+                            
+                            # The response is already sent via WebSocket by the handler
                             
                         except Exception as e:
                             logger.error(f"Error handling user question: {str(e)}")
@@ -236,17 +240,18 @@ async def agent_conversation_websocket(
                             }))
                     
                     elif message_type == "chat_message":
-                        # Handle general chat messages (no analysis required)
+                        # Handle general chat message
                         message_text = message_data.get("message")
                         
                         if not message_text:
                             await websocket.send_text(json.dumps({
                                 "type": "error",
-                                "message": "Message text is required"
+                                "message": "Missing message content"
                             }))
                             continue
                         
-                        # Handle the chat message
+                        logger.info(f"Handling chat message for project {project_id}")
+                        
                         try:
                             # Import dependencies
                             from sqlalchemy.ext.asyncio import AsyncSession
@@ -259,21 +264,18 @@ async def agent_conversation_websocket(
                             if websocket not in ws_manager.active_connections.get(project_id, []):
                                 await ws_manager.connect(websocket, project_id)
                             
-                            # Handle the chat message
-                            response = await agent_service.chat_with_agent(
-                                db,
-                                project_id,
-                                message_text,
-                                ws_manager
+                            # Handle the message using the new unified handler
+                            response = await agent_service.handle_user_message(
+                                db, project_id, message_text, None, ws_manager
                             )
                             
-                            logger.info(f"Agent chat response: {response}")
-                        
+                            # The response is already sent via WebSocket by the handler
+                            
                         except Exception as e:
                             logger.error(f"Error handling chat message: {str(e)}")
                             await websocket.send_text(json.dumps({
                                 "type": "error",
-                                "message": f"Failed to process chat message: {str(e)}"
+                                "message": f"Failed to process message: {str(e)}"
                             }))
                     
                     elif message_type == "confirm_analysis":

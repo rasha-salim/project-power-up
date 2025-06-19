@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { PaperAirplaneIcon, XMarkIcon, CheckIcon, ArrowPathIcon, PencilSquareIcon } from '@heroicons/react/24/outline';
+import { PaperAirplaneIcon, XMarkIcon, CheckIcon, ArrowPathIcon, InformationCircleIcon } from '@heroicons/react/24/outline';
 
 interface Message {
   id: string;
@@ -13,12 +13,26 @@ interface Message {
   isLoading?: boolean; // Flag to indicate loading state
 }
 
+interface AgentInfo {
+  id: string;
+  name: string;
+  mention_id: string;
+  role: string;
+  description: string;
+  capabilities: string[];
+  example_prompts: string[];
+  avatar?: string;
+  color?: string;
+  is_available: boolean;
+}
+
 interface AgentConversationProps {
   projectId: string;
   onStartAnalysis: () => void;
+  onAnalysisComplete?: (insights: any) => void;
 }
 
-export default function AgentConversation({ projectId, onStartAnalysis }: AgentConversationProps) {
+export default function AgentConversation({ projectId, onStartAnalysis, onAnalysisComplete }: AgentConversationProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputMessage, setInputMessage] = useState('');
   const [isConnected, setIsConnected] = useState(false);
@@ -26,12 +40,14 @@ export default function AgentConversation({ projectId, onStartAnalysis }: AgentC
   const [currentAnalysisId, setCurrentAnalysisId] = useState<string | null>(null);
   const [analysisComplete, setAnalysisComplete] = useState(false);
   const [isAgentThinking, setIsAgentThinking] = useState(false);
-  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
-  const [userFeedback, setUserFeedback] = useState('');
-  const [isRegenerating, setIsRegenerating] = useState(false);
+  const [showAgentCatalog, setShowAgentCatalog] = useState(false);
+  const [agents, setAgents] = useState<AgentInfo[]>([]);
+  const [showAgentSuggestions, setShowAgentSuggestions] = useState(false);
+  const [agentSearchTerm, setAgentSearchTerm] = useState('');
   const wsRef = useRef<WebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   // Track processed message IDs to prevent duplicates
   const processedMessageIds = useRef<Set<string>>(new Set());
   const messageCounter = useRef(0);
@@ -180,7 +196,6 @@ export default function AgentConversation({ projectId, onStartAnalysis }: AgentC
 
           case 'analysis_complete':
             setIsAnalyzing(false);
-            setIsRegenerating(false);
             setAnalysisComplete(true);
             
             // Check if this is a regenerated analysis
@@ -198,6 +213,11 @@ export default function AgentConversation({ projectId, onStartAnalysis }: AgentC
               result: data.result,
               message_id: data.message_id
             }]);
+            
+            // Notify parent component
+            if (onAnalysisComplete && data.result) {
+              onAnalysisComplete(data.result);
+            }
             break;
 
           case 'analysis_status':
@@ -216,15 +236,14 @@ export default function AgentConversation({ projectId, onStartAnalysis }: AgentC
             setMessages(prev => [...prev, {
               id: generateMessageId(),
               type: 'system',
-              sender: data.sender || 'technical_agent',
-              senderName: data.sender_name || 'Technical Analysis Agent',
-              message: data.message || 'Analysis saved to insights!',
-              timestamp: new Date().toISOString(),
-              message_id: data.message_id
+              message: data.message || 'Analysis saved successfully!',
+              timestamp: new Date().toISOString()
             }]);
-            setCurrentAnalysisId(null);
-            setAnalysisComplete(false);
-            onStartAnalysis(); // Update parent component
+            
+            // Also update parent when analysis is saved
+            if (onAnalysisComplete && data.insights) {
+              onAnalysisComplete(data.insights);
+            }
             break;
 
           case 'analysis_cancelled':
@@ -341,51 +360,56 @@ export default function AgentConversation({ projectId, onStartAnalysis }: AgentC
     };
   }, [projectId]);
 
+  // Fetch agent catalog on mount
+  useEffect(() => {
+    fetchAgentCatalog();
+  }, []);
+
+  const fetchAgentCatalog = async () => {
+    try {
+      const response = await fetch('/api/v1/agents/catalog');
+      if (response.ok) {
+        const data = await response.json();
+        setAgents(data);
+      }
+    } catch (error) {
+      console.error('Failed to fetch agent catalog:', error);
+    }
+  };
+
   const sendMessage = () => {
     if (!inputMessage.trim() || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      // Try to reconnect if websocket is not open
-      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-        connectWebSocket();
-        // Retry sending after a short delay
-        setTimeout(() => {
-          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && inputMessage.trim()) {
-            sendMessage();
-          }
-        }, 1000);
-      }
       return;
     }
 
-    const userMessage: Message = {
+    const userMessage = inputMessage.trim();
+    
+    // Add user message to chat
+    setMessages(prev => [...prev, {
       id: generateMessageId(),
       type: 'user',
-      message: inputMessage,
+      message: userMessage,
       timestamp: new Date().toISOString()
-    };
+    }]);
 
-    setMessages(prev => [...prev, userMessage]);
-    
-    // Set agent thinking state to true when user sends a message
-    setIsAgentThinking(true);
-    console.log('Setting isAgentThinking to true'); // Debug log
-
-    // Send message to WebSocket
+    // Send message based on context
     if (currentAnalysisId) {
-      // If we have an active analysis, send as user_question
+      // In analysis context
       wsRef.current.send(JSON.stringify({
         type: 'user_question',
         analysis_id: currentAnalysisId,
-        question: inputMessage
+        question: userMessage
       }));
     } else {
-      // Otherwise, send as general chat message
+      // General chat
       wsRef.current.send(JSON.stringify({
         type: 'chat_message',
-        message: inputMessage
+        message: userMessage
       }));
     }
 
     setInputMessage('');
+    setShowAgentSuggestions(false);
   };
 
   const startAnalysis = (force: boolean = false) => {
@@ -451,29 +475,36 @@ export default function AgentConversation({ projectId, onStartAnalysis }: AgentC
     }]);
   };
 
-  const regenerateWithFeedback = () => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN || !currentAnalysisId || !userFeedback.trim()) {
-      return;
+  // Handle @ mentions in input
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setInputMessage(value);
+    
+    // Check for @ symbol
+    const lastAtIndex = value.lastIndexOf('@');
+    if (lastAtIndex !== -1 && lastAtIndex === value.length - 1 || 
+        (lastAtIndex !== -1 && value.substring(lastAtIndex).match(/^@\w*$/))) {
+      setShowAgentSuggestions(true);
+      setAgentSearchTerm(value.substring(lastAtIndex + 1));
+    } else {
+      setShowAgentSuggestions(false);
     }
-
-    const message = {
-      type: 'regenerate_with_feedback',
-      analysis_id: currentAnalysisId,
-      feedback: userFeedback
-    };
-
-    wsRef.current.send(JSON.stringify(message));
-    
-    setIsRegenerating(true);
-    setShowFeedbackModal(false);
-    
-    setMessages(prev => [...prev, {
-      id: generateMessageId(),
-      type: 'system',
-      message: 'Regenerating analysis with your feedback...',
-      timestamp: new Date().toISOString()
-    }]);
   };
+
+  const insertAgentMention = (agent: AgentInfo) => {
+    const lastAtIndex = inputMessage.lastIndexOf('@');
+    const newMessage = inputMessage.substring(0, lastAtIndex) + `@${agent.mention_id} `;
+    setInputMessage(newMessage);
+    setShowAgentSuggestions(false);
+    inputRef.current?.focus();
+  };
+
+  const filteredAgents = agents.filter(agent => 
+    agent.is_available && 
+    (agentSearchTerm === '' || 
+     agent.mention_id.toLowerCase().includes(agentSearchTerm.toLowerCase()) ||
+     agent.name.toLowerCase().includes(agentSearchTerm.toLowerCase()))
+  );
 
   return (
     <div className="flex flex-col h-full">
@@ -489,6 +520,14 @@ export default function AgentConversation({ projectId, onStartAnalysis }: AgentC
             </p>
           </div>
           <div className="flex gap-2">
+            <button
+              onClick={() => setShowAgentCatalog(!showAgentCatalog)}
+              className="px-3 py-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-md flex items-center gap-2"
+              title="View available agents"
+            >
+              <InformationCircleIcon className="h-5 w-5" />
+              Agents
+            </button>
             {!isAnalyzing && !analysisComplete && (
               <>
                 <button
@@ -518,28 +557,67 @@ export default function AgentConversation({ projectId, onStartAnalysis }: AgentC
               </button>
             )}
             {analysisComplete && (
-              <>
-                <button
-                  onClick={() => setShowFeedbackModal(true)}
-                  disabled={!isConnected || !currentAnalysisId || isRegenerating}
-                  className="px-4 py-2 bg-amber-600 text-white rounded-md hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                >
-                  <PencilSquareIcon className="h-5 w-5" />
-                  Add Feedback & Regenerate
-                </button>
-                <button
-                  onClick={confirmAndSaveAnalysis}
-                  disabled={!isConnected || !currentAnalysisId || isRegenerating}
-                  className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                >
-                  <CheckIcon className="h-5 w-5" />
-                  Save to Insights
-                </button>
-              </>
+              <button
+                onClick={confirmAndSaveAnalysis}
+                disabled={!isConnected || !currentAnalysisId}
+                className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                <CheckIcon className="h-5 w-5" />
+                Save to Insights
+              </button>
             )}
           </div>
         </div>
       </div>
+
+      {/* Agent Catalog Sidebar */}
+      {showAgentCatalog && (
+        <div className="absolute right-0 top-16 w-96 h-full bg-white border-l shadow-lg z-40 overflow-y-auto">
+          <div className="p-4">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-semibold">Available Agents</h3>
+              <button
+                onClick={() => setShowAgentCatalog(false)}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                <XMarkIcon className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="space-y-4">
+              {agents.map(agent => (
+                <div
+                  key={agent.id}
+                  className={`p-4 rounded-lg border ${
+                    agent.is_available ? 'border-gray-200' : 'border-gray-100 opacity-60'
+                  }`}
+                  style={{ borderLeftColor: agent.color, borderLeftWidth: '4px' }}
+                >
+                  <div className="flex items-start gap-3">
+                    <span className="text-2xl">{agent.avatar}</span>
+                    <div className="flex-1">
+                      <h4 className="font-semibold flex items-center gap-2">
+                        {agent.name}
+                        <span className="text-sm text-gray-500">@{agent.mention_id}</span>
+                      </h4>
+                      <p className="text-sm text-gray-600 mt-1">{agent.description}</p>
+                      {agent.example_prompts.length > 0 && (
+                        <div className="mt-2">
+                          <p className="text-xs text-gray-500 mb-1">Example prompts:</p>
+                          <ul className="text-xs text-gray-600 space-y-1">
+                            {agent.example_prompts.slice(0, 2).map((prompt, idx) => (
+                              <li key={idx} className="italic">"{prompt}"</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-6 space-y-4">
@@ -613,72 +691,64 @@ export default function AgentConversation({ projectId, onStartAnalysis }: AgentC
 
       {/* Input */}
       <div className="bg-white border-t px-6 py-4">
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={inputMessage}
-            onChange={(e) => setInputMessage(e.target.value)}
-            onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
-            disabled={!isConnected || (isAnalyzing && !analysisComplete)}
-            placeholder={
-              !isConnected ? "Connecting..." : 
-              isAnalyzing && !analysisComplete ? "Analysis in progress..." :
-              analysisComplete ? "Ask questions about the analysis..." :
-              "Type a message..."
-            }
-            className="flex-1 px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
-          />
-          <button
-            onClick={sendMessage}
-            disabled={!isConnected || !inputMessage.trim() || (isAnalyzing && !analysisComplete)}
-            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <PaperAirplaneIcon className="h-5 w-5" />
-          </button>
+        <div className="relative">
+          {/* Agent suggestions dropdown */}
+          {showAgentSuggestions && filteredAgents.length > 0 && (
+            <div className="absolute bottom-full mb-2 left-0 w-64 bg-white border rounded-lg shadow-lg">
+              <div className="p-2">
+                <p className="text-xs text-gray-500 mb-2">Available agents:</p>
+                {filteredAgents.map(agent => (
+                  <button
+                    key={agent.id}
+                    onClick={() => insertAgentMention(agent)}
+                    className="w-full text-left p-2 hover:bg-gray-100 rounded flex items-center gap-2"
+                  >
+                    <span>{agent.avatar}</span>
+                    <div>
+                      <div className="font-medium text-sm">@{agent.mention_id}</div>
+                      <div className="text-xs text-gray-500">{agent.name}</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          
+          <form onSubmit={(e) => { e.preventDefault(); sendMessage(); }} className="flex gap-2">
+            <input
+              ref={inputRef}
+              type="text"
+              value={inputMessage}
+              onChange={handleInputChange}
+              placeholder={
+                currentAnalysisId 
+                  ? "Ask a question about the analysis or type '@' to mention an agent..." 
+                  : "Type a message or '@' to mention an agent..."
+              }
+              className="flex-1 px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              disabled={!isConnected || isAgentThinking}
+            />
+            <button
+              type="submit"
+              disabled={!isConnected || !inputMessage.trim() || isAgentThinking}
+              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              <PaperAirplaneIcon className="h-5 w-5" />
+              Send
+            </button>
+          </form>
         </div>
-        {analysisComplete && (
-          <p className="text-sm text-gray-600 mt-2">
-            Ask questions about the analysis or click "Save to Insights" when you're ready.
+        {!isConnected && (
+          <p className="text-sm text-red-500 mt-2">
+            Connection lost. Attempting to reconnect...
+          </p>
+        )}
+        {currentAnalysisId && (
+          <p className="text-xs text-gray-500 mt-2">
+            💡 Tip: You can update the analysis by saying "please update the analysis with..." or mention specific agents with @
           </p>
         )}
       </div>
-
-      {/* Feedback Modal */}
-      {showFeedbackModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg max-w-2xl w-full p-6">
-            <h3 className="text-lg font-semibold mb-4">Add Your Feedback & Suggestions</h3>
-            <p className="text-sm text-gray-600 mb-4">
-              Provide your notes and suggestions below. The AI will incorporate your feedback and regenerate the analysis.
-            </p>
-            <textarea
-              value={userFeedback}
-              onChange={(e) => setUserFeedback(e.target.value)}
-              placeholder="Enter your feedback, suggestions, or specific requirements here..."
-              className="w-full h-32 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-            <div className="flex justify-end gap-2 mt-4">
-              <button
-                onClick={() => {
-                  setShowFeedbackModal(false);
-                  setUserFeedback('');
-                }}
-                className="px-4 py-2 bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={regenerateWithFeedback}
-                disabled={!userFeedback.trim()}
-                className="px-4 py-2 bg-amber-600 text-white rounded-md hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-              >
-                <ArrowPathIcon className="h-5 w-5" />
-                Regenerate Analysis
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

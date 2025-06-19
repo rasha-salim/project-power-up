@@ -1,23 +1,19 @@
-import logging
-import json
-import uuid
 import os
+import logging
+import re
+import uuid
 import asyncio
+from typing import Dict, Any, Optional, List, Tuple
 from datetime import datetime
-from typing import List, Dict, Any, Optional
-
 from sqlalchemy.ext.asyncio import AsyncSession
 from crewai import Agent, Task, Crew, Process
 from langchain_anthropic import ChatAnthropic
-from crewai.agent import Agent as CrewAgent
-from crewai.task import Task as CrewTask
-
-from app.models.agent import AgentTask as AgentTaskModel
+from app.models.project import Project
 from app.services.project_service import ProjectService
-from app.config.config_loader import ConfigLoader
-from app.core.config import settings
 from app.tools.document_search import DocumentSearchTool
 from app.services.websocket_manager import WebSocketManager
+from app.core.agent_registry import agent_registry
+from app.config.config_loader import ConfigLoader
 
 logger = logging.getLogger(__name__)
 
@@ -298,10 +294,12 @@ class AgentService:
             documents = await document_processor.list_documents(db, project_id)
             
             # Create context for the agent including previous analysis and user feedback
-            context_str = f"Project ID: {project_id}\n\n"
-            context_str += f"Previous Analysis:\n{previous_result.get('technical_analysis', 'No previous analysis')}\n\n"
-            context_str += f"User Feedback and Suggestions:\n{user_feedback}\n\n"
-            context_str += "Documents:\n"
+            context_str = f"""
+            Project ID: {project_id}\n\n
+            Previous Analysis:\n{previous_result.get('technical_analysis', 'No previous analysis')}\n\n
+            User Feedback and Suggestions:\n{user_feedback}\n\n
+            Documents:\n
+            """
             
             for doc in documents:
                 context_str += f"\n--- Document: {doc.filename} ---\n"
@@ -577,7 +575,7 @@ class AgentService:
                     {
                         "type": "system_message",
                         "message": "Saving analysis to project insights...",
-                        "analysis_id": analysis_id
+                        "sender": "system"
                     }
                 )
             
@@ -938,3 +936,160 @@ class AgentService:
             import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")
             # In a real implementation, this would update the analysis status to error
+    
+    def parse_agent_mention(self, message: str) -> Tuple[Optional[str], str]:
+        """
+        Parse @agent mentions from message
+        Returns: (agent_id, cleaned_message)
+        """
+        # Pattern to match @mention at the beginning or with space before it
+        pattern = r'(?:^|\s)@(\w+)'
+        match = re.search(pattern, message)
+        
+        if match:
+            mention_id = match.group(1).lower()
+            # Try to find the agent
+            agent_info = agent_registry.get_agent_by_mention(mention_id)
+            
+            if agent_info:
+                # Remove the @mention from the message
+                cleaned_message = re.sub(pattern, '', message, count=1).strip()
+                return agent_info.id, cleaned_message
+            
+        return None, message
+    
+    def detect_feedback_request(self, message: str) -> bool:
+        """
+        Detect if the message is requesting to update/regenerate analysis with feedback
+        """
+        feedback_patterns = [
+            r'(?i)update.*analysis.*with',
+            r'(?i)regenerate.*considering',
+            r'(?i)redo.*analysis.*but',
+            r'(?i)please.*update.*analysis',
+            r'(?i)modify.*analysis.*to',
+            r'(?i)change.*analysis.*to',
+            r'(?i)revise.*analysis',
+            r'(?i)incorporate.*feedback',
+            r'(?i)add.*to.*analysis',
+            r'(?i)include.*in.*analysis'
+        ]
+        
+        for pattern in feedback_patterns:
+            if re.search(pattern, message):
+                return True
+        
+        return False
+    
+    def extract_feedback_content(self, message: str) -> str:
+        """
+        Extract the actual feedback content from a feedback request message
+        """
+        # Remove common request phrases to get the actual feedback
+        feedback = message
+        
+        # Patterns to remove
+        remove_patterns = [
+            r'(?i)please\s+',
+            r'(?i)update\s+the\s+analysis\s+',
+            r'(?i)regenerate\s+considering\s+',
+            r'(?i)redo\s+the\s+analysis\s+but\s+',
+            r'(?i)modify\s+the\s+analysis\s+to\s+',
+            r'(?i)with\s+the\s+following\s+',
+            r'(?i)to\s+include\s+',
+            r'(?i)considering\s+that\s+'
+        ]
+        
+        for pattern in remove_patterns:
+            feedback = re.sub(pattern, '', feedback)
+        
+        return feedback.strip()
+    
+    async def handle_user_message(
+        self, 
+        db: AsyncSession, 
+        project_id: str,
+        message: str,
+        analysis_id: Optional[str] = None,
+        ws_manager: Optional[WebSocketManager] = None
+    ) -> str:
+        """
+        Handle user message with @mention support and feedback detection
+        """
+        # Parse for @mentions
+        mentioned_agent_id, cleaned_message = self.parse_agent_mention(message)
+        
+        # Check if this is a feedback request for existing analysis
+        if analysis_id and self.detect_feedback_request(cleaned_message):
+            # Extract feedback and regenerate
+            feedback = self.extract_feedback_content(cleaned_message)
+            
+            # Send acknowledgment
+            if ws_manager:
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "system_message",
+                        "message": "I'll update the analysis with your feedback...",
+                        "sender": "system"
+                    }
+                )
+            
+            # Regenerate with feedback
+            success = await self.regenerate_analysis_with_feedback(
+                db, analysis_id, feedback, ws_manager
+            )
+            
+            if success:
+                return "Analysis updated with your feedback!"
+            else:
+                return "Failed to update analysis. Please try again."
+        
+        # Route to specific agent if mentioned
+        if mentioned_agent_id:
+            if mentioned_agent_id == "technical_analyst":
+                # Use existing handle_user_question for technical analyst
+                if analysis_id:
+                    return await self.handle_user_question(
+                        db, analysis_id, cleaned_message, ws_manager
+                    )
+                else:
+                    # Start new analysis if requested
+                    if any(word in cleaned_message.lower() for word in ['analyze', 'analysis', 'review']):
+                        await self.start_analysis(db, project_id, ws_manager)
+                        return "Starting technical analysis..."
+                    else:
+                        # General technical question
+                        return await self.chat_with_agent(
+                            db, project_id, cleaned_message, ws_manager
+                        )
+            
+            elif mentioned_agent_id == "project_assistant":
+                # Route to general chat
+                return await self.chat_with_agent(
+                    db, project_id, cleaned_message, ws_manager
+                )
+            
+            else:
+                # Agent not yet implemented
+                agent_info = agent_registry.get_agent(mentioned_agent_id)
+                if agent_info and "[Coming Soon]" in agent_info.description:
+                    return f"The {agent_info.name} is coming soon! For now, try @technical or @assistant."
+                else:
+                    return "I couldn't find that agent. Try @technical or @assistant."
+        
+        # No specific agent mentioned - use general assistant
+        if not analysis_id:
+            # Suggest which agent to use based on message content
+            if any(word in message.lower() for word in ['code', 'architecture', 'technical', 'technology']):
+                suggestion = "For technical questions, you can ask @technical directly. "
+            else:
+                suggestion = ""
+            
+            response = await self.chat_with_agent(db, project_id, message, ws_manager)
+            return suggestion + response
+        else:
+            # In analysis context, use technical agent by default
+            return await self.handle_user_question(
+                db, analysis_id, message, ws_manager
+            )

@@ -17,6 +17,7 @@ interface Project {
   status: string;
   created_at: string;
   updated_at: string;
+  insights?: any;
 }
 
 interface Document {
@@ -223,76 +224,24 @@ export default function ProjectDetailPage() {
   const handleStartAnalysis = async () => {
     try {
       setIsAnalysisRunning(true);
-      
-      // Call the API to start the analysis
-      const response = await fetch(`/api/v1/projects/${projectId}/analyze`, {
-        method: 'POST',
-      });
-      
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || 'Failed to start analysis');
-      }
-      
-      const data = await response.json();
-      
-      // Update the project status to analyzing
       setProject(prev => prev ? { ...prev, status: 'analyzing' } : null);
       
-      // Set up polling to check analysis status
-      const checkAnalysisStatus = async () => {
-        try {
-          const statusResponse = await fetch(`/api/v1/projects/${projectId}/insights`);
-          
-          if (!statusResponse.ok) {
-            console.error('Error checking analysis status, will retry');
-            return false;
-          }
-          
-          const statusData = await statusResponse.json();
-          
-          // If analysis is complete, update the project
-          if (statusData.status === 'completed') {
-            setProject(prev => prev ? { 
-              ...prev, 
-              status: 'completed',
-              insights: statusData.insights 
-            } : null);
-            setIsAnalysisRunning(false);
-            return true;
-          }
-          
-          return false;
-        } catch (err) {
-          console.error('Error checking analysis status:', err);
-          return false;
-        }
-      };
-      
-      // Poll every 5 seconds for up to 5 minutes
-      const maxAttempts = 60; // 5 minutes at 5-second intervals
-      let attempts = 0;
-      
-      const pollInterval = setInterval(async () => {
-        attempts++;
-        const isComplete = await checkAnalysisStatus();
-        
-        if (isComplete || attempts >= maxAttempts) {
-          clearInterval(pollInterval);
-          if (!isComplete && attempts >= maxAttempts) {
-            // If we've reached max attempts and it's still not complete,
-            // we'll stop polling but leave the status as analyzing
-            console.log('Analysis is taking longer than expected, stopped polling');
-          }
-        }
-      }, 5000);
+      // The analysis status will be updated via WebSocket messages
+      // No need for polling anymore
       
     } catch (err) {
       console.error('Error starting analysis:', err);
       setIsAnalysisRunning(false);
-      // Show error to user
-      alert(`Failed to start analysis: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
+  };
+
+  const handleAnalysisComplete = (insights: any) => {
+    setProject(prev => prev ? { 
+      ...prev, 
+      status: 'completed',
+      insights: insights 
+    } : null);
+    setIsAnalysisRunning(false);
   };
 
   // Handle document upload
@@ -496,6 +445,7 @@ export default function ProjectDetailPage() {
               <AgentConversation 
                 projectId={projectId}
                 onStartAnalysis={handleStartAnalysis}
+                onAnalysisComplete={handleAnalysisComplete}
               />
             ) : (
               <ProjectInsights 
