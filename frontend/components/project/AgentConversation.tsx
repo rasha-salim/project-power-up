@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { PaperAirplaneIcon, XMarkIcon, CheckIcon } from '@heroicons/react/24/outline';
+import { PaperAirplaneIcon, XMarkIcon, CheckIcon, ArrowPathIcon, PencilSquareIcon } from '@heroicons/react/24/outline';
 
 interface Message {
   id: string;
@@ -25,6 +25,10 @@ export default function AgentConversation({ projectId, onStartAnalysis }: AgentC
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [currentAnalysisId, setCurrentAnalysisId] = useState<string | null>(null);
   const [analysisComplete, setAnalysisComplete] = useState(false);
+  const [isAgentThinking, setIsAgentThinking] = useState(false);
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
+  const [userFeedback, setUserFeedback] = useState('');
+  const [isRegenerating, setIsRegenerating] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -46,6 +50,10 @@ export default function AgentConversation({ projectId, onStartAnalysis }: AgentC
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  useEffect(() => {
+    console.log('isAgentThinking:', isAgentThinking); // Debug log
+  }, [isAgentThinking]);
 
   const connectWebSocket = () => {
     // If there's already a connection that's open or connecting, don't create a new one
@@ -120,23 +128,48 @@ export default function AgentConversation({ projectId, onStartAnalysis }: AgentC
           case 'user_message':
           case 'agent_message':
           case 'system_message':
-            // Filter out connection status messages
+            // Filter out certain system messages to keep chat clean
             if (data.type === 'system_message' && 
                 (data.message.includes('Connected to agent conversation') || 
-                 data.message.includes('connection') || 
-                 data.message.includes('Connection'))) {
-              console.log('Filtering out connection status message:', data.message);
-            } else {
-              setMessages(prev => [...prev, {
-                id: generateMessageId(),
-                type: data.type === 'agent_message' ? 'agent' : (data.type === 'user_message' ? 'user' : 'system'),
-                sender: data.sender,
-                senderName: data.sender_name,
-                message: data.message,
-                timestamp: new Date().toISOString(),
-                message_id: data.message_id
-              }]);
+                 data.message.includes('Connection established'))) {
+              return; // Skip these messages
             }
+            
+            // Filter out preliminary agent messages since we have typing indicator
+            if (data.type === 'agent_message' && 
+                (data.message.includes('Let me analyze') || 
+                 data.message.includes('thinking') ||
+                 data.message.includes('Processing'))) {
+              console.log('Filtering out preliminary message:', data.message);
+              return; // Skip these messages
+            }
+            
+            // If this is an agent message, set isAgentThinking to false
+            if (data.type === 'agent_message') {
+              // Don't reset thinking state for preliminary messages
+              // Only reset when we get a substantial response (more than 50 characters) or an error
+              const isPreliminaryMessage = data.message.includes('Let me analyze') || 
+                                           data.message.includes('thinking') ||
+                                           data.message.includes('Processing') ||
+                                           data.message.length < 50;
+              
+              if (!isPreliminaryMessage || data.message.includes('error') || data.message.includes('apologize')) {
+                setIsAgentThinking(false);
+                console.log('Setting isAgentThinking to false - got final response'); // Debug log
+              } else {
+                console.log('Keeping isAgentThinking true for preliminary message'); // Debug log
+              }
+            }
+            
+            setMessages(prev => [...prev, {
+              id: generateMessageId(),
+              type: data.type === 'agent_message' ? 'agent' : (data.type === 'user_message' ? 'user' : 'system'),
+              sender: data.sender,
+              senderName: data.sender_name,
+              message: data.message,
+              timestamp: new Date().toISOString(),
+              message_id: data.message_id
+            }]);
             break;
 
           case 'analysis_started':
@@ -146,24 +179,33 @@ export default function AgentConversation({ projectId, onStartAnalysis }: AgentC
             break;
 
           case 'analysis_complete':
+            setIsAnalyzing(false);
+            setIsRegenerating(false);
+            setAnalysisComplete(true);
+            
+            // Check if this is a regenerated analysis
+            const isRegenerated = data.result?.version && data.result.version > 1;
+            
             setMessages(prev => [...prev, {
               id: generateMessageId(),
               type: 'result',
-              sender: 'system',
-              senderName: 'System',
-              message: data.message || 'Analysis completed successfully!',
+              sender: data.sender || 'technical_agent',
+              senderName: data.sender_name || 'Technical Analysis Agent',
+              message: isRegenerated 
+                ? `Analysis has been updated based on your feedback (Version ${data.result?.version || 1})`
+                : 'Analysis completed successfully!',
               timestamp: new Date().toISOString(),
               result: data.result,
               message_id: data.message_id
             }]);
-            setIsAnalyzing(false);
-            setAnalysisComplete(true);
             break;
 
           case 'analysis_status':
             setMessages(prev => [...prev, {
               id: generateMessageId(),
               type: 'system',
+              sender: data.sender || 'technical_agent',
+              senderName: data.sender_name || 'Technical Analysis Agent',
               message: data.message || 'Processing...',
               timestamp: new Date().toISOString(),
               message_id: data.message_id
@@ -174,8 +216,8 @@ export default function AgentConversation({ projectId, onStartAnalysis }: AgentC
             setMessages(prev => [...prev, {
               id: generateMessageId(),
               type: 'system',
-              sender: 'system',
-              senderName: 'System',
+              sender: data.sender || 'technical_agent',
+              senderName: data.sender_name || 'Technical Analysis Agent',
               message: data.message || 'Analysis saved to insights!',
               timestamp: new Date().toISOString(),
               message_id: data.message_id
@@ -192,6 +234,8 @@ export default function AgentConversation({ projectId, onStartAnalysis }: AgentC
             setMessages(prev => [...prev, {
               id: generateMessageId(),
               type: 'system',
+              sender: data.sender || 'technical_agent',
+              senderName: data.sender_name || 'Technical Analysis Agent',
               message: data.message || 'Analysis was cancelled',
               timestamp: new Date().toISOString(),
               message_id: data.message_id
@@ -199,9 +243,12 @@ export default function AgentConversation({ projectId, onStartAnalysis }: AgentC
             break;
 
           case 'error':
+            setIsAgentThinking(false); // Also reset thinking state on error
             setMessages(prev => [...prev, {
               id: generateMessageId(),
               type: 'error',
+              sender: data.sender || 'system',
+              senderName: data.sender_name || 'System',
               message: data.message || 'An error occurred',
               timestamp: new Date().toISOString(),
               message_id: data.message_id
@@ -317,6 +364,10 @@ export default function AgentConversation({ projectId, onStartAnalysis }: AgentC
     };
 
     setMessages(prev => [...prev, userMessage]);
+    
+    // Set agent thinking state to true when user sends a message
+    setIsAgentThinking(true);
+    console.log('Setting isAgentThinking to true'); // Debug log
 
     // Send message to WebSocket
     if (currentAnalysisId) {
@@ -400,6 +451,30 @@ export default function AgentConversation({ projectId, onStartAnalysis }: AgentC
     }]);
   };
 
+  const regenerateWithFeedback = () => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN || !currentAnalysisId || !userFeedback.trim()) {
+      return;
+    }
+
+    const message = {
+      type: 'regenerate_with_feedback',
+      analysis_id: currentAnalysisId,
+      feedback: userFeedback
+    };
+
+    wsRef.current.send(JSON.stringify(message));
+    
+    setIsRegenerating(true);
+    setShowFeedbackModal(false);
+    
+    setMessages(prev => [...prev, {
+      id: generateMessageId(),
+      type: 'system',
+      message: 'Regenerating analysis with your feedback...',
+      timestamp: new Date().toISOString()
+    }]);
+  };
+
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
@@ -443,14 +518,24 @@ export default function AgentConversation({ projectId, onStartAnalysis }: AgentC
               </button>
             )}
             {analysisComplete && (
-              <button
-                onClick={confirmAndSaveAnalysis}
-                disabled={!isConnected || !currentAnalysisId}
-                className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-              >
-                <CheckIcon className="h-5 w-5" />
-                Save to Insights
-              </button>
+              <>
+                <button
+                  onClick={() => setShowFeedbackModal(true)}
+                  disabled={!isConnected || !currentAnalysisId || isRegenerating}
+                  className="px-4 py-2 bg-amber-600 text-white rounded-md hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                  <PencilSquareIcon className="h-5 w-5" />
+                  Add Feedback & Regenerate
+                </button>
+                <button
+                  onClick={confirmAndSaveAnalysis}
+                  disabled={!isConnected || !currentAnalysisId || isRegenerating}
+                  className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                  <CheckIcon className="h-5 w-5" />
+                  Save to Insights
+                </button>
+              </>
             )}
           </div>
         </div>
@@ -503,6 +588,26 @@ export default function AgentConversation({ projectId, onStartAnalysis }: AgentC
             </div>
           </div>
         ))}
+        
+        {/* Typing indicator */}
+        {isAgentThinking && (
+          <div className="flex justify-start">
+            <div className="max-w-3xl rounded-lg px-4 py-2 bg-gray-200 text-gray-900">
+              <div className="font-semibold text-sm mb-1">
+                {messages.length > 0 && messages[messages.length - 1].senderName ? messages[messages.length - 1].senderName : 'Technical Analysis Agent'}
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="flex space-x-1">
+                  <div className="h-2 w-2 bg-blue-600 rounded-full animate-pulse"></div>
+                  <div className="h-2 w-2 bg-blue-600 rounded-full animate-pulse" style={{ animationDelay: '200ms' }}></div>
+                  <div className="h-2 w-2 bg-blue-600 rounded-full animate-pulse" style={{ animationDelay: '400ms' }}></div>
+                </div>
+                <span className="text-sm text-gray-600">Thinking...</span>
+              </div>
+            </div>
+          </div>
+        )}
+        
         <div ref={messagesEndRef} />
       </div>
 
@@ -537,6 +642,43 @@ export default function AgentConversation({ projectId, onStartAnalysis }: AgentC
           </p>
         )}
       </div>
+
+      {/* Feedback Modal */}
+      {showFeedbackModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg max-w-2xl w-full p-6">
+            <h3 className="text-lg font-semibold mb-4">Add Your Feedback & Suggestions</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Provide your notes and suggestions below. The AI will incorporate your feedback and regenerate the analysis.
+            </p>
+            <textarea
+              value={userFeedback}
+              onChange={(e) => setUserFeedback(e.target.value)}
+              placeholder="Enter your feedback, suggestions, or specific requirements here..."
+              className="w-full h-32 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <div className="flex justify-end gap-2 mt-4">
+              <button
+                onClick={() => {
+                  setShowFeedbackModal(false);
+                  setUserFeedback('');
+                }}
+                className="px-4 py-2 bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={regenerateWithFeedback}
+                disabled={!userFeedback.trim()}
+                className="px-4 py-2 bg-amber-600 text-white rounded-md hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                <ArrowPathIcon className="h-5 w-5" />
+                Regenerate Analysis
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

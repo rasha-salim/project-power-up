@@ -317,6 +317,50 @@ async def agent_conversation_websocket(
                                 "message": f"Failed to save analysis: {str(e)}"
                             }))
                     
+                    elif message_type == "regenerate_with_feedback":
+                        # Regenerate analysis with user feedback
+                        analysis_id = message_data.get("analysis_id")
+                        user_feedback = message_data.get("feedback")
+                        
+                        if not analysis_id or not user_feedback:
+                            await websocket.send_text(json.dumps({
+                                "type": "error",
+                                "message": "Missing analysis_id or feedback"
+                            }))
+                            continue
+                        
+                        logger.info(f"Regenerating analysis {analysis_id} with user feedback")
+                        
+                        try:
+                            # Import dependencies
+                            from sqlalchemy.ext.asyncio import AsyncSession
+                            from app.db.init_db_simple import get_async_db
+                            
+                            # Get database session
+                            db = await anext(get_async_db().__aiter__())
+                            
+                            # Register the current connection if not already registered
+                            if websocket not in ws_manager.active_connections.get(project_id, []):
+                                await ws_manager.connect(websocket, project_id)
+                            
+                            # Regenerate analysis with feedback
+                            success = await agent_service.regenerate_analysis_with_feedback(
+                                db, analysis_id, user_feedback, ws_manager
+                            )
+                            
+                            if not success:
+                                await websocket.send_text(json.dumps({
+                                    "type": "error",
+                                    "message": "Failed to regenerate analysis"
+                                }))
+                            
+                        except Exception as e:
+                            logger.error(f"Error regenerating analysis: {str(e)}")
+                            await websocket.send_text(json.dumps({
+                                "type": "error",
+                                "message": f"Failed to regenerate analysis: {str(e)}"
+                            }))
+                    
                     else:
                         # Handle unknown message types
                         await websocket.send_text(json.dumps({

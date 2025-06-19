@@ -206,7 +206,7 @@ class AgentService:
                 
                 Provide a detailed and helpful response that directly addresses their question.
                 Reference specific parts of the project documentation if relevant.
-                """,
+                """, 
                 agent=technical_agent,
                 tools=[document_search_tool],
                 expected_output="A clear and detailed answer to the user's question"
@@ -251,6 +251,156 @@ class AgentService:
                 )
             
             return error_msg
+    
+    async def regenerate_analysis_with_feedback(self, db: AsyncSession, analysis_id: str, user_feedback: str, ws_manager: Optional[WebSocketManager] = None) -> bool:
+        """
+        Regenerate the analysis incorporating user feedback and suggestions
+        
+        Args:
+            db: Database session
+            analysis_id: ID of the current analysis
+            user_feedback: User's notes and suggestions
+            ws_manager: WebSocket manager for real-time updates
+            
+        Returns:
+            bool: True if regeneration was successful, False otherwise
+        """
+        try:
+            # Check if we have the analysis in memory
+            if analysis_id not in self.pending_analyses:
+                logger.error(f"Analysis {analysis_id} not found in pending analyses")
+                return False
+            
+            pending = self.pending_analyses[analysis_id]
+            project_id = pending["project_id"]
+            technical_agent = pending["technical_agent"]
+            document_search_tool = pending["document_search_tool"]
+            previous_result = pending["result"]
+            
+            logger.info(f"Regenerating analysis {analysis_id} with user feedback for project {project_id}")
+            
+            # Send status update
+            if ws_manager:
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "agent_message",
+                        "sender": "technical_agent",
+                        "sender_name": "Technical Analysis Agent",
+                        "message": "I'm incorporating your feedback and regenerating the analysis...",
+                        "analysis_id": analysis_id
+                    }
+                )
+            
+            # Get project documents for context
+            from app.services.document_processor import DocumentProcessor
+            document_processor = DocumentProcessor()
+            documents = await document_processor.list_documents(db, project_id)
+            
+            # Create context for the agent including previous analysis and user feedback
+            context_str = f"Project ID: {project_id}\n\n"
+            context_str += f"Previous Analysis:\n{previous_result.get('technical_analysis', 'No previous analysis')}\n\n"
+            context_str += f"User Feedback and Suggestions:\n{user_feedback}\n\n"
+            context_str += "Documents:\n"
+            
+            for doc in documents:
+                context_str += f"\n--- Document: {doc.filename} ---\n"
+                context_str += f"Description: {doc.description or 'No description'}\n"
+            
+            # Create a new task that incorporates user feedback
+            regeneration_task = Task(
+                description=f"""
+                Based on the user's feedback and suggestions, regenerate the technical analysis for project {project_id}.
+                
+                IMPORTANT: Carefully consider and incorporate the user's feedback:
+                {user_feedback}
+                
+                Use the document_search tool to find relevant information in the project documents.
+                
+                Your updated analysis should:
+                1. Address all points raised in the user's feedback
+                2. Incorporate their suggestions and recommendations
+                3. Maintain the same structure as before (Architecture recommendations, Technology stack, Feasibility, Implementation)
+                4. Clearly highlight what has changed based on the user's input
+                
+                Context:
+                {context_str}
+                """,
+                expected_output="Updated technical analysis report that incorporates user feedback and suggestions",
+                agent=technical_agent,
+                tools=[document_search_tool]
+            )
+            
+            # Execute the regeneration task
+            result = technical_agent.execute_task(regeneration_task)
+            
+            # Convert result to string
+            if hasattr(result, 'raw'):
+                crew_result = result.raw
+            else:
+                crew_result = str(result)
+            
+            # Update the analysis result with the new version
+            updated_analysis_result = {
+                "project_id": project_id,
+                "analysis_id": analysis_id,
+                "timestamp": datetime.utcnow().isoformat(),
+                "technical_analysis": crew_result,
+                "user_feedback": user_feedback,  # Store the feedback that led to this version
+                "version": previous_result.get("version", 1) + 1  # Track version number
+            }
+            
+            # Update the pending analysis with the new result
+            self.pending_analyses[analysis_id]["result"] = updated_analysis_result
+            
+            logger.info(f"Successfully regenerated analysis {analysis_id} with user feedback")
+            
+            # Send the updated analysis via WebSocket
+            if ws_manager:
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "analysis_complete",
+                        "analysis_id": analysis_id,
+                        "sender": "technical_agent",
+                        "sender_name": "Technical Analysis Agent",
+                        "result": {
+                            "technical_analysis": crew_result,
+                            "completed_at": str(datetime.now()),
+                            "version": updated_analysis_result["version"]
+                        },
+                        "message": "Analysis has been updated based on your feedback. Please review the changes."
+                    }
+                )
+                
+                # Send a follow-up message
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "agent_message",
+                        "sender": "technical_agent",
+                        "sender_name": "Technical Analysis Agent",
+                        "message": "I've updated the analysis based on your feedback. The changes have been incorporated into the recommendations. You can now save this updated version or provide additional feedback.",
+                        "analysis_id": analysis_id
+                    }
+                )
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error regenerating analysis {analysis_id} with feedback: {e}")
+            
+            if ws_manager and analysis_id in self.pending_analyses:
+                await ws_manager.broadcast(
+                    self.pending_analyses[analysis_id]["project_id"],
+                    {
+                        "type": "error",
+                        "analysis_id": analysis_id,
+                        "message": f"Failed to regenerate analysis: {str(e)}"
+                    }
+                )
+            
+            return False
     
     async def chat_with_agent(self, db: AsyncSession, project_id: str, message: str, ws_manager: Optional[WebSocketManager] = None) -> str:
         """
@@ -568,8 +718,8 @@ class AgentService:
             anthropic_model = os.getenv("ANTHROPIC_MODEL", "claude-3-haiku-20240307")
             
             if not anthropic_api_key:
-                error_msg = "ANTHROPIC_API_KEY not found in environment variables"
-                logger.error(error_msg)
+                error_msg = "AI service not configured properly"
+                logger.error("ANTHROPIC_API_KEY not found")
                 if ws_manager:
                     await ws_manager.broadcast(
                         project_id,
