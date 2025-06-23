@@ -1,0 +1,12 @@
+Created project: faab9c43-eb08-4b76-b478-b5fe9c40c9b6 - Test Project with Insights
+Updated project with insights. Status: completed
+
+Testing insights endpoint:
+Status: 200
+Response has insights: True
+Response status: completed
+Insights keys: ['technical_analysis', 'risk_assessment', 'project_plan']
+
+Project created successfully!
+Project ID: faab9c43-eb08-4b76-b478-b5fe9c40c9b6
+You can now view the insights at: http://localhost:3000/projects/faab9c43-eb08-4b76-b478-b5fe9c40c9b6

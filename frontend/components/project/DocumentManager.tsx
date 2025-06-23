@@ -53,87 +53,30 @@ export default function DocumentManager({
             console.log(`Status URL: ${statusUrl}`);
             
             const response = await fetch(statusUrl);
-            // If we get a 404, try direct backend call
+            // If we get a 404, skip this document as it might not exist anymore
             if (response.status === 404) {
-              console.log(`Trying direct backend call for ${doc.id} due to 404 from Next.js API route`);
-              try {
-                // Try direct backend call to both possible endpoints
-                const backendResponse = await fetch(`http://localhost:8000/api/v1/documents/status/${doc.id}`);
-                if (backendResponse.ok) {
-                  const updatedDoc = await backendResponse.json();
-                  console.log(`Direct backend call successful for ${doc.id}: Status ${updatedDoc.status}, Progress ${updatedDoc.progress}`);
-                  
-                  // Update document data through parent component
-                  onDocumentUpdate(doc.id, {
-                    status: updatedDoc.status,
-                    progress: updatedDoc.progress || doc.progress
-                  });
-                  
-                  // Check if processing is complete
-                  if (updatedDoc.status === 'processed' || updatedDoc.status === 'error') {
-                    // Show notification that document is processed
-                    console.log(`Document ${doc.id} processing complete with status: ${updatedDoc.status}`);
-                  }
-                  
-                  // Skip the rest of this iteration as we've handled this document
-                  continue;
-                } else {
-                  console.log(`Direct backend call failed with status ${backendResponse.status}`);
-                  // Try the old endpoint format as last resort
-                  const legacyResponse = await fetch(`http://localhost:8000/api/v1/documents/${doc.id}/status`);
-                  if (legacyResponse.ok) {
-                    const updatedDoc = await legacyResponse.json();
-                    console.log(`Legacy endpoint call successful for ${doc.id}`);
-                    
-                    // Update document data through parent component
-                    onDocumentUpdate(doc.id, {
-                      status: updatedDoc.status,
-                      progress: updatedDoc.progress || doc.progress
-                    });
-                    
-                    // Skip the rest of this iteration
-                    continue;
-                  }
-                }
-              } catch (directError) {
-                console.error(`Direct backend call failed for ${doc.id}:`, directError);
-              }
+              console.log(`Document ${doc.id} not found (404), skipping status check`);
+              continue;
             }
-            console.log(`Poll response status for ${doc.id}: ${response.status}`);
             
-            if (response.ok) {
-              const updatedDoc = await response.json();
-              console.log(`Updated doc status: ${updatedDoc.status}, progress: ${updatedDoc.progress}`);
-              console.log('Full document data:', updatedDoc);
-              
-              // Update document data through parent component
-              onDocumentUpdate(doc.id, {
-                status: updatedDoc.status,
-                progress: updatedDoc.progress || doc.progress
-              });
-              
-              // If the document status has changed to processed, show notification
-              if (updatedDoc.status === 'processed' && doc.status === 'processing') {
-                console.log(`Document ${doc.id} processing completed!`);
-                // Add notification
-                setNotifications(prev => [
-                  ...prev, 
-                  {
-                    id: doc.id,
-                    message: `Document ${doc.filename} has been processed successfully!`,
-                    type: 'success'
-                  }
-                ]);
-                
-                // Remove from processing list
-                setProcessingDocuments(prev => prev.filter(id => id !== doc.id));
-              }
-              
-              // If the document is still processing but progress has changed, update the UI
-              // This will be handled by the parent component's state update on the next render
-            } else {
-              console.warn(`Error polling document ${doc.id}: ${response.status}`);
-              // Don't remove from processing list on error, we'll try again next time
+            if (!response.ok) {
+              console.error(`Failed to fetch status for document ${doc.id}: ${response.status}`);
+              continue;
+            }
+            
+            const updatedDoc = await response.json();
+            console.log(`Document ${doc.id} status: ${updatedDoc.status}, Progress: ${updatedDoc.progress}`);
+            
+            // Update document data through parent component
+            onDocumentUpdate(doc.id, {
+              status: updatedDoc.status,
+              progress: updatedDoc.progress || doc.progress
+            });
+            
+            // Check if processing is complete
+            if (updatedDoc.status === 'processed' || updatedDoc.status === 'error') {
+              // Show notification that document is processed
+              console.log(`Document ${doc.id} processing complete with status: ${updatedDoc.status}`);
             }
           } catch (error) {
             console.error(`Error checking document status for ${doc.id}:`, error);

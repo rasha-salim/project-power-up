@@ -30,9 +30,10 @@ interface AgentConversationProps {
   projectId: string;
   onStartAnalysis: () => void;
   onAnalysisComplete?: (insights: any) => void;
+  existingInsights?: any;  // Add this prop for existing analysis
 }
 
-export default function AgentConversation({ projectId, onStartAnalysis, onAnalysisComplete }: AgentConversationProps) {
+export default function AgentConversation({ projectId, onStartAnalysis, onAnalysisComplete, existingInsights }: AgentConversationProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputMessage, setInputMessage] = useState('');
   const [isConnected, setIsConnected] = useState(false);
@@ -44,6 +45,7 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [showAgentSuggestions, setShowAgentSuggestions] = useState(false);
   const [agentSearchTerm, setAgentSearchTerm] = useState('');
+  const [analysisSaved, setAnalysisSaved] = useState(false);  
   const wsRef = useRef<WebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -192,11 +194,18 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
             setCurrentAnalysisId(data.analysis_id);
             setIsAnalyzing(true);
             setAnalysisComplete(false);
+            setAnalysisSaved(false);  // Reset saved state when new analysis starts
             break;
 
           case 'analysis_complete':
             setIsAnalyzing(false);
             setAnalysisComplete(true);
+            setIsAgentThinking(false); // Reset typing indicator
+            
+            // Set the analysis ID if we don't have one yet
+            if (data.analysis_id && !currentAnalysisId) {
+              setCurrentAnalysisId(data.analysis_id);
+            }
             
             // Check if this is a regenerated analysis
             const isRegenerated = data.result?.version && data.result.version > 1;
@@ -209,6 +218,39 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
               message: isRegenerated 
                 ? `Analysis has been updated based on your feedback (Version ${data.result?.version || 1})`
                 : 'Analysis completed successfully!',
+              timestamp: new Date().toISOString(),
+              result: data.result,
+              message_id: data.message_id
+            }]);
+            
+            // Notify parent component
+            if (onAnalysisComplete && data.result) {
+              onAnalysisComplete(data.result);
+            }
+            break;
+            
+          case 'analysis_result':
+            console.log('Handling analysis_result message');
+            setIsAnalyzing(false);
+            setAnalysisComplete(true);
+            setIsAgentThinking(false); // Reset typing indicator
+            
+            // Set the analysis ID if we don't have one yet
+            if (data.analysis_id && !currentAnalysisId) {
+              setCurrentAnalysisId(data.analysis_id);
+            }
+            
+            // Check if this is a regenerated analysis
+            const isRegeneratedResult = data.result?.version && data.result.version > 1;
+            
+            setMessages(prev => [...prev, {
+              id: generateMessageId(),
+              type: 'result',
+              sender: data.sender || 'technical_agent',
+              senderName: data.sender_name || 'Technical Analysis Agent',
+              message: isRegeneratedResult 
+                ? `Analysis has been updated based on your feedback (Version ${data.result?.version || 1})`
+                : 'Analysis results are ready!',
               timestamp: new Date().toISOString(),
               result: data.result,
               message_id: data.message_id
@@ -244,12 +286,14 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
             if (onAnalysisComplete && data.insights) {
               onAnalysisComplete(data.insights);
             }
+            setAnalysisSaved(true);  // Update analysisSaved state
             break;
 
           case 'analysis_cancelled':
             setCurrentAnalysisId(null);
             setIsAnalyzing(false);
             setAnalysisComplete(false);
+            setAnalysisSaved(false);  // Reset analysisSaved state
             setMessages(prev => [...prev, {
               id: generateMessageId(),
               type: 'system',
@@ -395,17 +439,21 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
     // Send message based on context
     if (currentAnalysisId) {
       // In analysis context
+      console.log('Sending user_question with analysis_id:', currentAnalysisId);
       wsRef.current.send(JSON.stringify({
         type: 'user_question',
         analysis_id: currentAnalysisId,
         question: userMessage
       }));
+      setIsAgentThinking(true); // Show typing indicator
     } else {
       // General chat
+      console.log('Sending chat_message:', userMessage);
       wsRef.current.send(JSON.stringify({
         type: 'chat_message',
         message: userMessage
       }));
+      setIsAgentThinking(true); // Show typing indicator
     }
 
     setInputMessage('');
@@ -426,6 +474,8 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
     
     setIsAnalyzing(true);
     setAnalysisComplete(false);
+    setAnalysisSaved(false);  // Reset analysisSaved state
+    setIsAgentThinking(true);  // Show typing indicator
     
     setMessages(prev => [...prev, {
       id: generateMessageId(),
@@ -506,6 +556,29 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
      agent.name.toLowerCase().includes(agentSearchTerm.toLowerCase()))
   );
 
+  useEffect(() => {
+    // Load existing insights only once when component mounts
+    if (existingInsights && !analysisComplete) {
+      // Add the existing analysis as a message
+      const analysisMessage: Message = {
+        id: generateMessageId(),
+        type: 'result',
+        sender: 'technical_agent',
+        senderName: 'Technical Analysis Agent',
+        message: 'Here is the previous analysis for this project:',
+        timestamp: new Date().toISOString(),
+        result: existingInsights,
+      };
+      
+      setMessages([analysisMessage]);
+      setAnalysisComplete(true);
+      setAnalysisSaved(true);  // Set analysisSaved state
+      
+      // Don't set currentAnalysisId from existing insights as this is from a previous session
+      // and would prevent new chat messages from working properly
+    }
+  }, []); // Empty dependency array to run only once on mount
+
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
@@ -537,13 +610,6 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
                 >
                   Start Analysis
                 </button>
-                <button
-                  onClick={() => startAnalysis(true)}
-                  disabled={!isConnected}
-                  className="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  Force New Analysis
-                </button>
               </>
             )}
             {isAnalyzing && (
@@ -556,7 +622,7 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
                 Cancel Analysis
               </button>
             )}
-            {analysisComplete && (
+            {analysisComplete && !analysisSaved && (
               <button
                 onClick={confirmAndSaveAnalysis}
                 disabled={!isConnected || !currentAnalysisId}
@@ -564,6 +630,15 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
               >
                 <CheckIcon className="h-5 w-5" />
                 Save to Insights
+              </button>
+            )}
+            {analysisComplete && analysisSaved && (
+              <button
+                onClick={() => startAnalysis(true)}
+                disabled={!isConnected}
+                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                New Analysis
               </button>
             )}
           </div>
@@ -692,6 +767,19 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
       {/* Input */}
       <div className="bg-white border-t px-6 py-4">
         <div className="relative">
+          {/* Save to Insights button (bottom placement) */}
+          {analysisComplete && !analysisSaved && (
+            <div className="mb-4 flex justify-end">
+              <button
+                onClick={confirmAndSaveAnalysis}
+                disabled={!isConnected || !currentAnalysisId}
+                className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                <CheckIcon className="h-5 w-5" />
+                Save to Insights
+              </button>
+            </div>
+          )}
           {/* Agent suggestions dropdown */}
           {showAgentSuggestions && filteredAgents.length > 0 && (
             <div className="absolute bottom-full mb-2 left-0 w-64 bg-white border rounded-lg shadow-lg">

@@ -5,45 +5,32 @@ export async function GET(request, { params }) {
     const { id } = params;
     console.log(`Next.js API route: Fetching document status with ID: ${id}`);
     
-    // Try direct backend call if apiRequest fails
+    // Try direct backend call
     try {
-      const data = await apiRequest(API_ENDPOINTS.DOCUMENTS.STATUS(id));
-      console.log(`Next.js API route: Document status fetched successfully: ${JSON.stringify(data)}`);
-      return Response.json(data);
-    } catch (apiError) {
-      console.error(`Next.js API route: apiRequest failed for document status ${id}:`, apiError);
+      const response = await fetch(`http://localhost:8000/api/v1/documents/status/${id}`);
       
-      // Try direct fetch as fallback
-      console.log(`Next.js API route: Trying direct fetch for document status ${id}`);
-      const newEndpointResponse = await fetch(`http://localhost:8000/api/v1/documents/status/${id}`);
-      
-      if (!newEndpointResponse.ok) {
-        console.log(`New endpoint failed with ${newEndpointResponse.status}, trying legacy endpoint`);
-        const directResponse = await fetch(`http://localhost:8000/api/v1/documents/${id}/status`);
-        
-        if (!directResponse.ok) {
-          throw new Error(`Both endpoints failed. Backend returned ${directResponse.status} for document status ${id}`);
+      if (!response.ok) {
+        if (response.status === 404) {
+          return Response.json(
+            { error: 'Document not found' },
+            { status: 404 }
+          );
         }
-        
-        const directData = await directResponse.json();
-        console.log(`Next.js API route: Legacy endpoint successful: ${JSON.stringify(directData)}`);
-        return Response.json(directData);
+        throw new Error(`Backend returned ${response.status}`);
       }
       
-      const newEndpointData = await newEndpointResponse.json();
-      console.log(`Next.js API route: New endpoint successful: ${JSON.stringify(newEndpointData)}`);
-      return Response.json(newEndpointData);
+      const data = await response.json();
+      console.log(`Next.js API route: Document status fetched successfully`);
+      return Response.json(data);
+    } catch (fetchError) {
+      console.error(`Next.js API route: Failed to fetch document status ${id}:`, fetchError);
+      throw fetchError;
     }
   } catch (error) {
-    console.error(`Next.js API route: All attempts failed for document status ${params.id}:`, error);
-    // Return a default response instead of error to keep polling working
-    return Response.json({
-      id: params.id,
-      filename: "Unknown",
-      status: "processing",
-      progress: "10",
-      message: `Error retrieving status: ${error.message || 'Unknown error'}`,
-      status_error: true
-    });
+    console.error(`Next.js API route: Error for document status ${params.id}:`, error);
+    return Response.json(
+      { error: 'Failed to fetch document status', details: error.message },
+      { status: 500 }
+    );
   }
 }

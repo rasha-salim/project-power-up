@@ -56,6 +56,7 @@ async def get_project(
             name=project.name,
             description=project.description,
             status=project.status,
+            insights=project.insights,
             created_at=project.created_at,
             updated_at=project.updated_at,
             message="Project retrieved successfully"
@@ -84,6 +85,7 @@ async def list_projects(
                 name=project.name,
                 description=project.description,
                 status=project.status,
+                insights=project.insights,
                 created_at=project.created_at,
                 updated_at=project.updated_at,
                 message="Project retrieved successfully"
@@ -196,3 +198,32 @@ async def analyze_project(
     except Exception as e:
         logger.error(f"Error starting project analysis: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error starting project analysis: {str(e)}")
+
+@router.get("/{project_id}/insights")
+async def get_project_insights(
+    project_id: str,
+    db: AsyncSession = Depends(get_async_db)
+):
+    """
+    Get project insights from analysis
+    """
+    try:
+        project_service = ProjectService()
+        project = await project_service.get_project(db, project_id)
+        
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        
+        # Return insights data in the format expected by frontend
+        response = {
+            "status": project.status,
+            "insights": project.insights if project.insights else None
+        }
+        
+        return response
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error retrieving project insights: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error retrieving project insights: {str(e)}")

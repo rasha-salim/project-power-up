@@ -90,8 +90,8 @@ async def agent_conversation_websocket(
                 
                 # Parse the message
                 try:
-                    message_data = json.loads(message_text)
-                    message_type = message_data.get("type", "unknown")
+                    data = json.loads(message_text)
+                    message_type = data.get("type", "unknown")
                     
                     # Handle different message types
                     if message_type == "ping":
@@ -99,14 +99,14 @@ async def agent_conversation_websocket(
                         pong_message = {
                             "type": "pong",
                             "message": "Server is alive",
-                            "timestamp": message_data.get("timestamp", "")
+                            "timestamp": data.get("timestamp", "")
                         }
                         await websocket.send_text(json.dumps(pong_message))
                         logger.debug(f"Sent pong response - Project: {project_id}, Client ID: {client_id}")
                     
                     elif message_type == "user_message":
                         # Process user message
-                        user_message_content = message_data.get('message', '')
+                        user_message_content = data.get('message', '')
                         logger.info(f"Processing user message - Project: {project_id}, Content: {user_message_content}")
                         
                         # Echo back acknowledgment
@@ -125,7 +125,7 @@ async def agent_conversation_websocket(
                         
                     elif message_type == "start_analysis":
                         # Trigger agent analysis
-                        force_analysis = message_data.get("force", False)
+                        force_analysis = data.get("force", False)
                         logger.info(f"Starting agent analysis for project {project_id} requested by client {client_id}, force={force_analysis}")
                         
                         # Send acknowledgment to client
@@ -166,7 +166,7 @@ async def agent_conversation_websocket(
                     
                     elif message_type == "cancel_analysis":
                         # Cancel agent analysis
-                        analysis_id = message_data.get("analysis_id")
+                        analysis_id = data.get("analysis_id")
                         logger.info(f"Cancelling agent analysis {analysis_id} for project {project_id} requested by client {client_id}")
                         
                         try:
@@ -201,8 +201,8 @@ async def agent_conversation_websocket(
                     
                     elif message_type == "user_question":
                         # Handle user question about analysis
-                        analysis_id = message_data.get("analysis_id")
-                        question = message_data.get("question")
+                        analysis_id = data.get("analysis_id")
+                        question = data.get("question")
                         
                         if not analysis_id or not question:
                             await websocket.send_text(json.dumps({
@@ -240,39 +240,31 @@ async def agent_conversation_websocket(
                             }))
                     
                     elif message_type == "chat_message":
-                        # Handle general chat message
-                        message_text = message_data.get("message")
-                        
-                        if not message_text:
-                            await websocket.send_text(json.dumps({
-                                "type": "error",
-                                "message": "Missing message content"
-                            }))
-                            continue
-                        
-                        logger.info(f"Handling chat message for project {project_id}")
+                        message_text = data.get("message", "")
+                        logger.info(f"Received chat message from project {project_id}: {message_text}")
                         
                         try:
-                            # Import dependencies
+                            # Get database session
                             from sqlalchemy.ext.asyncio import AsyncSession
                             from app.db.init_db_simple import get_async_db
-                            
-                            # Get database session
                             db = await anext(get_async_db().__aiter__())
                             
                             # Register the current connection if not already registered
                             if websocket not in ws_manager.active_connections.get(project_id, []):
                                 await ws_manager.connect(websocket, project_id)
                             
+                            logger.debug(f"Calling handle_user_message for project {project_id}")
                             # Handle the message using the new unified handler
                             response = await agent_service.handle_user_message(
                                 db, project_id, message_text, None, ws_manager
                             )
+                            logger.debug(f"handle_user_message returned: {response}")
                             
                             # The response is already sent via WebSocket by the handler
                             
                         except Exception as e:
                             logger.error(f"Error handling chat message: {str(e)}")
+                            logger.error(f"Traceback: {traceback.format_exc()}")
                             await websocket.send_text(json.dumps({
                                 "type": "error",
                                 "message": f"Failed to process message: {str(e)}"
@@ -280,7 +272,7 @@ async def agent_conversation_websocket(
                     
                     elif message_type == "confirm_analysis":
                         # Confirm and save analysis
-                        analysis_id = message_data.get("analysis_id")
+                        analysis_id = data.get("analysis_id")
                         
                         if not analysis_id:
                             await websocket.send_text(json.dumps({
@@ -321,8 +313,8 @@ async def agent_conversation_websocket(
                     
                     elif message_type == "regenerate_with_feedback":
                         # Regenerate analysis with user feedback
-                        analysis_id = message_data.get("analysis_id")
-                        user_feedback = message_data.get("feedback")
+                        analysis_id = data.get("analysis_id")
+                        user_feedback = data.get("feedback")
                         
                         if not analysis_id or not user_feedback:
                             await websocket.send_text(json.dumps({

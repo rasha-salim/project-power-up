@@ -3,6 +3,7 @@ import logging
 import re
 import uuid
 import asyncio
+import json
 from typing import Dict, Any, Optional, List, Tuple
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -154,6 +155,7 @@ class AgentService:
         """
         try:
             logger.info(f"Handling user question for analysis {analysis_id}")
+            logger.info(f"Question content: {question}")
             logger.info(f"Current pending analyses: {list(self.pending_analyses.keys())}")
             
             # Check if we have the analysis in memory
@@ -171,14 +173,39 @@ class AgentService:
                             "analysis_id": analysis_id
                         }
                     )
-                return "I'm sorry, but I can't find the analysis context. The analysis may have expired or been completed. Please try asking your question as a general chat message instead."
+                return "Analysis context not found. Please try asking your question as a general chat message instead."
             
             pending = self.pending_analyses[analysis_id]
             project_id = pending["project_id"]
             technical_agent = pending["technical_agent"]
             document_search_tool = pending["document_search_tool"]
             
-            logger.info(f"Handling user question for analysis {analysis_id}: {question}")
+            # Check if this is a feedback request rather than a question
+            feedback_patterns = [
+                r'(?i)update.*analysis',
+                r'(?i)focus.*on',
+                r'(?i)regenerate',
+                r'(?i)focus.*more',
+                r'(?i)please.*update',
+                r'(?i)modify.*analysis',
+                r'(?i)change.*analysis',
+                r'(?i)redo.*analysis',
+                r'(?i)improve.*analysis',
+                r'(?i)revise.*analysis',
+                r'(?i)demo',
+                r'(?i)technical.*aspects'
+            ]
+            
+            is_feedback_request = any(re.search(pattern, question.lower()) for pattern in feedback_patterns)
+            logger.info(f"Is feedback request detected in handle_user_question: {is_feedback_request}")
+            
+            if is_feedback_request:
+                logger.info(f"Routing feedback request to regenerate_analysis_with_feedback: {question}")
+                # Handle as a feedback request instead of a question
+                result = await self.regenerate_analysis_with_feedback(db, analysis_id, question, ws_manager)
+                return "Processing your feedback to update the analysis."
+                
+            logger.info(f"Handling as standard question for analysis {analysis_id}: {question}")
             
             # Send status update
             if ws_manager:
@@ -269,9 +296,14 @@ class AgentService:
             
             pending = self.pending_analyses[analysis_id]
             project_id = pending["project_id"]
-            technical_agent = pending["technical_agent"]
-            document_search_tool = pending["document_search_tool"]
             previous_result = pending["result"]
+            
+            # Get project details from DB
+            from app.models.project import Project
+            project = await db.get(Project, project_id)
+            if not project:
+                logger.error(f"Project {project_id} not found")
+                return False
             
             logger.info(f"Regenerating analysis {analysis_id} with user feedback for project {project_id}")
             
@@ -284,94 +316,116 @@ class AgentService:
                         "sender": "technical_agent",
                         "sender_name": "Technical Analysis Agent",
                         "message": "I'm incorporating your feedback and regenerating the analysis...",
-                        "analysis_id": analysis_id
+                        "analysis_id": analysis_id,
+                        "is_thinking": True
                     }
                 )
             
-            # Get project documents for context
-            from app.services.document_processor import DocumentProcessor
-            document_processor = DocumentProcessor()
-            documents = await document_processor.list_documents(db, project_id)
+            # Set up Anthropic LLM
+            anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
+            anthropic_model = os.getenv("ANTHROPIC_MODEL", "claude-3-haiku-20240307")
+            
+            if not anthropic_api_key:
+                raise ValueError("ANTHROPIC_API_KEY not found in environment variables")
+            
+            # Initialize LLM
+            llm = ChatAnthropic(
+                model_name=anthropic_model,
+                anthropic_api_key=anthropic_api_key,
+                temperature=0.2,
+                max_tokens=4000
+            )
+            
+            # Create document search tool
+            document_search_tool = DocumentSearchTool(project_id)
+            
+            # Load agent configuration
+            agent_config = self.config_loader.get_agent_config("technical_analyst")
+            if not agent_config:
+                raise ValueError("Technical analyst agent configuration not found")
+            
+            # Create the agent with all required parameters
+            technical_agent = Agent(
+                role=agent_config["role"],
+                goal=agent_config["goal"],
+                backstory=agent_config["backstory"],
+                verbose=agent_config["verbose"],
+                allow_delegation=agent_config["allow_delegation"],
+                llm=llm,
+                tools=[document_search_tool]
+            )
+            
+            # Update the technical agent in pending analyses
+            self.pending_analyses[analysis_id]["technical_agent"] = technical_agent
+            self.pending_analyses[analysis_id]["document_search_tool"] = document_search_tool
+            
+            # Prepare document content for context
+            document_content = []
+            for doc in documents:
+                document_content.append({
+                    "id": doc.id,
+                    "filename": doc.filename,
+                    "description": doc.description or "",
+                    "content_preview": doc.content[:500] if hasattr(doc, "content") and doc.content else "Content not available"
+                })
             
             # Create context for the agent including previous analysis and user feedback
-            context_str = f"""
-            Project ID: {project_id}\n\n
-            Previous Analysis:\n{previous_result.get('technical_analysis', 'No previous analysis')}\n\n
-            User Feedback and Suggestions:\n{user_feedback}\n\n
-            Documents:\n
-            """
+            context_str = f"Project ID: {project_id}\n\nDocuments:\n"
+            for doc in document_content:
+                context_str += f"\n--- Document: {doc['filename']} ---\n"
+                context_str += f"Description: {doc['description']}\n\n"
+                context_str += f"Preview: {doc['content_preview']}\n"
             
-            for doc in documents:
-                context_str += f"\n--- Document: {doc.filename} ---\n"
-                context_str += f"Description: {doc.description or 'No description'}\n"
+            # Add user feedback to context
+            feedback_context = f"\n\nPrevious Analysis Summary:\n{previous_result.get('technical_analysis', 'No previous analysis')[:500]}\n\n"
+            feedback_context += f"User Feedback: {user_feedback}\n\n"
             
-            # Create a new task that incorporates user feedback
+            # Create task exactly like in start_analysis
             regeneration_task = Task(
                 description=f"""
-                Based on the user's feedback and suggestions, regenerate the technical analysis for project {project_id}.
-                
-                IMPORTANT: Carefully consider and incorporate the user's feedback:
+                Regenerate the technical analysis for project '{project.name}' incorporating this user feedback: 
                 {user_feedback}
                 
                 Use the document_search tool to find relevant information in the project documents.
                 
-                Your updated analysis should:
-                1. Address all points raised in the user's feedback
-                2. Incorporate their suggestions and recommendations
-                3. Maintain the same structure as before (Architecture recommendations, Technology stack, Feasibility, Implementation)
-                4. Clearly highlight what has changed based on the user's input
+                Your analysis should include:
+                1. Architecture recommendations
+                2. Technology stack suggestions
+                3. Feasibility assessment
+                4. Implementation approach
                 
-                Context:
+                Project context:
                 {context_str}
+                {feedback_context}
                 """,
-                expected_output="Updated technical analysis report that incorporates user feedback and suggestions",
-                agent=technical_agent,
-                tools=[document_search_tool]
+                expected_output="Updated technical analysis report with architecture recommendations and technology stack",
+                agent=technical_agent
             )
             
-            # Execute the regeneration task
-            result = technical_agent.execute_task(regeneration_task)
+            # Create crew exactly like in start_analysis
+            crew = Crew(
+                agents=[technical_agent],
+                tasks=[regeneration_task],
+                verbose=True,
+                process=Process.sequential
+            )
             
-            # Convert result to string
-            if hasattr(result, 'raw'):
-                crew_result = result.raw
-            else:
-                crew_result = str(result)
+            logger.info("Successfully created regeneration task and crew")
+            
+            # Execute the crew to get the regenerated analysis
+            result = crew.kickoff()
             
             # Update the analysis result with the new version
-            updated_analysis_result = {
-                "project_id": project_id,
-                "analysis_id": analysis_id,
-                "timestamp": datetime.utcnow().isoformat(),
-                "technical_analysis": crew_result,
-                "user_feedback": user_feedback,  # Store the feedback that led to this version
-                "version": previous_result.get("version", 1) + 1  # Track version number
-            }
-            
-            # Update the pending analysis with the new result
-            self.pending_analyses[analysis_id]["result"] = updated_analysis_result
-            
-            logger.info(f"Successfully regenerated analysis {analysis_id} with user feedback")
-            
-            # Send the updated analysis via WebSocket
-            if ws_manager:
-                await ws_manager.broadcast(
-                    project_id,
-                    {
-                        "type": "analysis_complete",
-                        "analysis_id": analysis_id,
-                        "sender": "technical_agent",
-                        "sender_name": "Technical Analysis Agent",
-                        "result": {
-                            "technical_analysis": crew_result,
-                            "completed_at": str(datetime.now()),
-                            "version": updated_analysis_result["version"]
-                        },
-                        "message": "Analysis has been updated based on your feedback. Please review the changes."
-                    }
-                )
+            if analysis_id in self.pending_analyses:
+                # Increment version number
+                current_version = self.pending_analyses[analysis_id].get("version", 1)
+                self.pending_analyses[analysis_id]["version"] = current_version + 1
                 
-                # Send a follow-up message
+                # Update the result with regenerated analysis
+                self.pending_analyses[analysis_id]["result"]["technical_analysis"] = result
+            
+            # Send completion notification
+            if ws_manager:
                 await ws_manager.broadcast(
                     project_id,
                     {
@@ -485,34 +539,47 @@ class AgentService:
             if project and project.insights and any(keyword in message.lower() for keyword in ['analysis', 'insights', 'recommendations', 'technical', 'risks', 'plan']):
                 context += f"\n\nPrevious Analysis Results:\n{json.dumps(project.insights, indent=2)}"
             
-            # Create a task for the agent
+            # Create a task for the chat
             chat_task = Task(
                 description=f"""
-                Respond to the user's message in a helpful and conversational manner.
+                User message: {message}
                 
-                Context:
-                {context}
+                Project context:
+                - Name: {project.name}
+                - Description: {project.description}
                 
-                Guidelines:
-                1. If the user is asking about project documents, search and reference specific content
-                2. If asking about previous analysis, reference the insights if available
-                3. Provide clear, actionable advice when appropriate
-                4. Be conversational but professional
-                5. If you're not sure about something, say so and suggest alternatives
+                Please provide a helpful response to the user's message.
+                If they're asking about project documents, use the search tool.
+                If they're asking about analysis results and insights are available, reference them.
                 """,
                 agent=chat_agent,
                 tools=[document_search_tool],
                 expected_output="A helpful and relevant response to the user's message"
             )
             
-            # Execute the task
-            response = chat_agent.execute_task(chat_task)
+            # Create crew
+            crew = Crew(
+                agents=[chat_agent],
+                tasks=[chat_task],
+                process=Process.sequential,
+                verbose=True
+            )
             
-            # Convert response to string
-            if hasattr(response, 'raw'):
-                response_text = response.raw
-            else:
-                response_text = str(response)
+            # Send initial thinking message
+            if ws_manager:
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "agent_message",
+                        "sender": "assistant",
+                        "sender_name": "Project Assistant",
+                        "message": "Let me help you with that...",
+                        "is_thinking": True
+                    }
+                )
+            
+            # Execute the crew
+            result = crew.kickoff()
             
             # Send the response
             if ws_manager:
@@ -522,12 +589,11 @@ class AgentService:
                         "type": "agent_message",
                         "sender": "assistant",
                         "sender_name": "Project Assistant",
-                        "message": response_text,
-                        "is_thinking": False
+                        "message": str(result)
                     }
                 )
             
-            return response_text
+            return str(result)
             
         except Exception as e:
             logger.error(f"Error in chat_with_agent for project {project_id}: {e}")
@@ -544,6 +610,428 @@ class AgentService:
             
             return error_msg
     
+    async def regenerate_analysis_with_feedback(self, db: AsyncSession, analysis_id: str, feedback: str, ws_manager: Optional[WebSocketManager] = None) -> Dict[str, Any]:
+        """
+        Regenerate analysis with user feedback
+        """
+        try:
+            # Check if analysis exists in pending analyses
+            if analysis_id not in self.pending_analyses:
+                raise ValueError(f"Analysis {analysis_id} not found")
+            
+            previous_analysis = self.pending_analyses[analysis_id]
+            project_id = previous_analysis.get("project_id")
+            
+            # Get project details
+            project_service = ProjectService()
+            project = await project_service.get_project(db, project_id)
+            if not project:
+                raise ValueError(f"Project {project_id} not found")
+            
+            # Increment version
+            version = previous_analysis.get("version", 1) + 1
+            
+            # Create LLM
+            llm = ChatAnthropic(
+                model="claude-3-5-sonnet-20241022",
+                temperature=0.2,
+                api_key=os.environ.get("ANTHROPIC_API_KEY")
+            )
+            
+            # Create document search tool
+            doc_search_tool = DocumentSearchTool(project_id=project_id)
+            
+            # Create technical analyst agent
+            technical_agent = Agent(
+                role="Technical Analyst",
+                goal="Regenerate the technical analysis incorporating user feedback",
+                backstory="""You are an expert technical analyst. You previously analyzed this project
+                and now need to update your analysis based on user feedback. Consider the previous
+                analysis and incorporate the user's suggestions to provide an improved analysis.""",
+                verbose=True,
+                allow_delegation=False,
+                llm=llm,
+                tools=[doc_search_tool]
+            )
+            
+            # Create regeneration task
+            regeneration_task = Task(
+                description=f"""
+                Previous Analysis:
+                {json.dumps(previous_analysis.get("result", {}), indent=2)}
+                
+                User Feedback:
+                {feedback}
+                
+                Project Details:
+                - Name: {project.name}
+                - Description: {project.description}
+                
+                Please regenerate the technical analysis incorporating the user's feedback.
+                Maintain the same structure as before but update the content based on the feedback.
+                """,
+                expected_output="Updated technical analysis incorporating user feedback"
+            )
+            
+            # Create crew
+            crew = Crew(
+                agents=[technical_agent],
+                tasks=[regeneration_task],
+                process=Process.sequential,
+                verbose=True
+            )
+            
+            # Send status update
+            if ws_manager:
+                await ws_manager.send_personal_message(
+                    project_id,
+                    {
+                        "type": "agent_message",
+                        "sender": "technical",
+                        "sender_name": "Technical Analysis Agent",
+                        "message": f"Regenerating analysis with your feedback (version {version})...",
+                        "is_thinking": True
+                    }
+                )
+            
+            # Execute the crew
+            result = crew.kickoff()
+            
+            # Parse the result
+            try:
+                analysis_result = json.loads(str(result))
+            except:
+                # If not JSON, create a structured response
+                analysis_result = {
+                    "summary": str(result),
+                    "version": version,
+                    "feedback_incorporated": feedback
+                }
+            
+            # Update pending analysis
+            self.pending_analyses[analysis_id] = {
+                "project_id": project_id,
+                "result": analysis_result,
+                "version": version,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            
+            logger.info(f"Successfully regenerated analysis {analysis_id} with user feedback")
+            
+            # Send the updated analysis via WebSocket
+            if ws_manager:
+                await ws_manager.send_personal_message(
+                    project_id,
+                    {
+                        "type": "analysis_complete",
+                        "analysis_id": analysis_id,
+                        "result": analysis_result,
+                        "version": version,
+                        "message": f"Analysis regenerated successfully (version {version})"
+                    }
+                )
+                
+                # Send a follow-up message
+                await ws_manager.send_personal_message(
+                    project_id,
+                    {
+                        "type": "agent_message",
+                        "sender": "technical",
+                        "sender_name": "Technical Analysis Agent",
+                        "message": "I've updated the analysis based on your feedback. The changes have been incorporated into the recommendations. You can now save this updated version or provide additional feedback.",
+                        "analysis_id": analysis_id
+                    }
+                )
+            
+            return analysis_result
+            
+        except Exception as e:
+            logger.error(f"Error regenerating analysis: {str(e)}")
+            
+            if ws_manager:
+                await ws_manager.send_personal_message(
+                    project_id,
+                    {
+                        "type": "error",
+                        "message": f"Failed to regenerate analysis: {str(e)}"
+                    }
+                )
+            raise
+    
+    async def handle_user_message(
+        self, 
+        db: AsyncSession, 
+        project_id: str,
+        message: str,
+        analysis_id: Optional[str] = None,
+        ws_manager: Optional[WebSocketManager] = None
+    ) -> str:
+        """
+        Handle user message with @mention support and feedback detection
+        """
+        logger.info(f"=== handle_user_message called ===")
+        logger.info(f"Project ID: {project_id}")
+        logger.info(f"Message: {message}")
+        logger.info(f"Analysis ID: {analysis_id}")
+        logger.info(f"Pending analyses: {list(self.pending_analyses.keys())}")
+        
+        # Parse for @mentions
+        mention_pattern = r'@(\w+)'
+        mentions = re.findall(mention_pattern, message)
+        
+        # If no analysis_id provided, try to find the most recent one for this project
+        if not analysis_id:
+            for aid, analysis in self.pending_analyses.items():
+                if analysis.get("project_id") == project_id:
+                    analysis_id = aid
+                    logger.info(f"Found pending analysis {analysis_id} for project {project_id}")
+                    break
+        
+        # Check if this is a feedback/regeneration request
+        feedback_patterns = [
+            r'(?i)update.*analysis',
+            r'(?i)focus.*on',
+            r'(?i)regenerate',
+            r'(?i)focus.*more',
+            r'(?i)please.*update',
+            r'(?i)modify.*analysis',
+            r'(?i)change.*analysis',
+            r'(?i)redo.*analysis',
+            r'(?i)improve.*analysis',
+            r'(?i)revise.*analysis',
+            r'(?i)demo',
+            r'(?i)technical.*aspects'
+        ]
+        
+        is_feedback_request = any(re.search(pattern, message.lower()) for pattern in feedback_patterns)
+        logger.info(f"Is feedback request: {is_feedback_request}")
+        
+        # Check if this is an analysis request
+        analysis_patterns = [
+            r'(?i)analyze.*project',
+            r'(?i)start.*analysis',
+            r'(?i)perform.*analysis',
+            r'(?i)technical.*analysis',
+            r'(?i)@technical'
+        ]
+        
+        is_analysis_request = any(re.search(pattern, message.lower()) for pattern in analysis_patterns)
+        logger.info(f"Is analysis request: {is_analysis_request}")
+        logger.info(f"Checking routing: feedback={is_feedback_request}, analysis={is_analysis_request}, has_analysis_id={bool(analysis_id)}")
+        
+        if is_feedback_request and analysis_id and analysis_id in self.pending_analyses:
+            # Handle feedback request
+            await ws_manager.send_personal_message(
+                project_id,
+                {
+                    "type": "agent_message",
+                    "sender": "assistant",
+                    "sender_name": "Project Assistant",
+                    "message": "I'll help you update the analysis with your feedback...",
+                    "is_thinking": True
+                }
+            )
+            
+            # Extract feedback from message
+            feedback = message
+            
+            # Regenerate analysis with feedback
+            result = await self.regenerate_analysis_with_feedback(
+                db, analysis_id, feedback, ws_manager
+            )
+            
+            return {"status": "success", "result": result}
+            
+        elif is_feedback_request or is_analysis_request or 'technical' in mentions:
+            # If it's a feedback request but no analysis exists, start a new one
+            # If it's an analysis request, start a new one
+            if is_feedback_request and not (analysis_id and analysis_id in self.pending_analyses):
+                await ws_manager.send_personal_message(
+                    project_id,
+                    {
+                        "type": "agent_message",
+                        "sender": "technical",
+                        "sender_name": "Technical Analysis Agent",
+                        "message": "I don't see an existing analysis to update. Let me start a new analysis for you...",
+                        "is_thinking": True
+                    }
+                )
+            else:
+                await ws_manager.send_personal_message(
+                    project_id,
+                    {
+                        "type": "agent_message",
+                        "sender": "technical",
+                        "sender_name": "Technical Analysis Agent",
+                        "message": "I'll analyze your project now...",
+                        "is_thinking": True
+                    }
+                )
+            
+            # Extract any additional context from the message
+            # Remove the @mention and analysis request patterns to get the additional context
+            additional_context = message
+            for pattern in ['@technical', '@analyze']:
+                additional_context = additional_context.replace(pattern, '')
+            
+            # Remove common analysis request phrases
+            context_cleaning_patterns = [
+                r'(?i)please\s+analyze.*project',
+                r'(?i)analyze.*project',
+                r'(?i)start.*analysis',
+                r'(?i)perform.*analysis',
+                r'(?i)technical.*analysis',
+                r'(?i)please\s+update.*analysis',
+                r'(?i)update.*analysis',
+                r'(?i)regenerate.*analysis',
+                r'(?i)modify.*analysis'
+            ]
+            
+            for pattern in context_cleaning_patterns:
+                additional_context = re.sub(pattern, '', additional_context)
+            
+            additional_context = additional_context.strip()
+            
+            # Start analysis with additional context
+            new_analysis_id = str(uuid.uuid4())
+            
+            # Store the pending analysis with context
+            self.pending_analyses[new_analysis_id] = {
+                "project_id": project_id,
+                "status": "running",
+                "additional_context": additional_context,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            
+            # Send analysis started message
+            if ws_manager:
+                await ws_manager.send_personal_message(
+                    project_id,
+                    {
+                        "type": "analysis_started",
+                        "analysis_id": new_analysis_id,
+                        "message": "Starting technical analysis..."
+                    }
+                )
+            
+            # Execute the analysis with context
+            asyncio.create_task(
+                self._execute_analysis_with_context(
+                    new_analysis_id, project_id, db, ws_manager, additional_context
+                )
+            )
+            
+            return {"status": "success", "analysis_id": new_analysis_id}
+            
+        else:
+            # General chat - use chat agent
+            return await self.chat_with_agent(db, project_id, message, ws_manager)
+            
+    async def chat_with_agent(self, db: AsyncSession, project_id: str, message: str, ws_manager: Optional[WebSocketManager] = None) -> Dict[str, Any]:
+        """
+        Handle general chat with the project assistant agent
+        """
+        try:
+            # Get project details
+            project_service = ProjectService()
+            project = await project_service.get_project(db, project_id)
+            if not project:
+                raise ValueError(f"Project {project_id} not found")
+            
+            # Create chat agent
+            llm = ChatAnthropic(
+                model="claude-3-5-sonnet-20241022",
+                temperature=0.3,
+                api_key=os.environ.get("ANTHROPIC_API_KEY")
+            )
+            
+            # Create document search tool
+            doc_search_tool = DocumentSearchTool(project_id=project_id)
+            
+            chat_agent = Agent(
+                role="Project Assistant",
+                goal="Help users understand their project, answer questions about documents, and provide guidance",
+                backstory="""You are a helpful project assistant with broad expertise. You can:
+                - Answer questions about the project and its documents
+                - Provide technical guidance and suggestions
+                - Help users understand analysis results
+                - Offer general project advice
+                
+                Be conversational, helpful, and concise in your responses.""",
+                verbose=True,
+                allow_delegation=False,
+                llm=llm,
+                tools=[doc_search_tool]
+            )
+            
+            # Create task for the chat
+            chat_task = Task(
+                description=f"""
+                User message: {message}
+                
+                Project context:
+                - Name: {project.name}
+                - Description: {project.description}
+                
+                Please provide a helpful response to the user's message.
+                If they're asking about project documents, use the search tool.
+                If they're asking about analysis results and insights are available, reference them.
+                """,
+                agent=chat_agent,
+                tools=[doc_search_tool],
+                expected_output="A helpful, conversational response to the user's message"
+            )
+            
+            # Create crew
+            crew = Crew(
+                agents=[chat_agent],
+                tasks=[chat_task],
+                process=Process.sequential,
+                verbose=True
+            )
+            
+            # Send initial thinking message
+            if ws_manager:
+                await ws_manager.send_personal_message(
+                    project_id,
+                    {
+                        "type": "agent_message",
+                        "sender": "assistant",
+                        "sender_name": "Project Assistant",
+                        "message": "Let me help you with that...",
+                        "is_thinking": True
+                    }
+                )
+            
+            # Execute the crew
+            result = crew.kickoff()
+            
+            # Send the response
+            if ws_manager:
+                await ws_manager.send_personal_message(
+                    project_id,
+                    {
+                        "type": "agent_message",
+                        "sender": "assistant",
+                        "sender_name": "Project Assistant",
+                        "message": str(result)
+                    }
+                )
+            
+            return {"status": "success", "response": str(result)}
+            
+        except Exception as e:
+            logger.error(f"Error in chat_with_agent: {str(e)}")
+            if ws_manager:
+                await ws_manager.send_personal_message(
+                    project_id,
+                    {
+                        "type": "error",
+                        "message": "I apologize, but I encountered an error. Please try again."
+                    }
+                )
+            raise
+
     async def confirm_and_save_analysis(self, db: AsyncSession, analysis_id: str, ws_manager: Optional[WebSocketManager] = None) -> bool:
         """
         Confirm and save the analysis to project insights
@@ -937,6 +1425,329 @@ class AgentService:
             logger.error(f"Traceback: {traceback.format_exc()}")
             # In a real implementation, this would update the analysis status to error
     
+    async def _execute_analysis_with_context(self, analysis_id: str, project_id: str, db: AsyncSession, ws_manager: Optional[WebSocketManager] = None, context: str = "") -> None:
+        try:
+            logger.info(f"Starting agent analysis execution for project {project_id} (analysis_id: {analysis_id})")
+            
+            # Send initial status
+            if ws_manager:
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "agent_message",
+                        "sender": "system",
+                        "sender_name": "System",
+                        "message": "Initializing agent analysis...",
+                        "analysis_id": analysis_id
+                    }
+                )
+            
+            # Check for cancellation
+            if asyncio.current_task().cancelled():
+                logger.info(f"Analysis {analysis_id} was cancelled before starting")
+                return
+            
+            # Import document processor
+            from app.services.document_processor import DocumentProcessor
+            document_processor = DocumentProcessor()
+            
+            # Get all documents for this project
+            documents = await document_processor.list_documents(db, project_id)
+            
+            # Check if any documents are still processing
+            processing_docs = [doc for doc in documents if doc.status == "processing"]
+            if processing_docs:
+                logger.warning(f"Cannot start analysis - {len(processing_docs)} documents still processing for project {project_id}")
+                # Send error via WebSocket
+                if ws_manager:
+                    await ws_manager.broadcast(
+                        project_id,
+                        {
+                            "type": "error",
+                            "analysis_id": analysis_id,
+                            "message": f"Cannot start analysis - {len(processing_docs)} documents still processing"
+                        }
+                    )
+                # We'll try again later - in a real implementation, this would be handled by a background job
+                return
+            
+            # Ensure all processed documents are indexed in ChromaDB
+            if documents:
+                logger.info(f"Ensuring {len(documents)} documents are indexed in ChromaDB for project {project_id}")
+                indexed = await document_processor.ensure_documents_indexed(db, project_id)
+                if not indexed:
+                    logger.warning(f"Failed to ensure all documents are indexed for project {project_id}")
+                else:
+                    logger.info(f"All documents are indexed in ChromaDB for project {project_id}")
+            
+            # Check for cancellation
+            if asyncio.current_task().cancelled():
+                logger.info(f"Analysis {analysis_id} was cancelled during document indexing")
+                return
+            
+            # Check if we already have analysis results for this project
+            from app.services.project_service import ProjectService
+            project_service = ProjectService()
+            project = await project_service.get_project(db, project_id)
+            
+            # Only skip if we have insights AND we're not forcing a new analysis
+            if project and project.insights:
+                logger.info(f"Analysis results already exist for project {project_id}")
+                
+                # Send existing results to client via WebSocket
+                if ws_manager:
+                    await ws_manager.broadcast(
+                        project_id,
+                        {
+                            "type": "analysis_result",
+                            "analysis_id": analysis_id,
+                            "result": project.insights,
+                            "message": "Analysis results are ready (previously generated)"
+                        }
+                    )
+                return
+            
+            # Set up Anthropic LLM
+            if ws_manager:
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "analysis_status",
+                        "status": "initializing_llm",
+                        "analysis_id": analysis_id,
+                        "message": "Initializing AI language model"
+                    }
+                )
+                
+            anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
+            anthropic_model = os.getenv("ANTHROPIC_MODEL", "claude-3-haiku-20240307")
+            
+            if not anthropic_api_key:
+                error_msg = "AI service not configured properly"
+                logger.error("ANTHROPIC_API_KEY not found")
+                if ws_manager:
+                    await ws_manager.broadcast(
+                        project_id,
+                        {
+                            "type": "error",
+                            "analysis_id": analysis_id,
+                            "message": error_msg
+                        }
+                    )
+                raise ValueError(error_msg)
+            
+            # Initialize the Anthropic LLM
+            logger.info(f"Initializing Anthropic LLM with model {anthropic_model}")
+            try:
+                llm = ChatAnthropic(
+                    model_name=anthropic_model,
+                    anthropic_api_key=anthropic_api_key,
+                    temperature=0.2,
+                    max_tokens=4000
+                )
+                logger.info("Anthropic LLM initialized successfully")
+            except Exception as llm_error:
+                logger.error(f"Error initializing Anthropic LLM: {str(llm_error)}")
+                if ws_manager:
+                    await ws_manager.broadcast(
+                        project_id,
+                        {
+                            "type": "error",
+                            "analysis_id": analysis_id,
+                            "message": f"Failed to initialize LLM: {str(llm_error)}"
+                        }
+                    )
+                raise
+            
+            # Create the document search tool
+            document_search_tool = DocumentSearchTool(project_id)
+            
+            # Load agent configuration
+            if ws_manager:
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "analysis_status",
+                        "status": "creating_agents",
+                        "analysis_id": analysis_id,
+                        "message": "Creating AI agents for analysis"
+                    }
+                )
+                
+            agent_config = self.config_loader.get_agent_config("technical_analyst")
+            if not agent_config:
+                error_msg = "Technical analyst agent configuration not found"
+                logger.error(error_msg)
+                if ws_manager:
+                    await ws_manager.broadcast(
+                        project_id,
+                        {
+                            "type": "error",
+                            "analysis_id": analysis_id,
+                            "message": error_msg
+                        }
+                    )
+                raise ValueError(error_msg)
+            
+            # Create the technical analysis agent
+            technical_agent = Agent(
+                role=agent_config["role"],
+                goal=agent_config["goal"],
+                backstory=agent_config["backstory"],
+                verbose=agent_config["verbose"],
+                allow_delegation=agent_config["allow_delegation"],
+                llm=llm,
+                tools=[document_search_tool]
+            )
+            
+            # Prepare document content for the agent
+            document_content = []
+            for doc in documents:
+                document_content.append({
+                    "id": doc.id,
+                    "filename": doc.filename,
+                    "description": doc.description or "",
+                    "content_preview": doc.content[:500] if hasattr(doc, "content") and doc.content else "Content not available"
+                })
+            
+            # Create context for the agent
+            context_str = f"Project ID: {project_id}\n\nDocuments:\n"
+            for doc in document_content:
+                context_str += f"\n--- Document: {doc['filename']} ---\n"
+                context_str += f"Description: {doc['description']}\n\n"
+                context_str += f"Preview: {doc['content_preview']}\n"
+            
+            # Add context from the user's message
+            if context:
+                context_str += f"\n\nUser Context:\n{context}"
+            
+            # Create the technical analysis task
+            task = Task(
+                description=f"""
+                Analyze the project with ID {project_id} and provide technical recommendations.
+                
+                Use the document_search tool to find relevant information in the project documents.
+                
+                Your analysis should include:
+                1. Architecture recommendations
+                2. Technology stack suggestions
+                3. Feasibility assessment
+                4. Implementation approach
+                
+                Project context:
+                {context_str}
+                """,
+                expected_output="Technical analysis report with architecture recommendations and technology stack",
+                agent=technical_agent
+            )
+            
+            # Create the crew with just the technical agent
+            crew = Crew(
+                agents=[technical_agent],
+                tasks=[task],
+                verbose=True,
+                process=Process.sequential
+            )
+            
+            # Run the crew
+            logger.info(f"Starting CrewAI execution for project {project_id}")
+            
+            # Check for cancellation before running crew
+            if asyncio.current_task().cancelled():
+                logger.info(f"Analysis {analysis_id} was cancelled before crew execution")
+                return
+            
+            result = crew.kickoff()
+            
+            # Check for cancellation after crew execution
+            if asyncio.current_task().cancelled():
+                logger.info(f"Analysis {analysis_id} was cancelled after crew execution")
+                return
+            
+            logger.info(f"CrewAI execution completed for project {project_id}")
+            
+            # Convert CrewOutput to serializable format
+            if hasattr(result, 'raw'):
+                crew_result = result.raw
+            elif hasattr(result, '__str__'):
+                crew_result = str(result)
+            else:
+                # Convert object to dict and then to string as fallback
+                try:
+                    crew_result = json.dumps(result.__dict__)
+                except:
+                    crew_result = f"Unserializable result type: {type(result).__name__}"
+            
+            # Format the results
+            analysis_result = {
+                "project_id": project_id,
+                "analysis_id": analysis_id,
+                "timestamp": datetime.utcnow().isoformat(),
+                "technical_analysis": crew_result,
+            }
+            
+            # Store the analysis results in memory (not in database yet)
+            if not hasattr(self, 'pending_analyses'):
+                self.pending_analyses = {}
+            
+            self.pending_analyses[analysis_id] = {
+                "project_id": project_id,
+                "result": analysis_result,
+                "crew": crew,  # Keep the crew instance for follow-up questions
+                "technical_agent": technical_agent,
+                "document_search_tool": document_search_tool
+            }
+            
+            logger.info(f"Analysis {analysis_id} completed and stored in memory for project {project_id}")
+            logger.info(f"Current pending analyses: {list(self.pending_analyses.keys())}")
+            
+            # Send the analysis results via WebSocket for user review
+            if ws_manager:
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "analysis_complete",
+                        "analysis_id": analysis_id,
+                        "result": {
+                            "technical_analysis": crew_result,
+                            "completed_at": str(datetime.now())
+                        },
+                        "message": "Initial analysis complete. Please review and ask any follow-up questions."
+                    }
+                )
+                
+                # Send a follow-up message prompting for questions
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "agent_message",
+                        "sender": "technical_agent",
+                        "sender_name": "Technical Analysis Agent",
+                        "message": "I've completed my initial analysis of your project. Feel free to ask any questions about the analysis, request clarifications, or ask for additional insights. When you're satisfied, you can confirm to save these insights.",
+                        "analysis_id": analysis_id
+                    }
+                )
+            
+            logger.info(f"Completed initial analysis {analysis_id} for project {project_id}")
+            
+        except asyncio.CancelledError:
+            logger.info(f"Analysis {analysis_id} was cancelled")
+            if ws_manager:
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "analysis_cancelled",
+                        "analysis_id": analysis_id,
+                        "message": "Analysis was cancelled"
+                    }
+                )
+            raise  # Re-raise to properly handle cancellation
+        except Exception as e:
+            logger.error(f"Error executing analysis {analysis_id}: {str(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            # In a real implementation, this would update the analysis status to error
+    
     def parse_agent_mention(self, message: str) -> Tuple[Optional[str], str]:
         """
         Parse @agent mentions from message
@@ -1004,92 +1815,3 @@ class AgentService:
             feedback = re.sub(pattern, '', feedback)
         
         return feedback.strip()
-    
-    async def handle_user_message(
-        self, 
-        db: AsyncSession, 
-        project_id: str,
-        message: str,
-        analysis_id: Optional[str] = None,
-        ws_manager: Optional[WebSocketManager] = None
-    ) -> str:
-        """
-        Handle user message with @mention support and feedback detection
-        """
-        # Parse for @mentions
-        mentioned_agent_id, cleaned_message = self.parse_agent_mention(message)
-        
-        # Check if this is a feedback request for existing analysis
-        if analysis_id and self.detect_feedback_request(cleaned_message):
-            # Extract feedback and regenerate
-            feedback = self.extract_feedback_content(cleaned_message)
-            
-            # Send acknowledgment
-            if ws_manager:
-                await ws_manager.broadcast(
-                    project_id,
-                    {
-                        "type": "system_message",
-                        "message": "I'll update the analysis with your feedback...",
-                        "sender": "system"
-                    }
-                )
-            
-            # Regenerate with feedback
-            success = await self.regenerate_analysis_with_feedback(
-                db, analysis_id, feedback, ws_manager
-            )
-            
-            if success:
-                return "Analysis updated with your feedback!"
-            else:
-                return "Failed to update analysis. Please try again."
-        
-        # Route to specific agent if mentioned
-        if mentioned_agent_id:
-            if mentioned_agent_id == "technical_analyst":
-                # Use existing handle_user_question for technical analyst
-                if analysis_id:
-                    return await self.handle_user_question(
-                        db, analysis_id, cleaned_message, ws_manager
-                    )
-                else:
-                    # Start new analysis if requested
-                    if any(word in cleaned_message.lower() for word in ['analyze', 'analysis', 'review']):
-                        await self.start_analysis(db, project_id, ws_manager)
-                        return "Starting technical analysis..."
-                    else:
-                        # General technical question
-                        return await self.chat_with_agent(
-                            db, project_id, cleaned_message, ws_manager
-                        )
-            
-            elif mentioned_agent_id == "project_assistant":
-                # Route to general chat
-                return await self.chat_with_agent(
-                    db, project_id, cleaned_message, ws_manager
-                )
-            
-            else:
-                # Agent not yet implemented
-                agent_info = agent_registry.get_agent(mentioned_agent_id)
-                if agent_info and "[Coming Soon]" in agent_info.description:
-                    return f"The {agent_info.name} is coming soon! For now, try @technical or @assistant."
-                else:
-                    return "I couldn't find that agent. Try @technical or @assistant."
-        
-        # No specific agent mentioned - use general assistant
-        if not analysis_id:
-            # Suggest which agent to use based on message content
-            if any(word in message.lower() for word in ['code', 'architecture', 'technical', 'technology']):
-                suggestion = "For technical questions, you can ask @technical directly. "
-            else:
-                suggestion = ""
-            
-            response = await self.chat_with_agent(db, project_id, message, ws_manager)
-            return suggestion + response
-        else:
-            # In analysis context, use technical agent by default
-            return await self.handle_user_question(
-                db, analysis_id, message, ws_manager
-            )

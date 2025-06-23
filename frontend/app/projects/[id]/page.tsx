@@ -446,11 +446,13 @@ export default function ProjectDetailPage() {
                 projectId={projectId}
                 onStartAnalysis={handleStartAnalysis}
                 onAnalysisComplete={handleAnalysisComplete}
+                existingInsights={project.insights}  // Pass existing insights
               />
             ) : (
               <ProjectInsights 
                 projectId={projectId}
                 projectStatus={project.status}
+                projectInsights={project.insights}  // Pass existing insights
               />
             )}
           </div>
