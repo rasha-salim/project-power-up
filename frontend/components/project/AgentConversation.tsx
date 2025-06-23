@@ -311,18 +311,9 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
             break;
 
           case 'analysis_saved':
-            setMessages(prev => [...prev, {
-              id: generateMessageId(),
-              type: 'system',
-              message: data.message || 'Analysis saved successfully!',
-              timestamp: new Date().toISOString()
-            }]);
-            
-            // Also update parent when analysis is saved
-            if (onAnalysisComplete && data.insights) {
-              onAnalysisComplete(data.insights);
-            }
-            setAnalysisSaved(true);  // Update analysisSaved state
+            console.log('Analysis saved successfully:', data);
+            // The optimistic update already happened in confirmAndSaveAnalysis
+            // This just confirms it was saved to the database
             break;
 
           case 'analysis_cancelled':
@@ -457,6 +448,76 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
     }
   };
 
+  const startAnalysis = (force: boolean = false) => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    wsRef.current.send(JSON.stringify({
+      type: 'start_analysis',
+      force: force
+    }));
+  };
+
+  const confirmAndSaveAnalysis = async () => {
+    if (!currentAnalysisId || !isConnected) {
+      return;
+    }
+
+    try {
+      console.log('Saving analysis to insights:', currentAnalysisId);
+      
+      // Send save request via WebSocket using the existing confirm_analysis message type
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({
+          type: 'confirm_analysis',
+          analysis_id: currentAnalysisId
+        }));
+        
+        // Optimistically update UI
+        setAnalysisSaved(true);
+        
+        // Show success message
+        setMessages(prev => [...prev, {
+          id: generateMessageId(),
+          type: 'system',
+          sender: 'system',
+          message: 'Analysis saved to project insights successfully!',
+          timestamp: new Date().toISOString()
+        }]);
+      }
+    } catch (error) {
+      console.error('Failed to save analysis:', error);
+      setMessages(prev => [...prev, {
+        id: generateMessageId(),
+        type: 'system',
+        sender: 'system',
+        message: 'Failed to save analysis. Please try again.',
+        timestamp: new Date().toISOString()
+      }]);
+    }
+  };
+
+  const cancelAnalysis = () => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN || !currentAnalysisId) {
+      return;
+    }
+
+    const message = {
+      type: 'cancel_analysis',
+      analysis_id: currentAnalysisId
+    };
+
+    wsRef.current.send(JSON.stringify(message));
+    
+    setMessages(prev => [...prev, {
+      id: generateMessageId(),
+      type: 'system',
+      message: 'Cancelling analysis...',
+      timestamp: new Date().toISOString()
+    }]);
+  };
+
   const sendMessage = () => {
     if (!inputMessage.trim() || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
       return;
@@ -503,72 +564,6 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
     setShowAgentSuggestions(false);
   };
 
-  const startAnalysis = (force: boolean = false) => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      return;
-    }
-
-    const message = {
-      type: 'start_analysis',
-      force: force
-    };
-
-    wsRef.current.send(JSON.stringify(message));
-    
-    setIsAnalyzing(true);
-    setAnalysisComplete(false);
-    setAnalysisSaved(false);  // Reset analysisSaved state
-    setIsAgentThinking(true);  // Show typing indicator
-    
-    setMessages(prev => [...prev, {
-      id: generateMessageId(),
-      type: 'system',
-      message: 'Starting project analysis...',
-      timestamp: new Date().toISOString()
-    }]);
-  };
-
-  const cancelAnalysis = () => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN || !currentAnalysisId) {
-      return;
-    }
-
-    const message = {
-      type: 'cancel_analysis',
-      analysis_id: currentAnalysisId
-    };
-
-    wsRef.current.send(JSON.stringify(message));
-    
-    setMessages(prev => [...prev, {
-      id: generateMessageId(),
-      type: 'system',
-      message: 'Cancelling analysis...',
-      timestamp: new Date().toISOString()
-    }]);
-  };
-
-  const confirmAndSaveAnalysis = () => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN || !currentAnalysisId) {
-      return;
-    }
-
-    const message = {
-      type: 'confirm_analysis',
-      analysis_id: currentAnalysisId
-    };
-
-    wsRef.current.send(JSON.stringify(message));
-    
-    setMessages(prev => [...prev, {
-      id: generateMessageId(),
-      type: 'system',
-      message: 'Saving analysis results...',
-      timestamp: new Date().toISOString()
-    }]);
-  };
-
-  // Handle @ mentions in input
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     setInputMessage(value);

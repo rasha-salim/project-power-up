@@ -98,7 +98,7 @@ class AgentService:
     async def _execute_analysis_with_context(
         self, 
         analysis_id: str, 
-        project_id: str, 
+        project_id: str,
         db: AsyncSession,
         ws_manager: Optional[WebSocketManager] = None,
         additional_context: str = ""
@@ -586,17 +586,13 @@ class AgentService:
             # Create the agent with all required parameters
             technical_agent = Agent(
                 role=agent_config["role"],
-                goal=agent_config["goal"],
+                goal=f"Answer specific questions about the technical analysis for project {project_id}",
                 backstory=agent_config["backstory"],
                 verbose=True,
                 allow_delegation=False,
                 llm=llm,
                 tools=[document_search_tool]
             )
-            
-            # Update the technical agent in pending analyses
-            self.pending_analyses[analysis_id]["technical_agent"] = technical_agent
-            self.pending_analyses[analysis_id]["document_search_tool"] = document_search_tool
             
             # Prepare document content for context
             document_content = []
@@ -1664,75 +1660,100 @@ class AgentService:
                 logger.error(f"Analysis {analysis_id} not found in pending analyses")
                 return False
             
-            # Get the pending analysis
-            pending_analysis = self.pending_analyses[analysis_id]
-            project_id = pending_analysis.get('project_id')
-            raw_result = pending_analysis.get('result', {})
+            analysis_data = self.pending_analyses[analysis_id]
+            project_id = analysis_data.get('project_id')
             
             if not project_id:
-                logger.error(f"Project ID not found for analysis {analysis_id}")
+                logger.error(f"No project_id found for analysis {analysis_id}")
                 return False
             
-            # Send status update
-            if ws_manager:
-                await ws_manager.broadcast(
-                    project_id,
-                    {
-                        "type": "system_message",
-                        "message": "Saving analysis to project insights...",
-                        "sender": "system"
-                    }
+            # Get the project
+            project_service = ProjectService()
+            project = await project_service.get_project(db, project_id)
+            
+            if not project:
+                logger.error(f"Project {project_id} not found")
+                return False
+            
+            # Get the analysis result from memory
+            result = analysis_data.get('result')
+            if not result:
+                logger.error(f"No result found for analysis {analysis_id}")
+                return False
+            
+            # Extract the technical analysis from the result
+            if isinstance(result, dict):
+                technical_analysis = result.get('technical_analysis', '')
+                logger.info(f"Result is dict, technical_analysis type: {type(technical_analysis)}")
+                logger.info(f"Technical analysis preview: {str(technical_analysis)[:500]}")
+            else:
+                technical_analysis = result
+                logger.info(f"Result is not dict, type: {type(result)}")
+            
+            if not technical_analysis:
+                logger.error(f"No technical analysis found for analysis {analysis_id}")
+                return False
+            
+            # Parse the result into Pydantic model
+            if isinstance(technical_analysis, str):
+                try:
+                    # Try to parse as JSON first
+                    result_dict = json.loads(technical_analysis)
+                    project_analysis = self._parse_agent_output_to_pydantic(
+                        json.dumps(result_dict), 
+                        analysis_id, 
+                        project_id
+                    )
+                except json.JSONDecodeError:
+                    # If not JSON, parse as text
+                    project_analysis = self._parse_agent_output_to_pydantic(
+                        technical_analysis, 
+                        analysis_id, 
+                        project_id
+                    )
+            else:
+                # Already structured data
+                project_analysis = self._parse_agent_output_to_pydantic(
+                    json.dumps(technical_analysis), 
+                    analysis_id, 
+                    project_id
                 )
             
-            # Extract the raw agent output
-            raw_output = raw_result.get('technical_analysis', '')
+            # Convert Pydantic model to dict for storage
+            insights_data = project_analysis.model_dump(mode='json')
             
-            # Parse the raw output into a structured Pydantic model
-            project_analysis = self._parse_agent_output_to_pydantic(raw_output, analysis_id, project_id)
+            # Update project insights
+            project.insights = insights_data
+            await db.commit()
             
-            # Convert Pydantic model to JSON-serializable dict for database storage
-            # Use json serialization/deserialization to ensure all objects are serializable
-            analysis_json = project_analysis.json()
-            analysis_dict = json.loads(analysis_json)
+            logger.info(f"Successfully saved analysis {analysis_id} to project {project_id} insights")
             
-            logger.info(f"Converted analysis to JSON-serializable dictionary")
-            
-            # Initialize ProjectService
-            project_service = ProjectService()
-            
-            # Store the insights in the database
-            await project_service.store_project_insights(db, project_id, analysis_dict)
-            
-            # Remove from pending analyses
-            del self.pending_analyses[analysis_id]
-            
-            # Send confirmation via WebSocket
+            # Send success message via WebSocket
             if ws_manager:
                 await ws_manager.broadcast(
                     project_id,
                     {
                         "type": "analysis_saved",
                         "analysis_id": analysis_id,
-                        "project_id": project_id,
-                        "message": "Analysis has been saved to project insights"
+                        "message": "Analysis saved to project insights successfully!"
                     }
                 )
             
-            logger.info(f"Analysis {analysis_id} saved successfully for project {project_id}")
+            # Remove from pending analyses
+            del self.pending_analyses[analysis_id]
+            
             return True
             
         except Exception as e:
             logger.error(f"Error saving analysis {analysis_id}: {str(e)}")
-            logger.error(traceback.format_exc())
+            logger.error(f"Traceback: {traceback.format_exc()}")
             
-            # Send error via WebSocket
-            if ws_manager and 'project_id' in self.pending_analyses.get(analysis_id, {}):
-                project_id = self.pending_analyses[analysis_id]['project_id']
+            # Send error message via WebSocket
+            if ws_manager:
                 await ws_manager.broadcast(
                     project_id,
                     {
                         "type": "error",
-                        "analysis_id": analysis_id,
                         "message": f"Failed to save analysis: {str(e)}"
                     }
                 )
@@ -2518,6 +2539,7 @@ class AgentService:
             ProjectAnalysis: Structured analysis data
         """
         logger.info(f"Parsing raw agent output for analysis {analysis_id}")
+        logger.info(f"Raw output type: {type(raw_output)}, length: {len(str(raw_output))}")
         
         try:
             # Try to parse as JSON first
@@ -2526,6 +2548,18 @@ class AgentService:
                     data = json.loads(raw_output)
                 else:
                     data = raw_output
+                    
+                logger.info(f"Successfully parsed JSON, keys: {list(data.keys()) if isinstance(data, dict) else 'not a dict'}")
+                
+                # Check if the data has a nested 'technical_analysis' structure
+                if isinstance(data, dict) and 'technical_analysis' in data:
+                    # The agent output has everything nested under 'technical_analysis'
+                    nested_data = data['technical_analysis']
+                    if isinstance(nested_data, dict):
+                        # Use the nested data as the main data source
+                        data = nested_data
+                        logger.info(f"Using nested technical_analysis data, keys: {list(data.keys())}")
+                        
             except json.JSONDecodeError:
                 # If not valid JSON, use regex to extract structured data
                 logger.warning(f"Agent output is not valid JSON, using fallback parsing")
@@ -2533,6 +2567,13 @@ class AgentService:
             
             # Extract technical analysis data
             tech_data = data.get('technical_analysis', {}) if isinstance(data, dict) else {}
+            
+            # If tech_data is still empty, check if the data itself contains the technical fields
+            if not tech_data and isinstance(data, dict):
+                # Check if data itself contains technical analysis fields
+                if any(key in data for key in ['architecture', 'tech_stack', 'complexity_score']):
+                    tech_data = data
+                    logger.info("Using root data as technical analysis data")
             
             # Create TechStackCategory
             tech_stack = TechStackCategory(
