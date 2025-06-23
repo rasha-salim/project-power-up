@@ -4,6 +4,7 @@ import re
 import uuid
 import asyncio
 import json
+import traceback
 from typing import Dict, Any, Optional, List, Tuple
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -419,10 +420,38 @@ class AgentService:
             if analysis_id in self.pending_analyses:
                 # Increment version number
                 current_version = self.pending_analyses[analysis_id].get("version", 1)
-                self.pending_analyses[analysis_id]["version"] = current_version + 1
+                new_version = current_version + 1
                 
-                # Update the result with regenerated analysis
-                self.pending_analyses[analysis_id]["result"]["technical_analysis"] = result
+                # Create a complete result structure
+                analysis_result = {
+                    "technical_analysis": str(result),
+                    "version": new_version,
+                    "feedback_incorporated": user_feedback,
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+                
+                # Update the pending analysis with the complete result
+                self.pending_analyses[analysis_id] = {
+                    "project_id": project_id,
+                    "result": analysis_result,
+                    "version": new_version,
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+                
+                logger.info(f"Successfully updated analysis {analysis_id} with new version {new_version}")
+                
+                # Send the updated analysis via WebSocket
+                if ws_manager:
+                    await ws_manager.broadcast(
+                        project_id,
+                        {
+                            "type": "analysis_complete",
+                            "analysis_id": analysis_id,
+                            "result": analysis_result,
+                            "version": new_version,
+                            "message": f"Analysis regenerated successfully (version {new_version})"
+                        }
+                    )
             
             # Send completion notification
             if ws_manager:
@@ -668,9 +697,14 @@ class AgentService:
                 - Description: {project.description}
                 
                 Please regenerate the technical analysis incorporating the user's feedback.
-                Maintain the same structure as before but update the content based on the feedback.
+                You MUST maintain the exact same structure and format as the previous analysis.
+                Return your response as a detailed technical analysis in the same format as before.
+                
+                IMPORTANT: Your output MUST be in the exact same format as the original technical analysis.
+                Do not use a simplified format with just a summary field.
                 """,
-                expected_output="Updated technical analysis incorporating user feedback"
+                expected_output="Updated technical analysis incorporating user feedback",
+                agent=technical_agent
             )
             
             # Create crew
@@ -683,7 +717,7 @@ class AgentService:
             
             # Send status update
             if ws_manager:
-                await ws_manager.send_personal_message(
+                await ws_manager.broadcast(
                     project_id,
                     {
                         "type": "agent_message",
@@ -699,13 +733,18 @@ class AgentService:
             
             # Parse the result
             try:
+                # Try to parse as JSON first
                 analysis_result = json.loads(str(result))
             except:
-                # If not JSON, create a structured response
+                # If not JSON, try to extract structured content from the text
+                result_str = str(result)
+                
+                # Create a more structured response that matches the original format
                 analysis_result = {
-                    "summary": str(result),
+                    "technical_analysis": result_str,
                     "version": version,
-                    "feedback_incorporated": feedback
+                    "feedback_incorporated": feedback,
+                    "timestamp": datetime.utcnow().isoformat()
                 }
             
             # Update pending analysis
@@ -718,28 +757,32 @@ class AgentService:
             
             logger.info(f"Successfully regenerated analysis {analysis_id} with user feedback")
             
-            # Send the updated analysis via WebSocket
+            # Send the updated analysis via WebSocket - using the same message type as the New Analysis flow
             if ws_manager:
-                await ws_manager.send_personal_message(
+                # First, send the analysis_complete message with is_regeneration flag
+                await ws_manager.broadcast(
                     project_id,
                     {
                         "type": "analysis_complete",
                         "analysis_id": analysis_id,
                         "result": analysis_result,
                         "version": version,
-                        "message": f"Analysis regenerated successfully (version {version})"
+                        "is_regeneration": True,
+                        "message": f"Analysis regenerated successfully (version {version})",
+                        "show_save_button": True
                     }
                 )
                 
                 # Send a follow-up message
-                await ws_manager.send_personal_message(
+                await ws_manager.broadcast(
                     project_id,
                     {
                         "type": "agent_message",
                         "sender": "technical",
                         "sender_name": "Technical Analysis Agent",
                         "message": "I've updated the analysis based on your feedback. The changes have been incorporated into the recommendations. You can now save this updated version or provide additional feedback.",
-                        "analysis_id": analysis_id
+                        "analysis_id": analysis_id,
+                        "show_save_button": True
                     }
                 )
             
@@ -749,7 +792,7 @@ class AgentService:
             logger.error(f"Error regenerating analysis: {str(e)}")
             
             if ws_manager:
-                await ws_manager.send_personal_message(
+                await ws_manager.broadcast(
                     project_id,
                     {
                         "type": "error",
@@ -800,6 +843,9 @@ class AgentService:
             r'(?i)improve.*analysis',
             r'(?i)revise.*analysis',
             r'(?i)demo',
+            r'(?i)knowing that',
+            r'(?i)considering',
+            r'(?i)taking into account',
             r'(?i)technical.*aspects'
         ]
         
@@ -821,12 +867,14 @@ class AgentService:
         
         if is_feedback_request and analysis_id and analysis_id in self.pending_analyses:
             # Handle feedback request
-            await ws_manager.send_personal_message(
+            logger.info(f"Processing feedback request for analysis {analysis_id}")
+            
+            await ws_manager.broadcast(
                 project_id,
                 {
                     "type": "agent_message",
-                    "sender": "assistant",
-                    "sender_name": "Project Assistant",
+                    "sender": "technical",
+                    "sender_name": "Technical Analysis Agent",
                     "message": "I'll help you update the analysis with your feedback...",
                     "is_thinking": True
                 }
@@ -834,19 +882,37 @@ class AgentService:
             
             # Extract feedback from message
             feedback = message
+            logger.info(f"Extracted feedback: {feedback}")
             
-            # Regenerate analysis with feedback
-            result = await self.regenerate_analysis_with_feedback(
-                db, analysis_id, feedback, ws_manager
-            )
-            
-            return {"status": "success", "result": result}
+            try:
+                # Regenerate analysis with feedback
+                result = await self.regenerate_analysis_with_feedback(
+                    db, analysis_id, feedback, ws_manager
+                )
+                
+                logger.info(f"Regeneration result: {result}")
+                return {"status": "success", "result": result}
+            except Exception as e:
+                logger.error(f"Error in regeneration: {str(e)}")
+                logger.error(f"Traceback: {traceback.format_exc()}")
+                
+                # Send error message
+                if ws_manager:
+                    await ws_manager.broadcast(
+                        project_id,
+                        {
+                            "type": "error",
+                            "message": f"Failed to update analysis: {str(e)}"
+                        }
+                    )
+                
+                return {"status": "error", "message": str(e)}
             
         elif is_feedback_request or is_analysis_request or 'technical' in mentions:
             # If it's a feedback request but no analysis exists, start a new one
             # If it's an analysis request, start a new one
             if is_feedback_request and not (analysis_id and analysis_id in self.pending_analyses):
-                await ws_manager.send_personal_message(
+                await ws_manager.broadcast(
                     project_id,
                     {
                         "type": "agent_message",
@@ -857,7 +923,7 @@ class AgentService:
                     }
                 )
             else:
-                await ws_manager.send_personal_message(
+                await ws_manager.broadcast(
                     project_id,
                     {
                         "type": "agent_message",
@@ -905,7 +971,7 @@ class AgentService:
             
             # Send analysis started message
             if ws_manager:
-                await ws_manager.send_personal_message(
+                await ws_manager.broadcast(
                     project_id,
                     {
                         "type": "analysis_started",
