@@ -1,9 +1,10 @@
 import logging
 import json
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from app.models.project import Project, ProjectCreate, ProjectUpdate
+from app.models.analysis import ProjectAnalysis
 from app.db.init_db_simple import get_chroma_client
 
 logger = logging.getLogger(__name__)
@@ -67,6 +68,45 @@ class ProjectService:
         """
         result = await db.execute(select(Project).where(Project.id == project_id))
         return result.scalars().first()
+        
+    async def get_project_with_structured_insights(self, db: AsyncSession, project_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get a project by ID with insights deserialized into Pydantic models
+        
+        Args:
+            db: Database session
+            project_id: ID of the project to retrieve
+            
+        Returns:
+            Optional[Dict]: Project with structured insights if found, None otherwise
+        """
+        project = await self.get_project(db, project_id)
+        
+        if not project:
+            return None
+            
+        # Convert SQLAlchemy model to dict
+        project_dict = {
+            "id": project.id,
+            "name": project.name,
+            "description": project.description,
+            "status": project.status,
+            "created_at": project.created_at,
+            "updated_at": project.updated_at
+        }
+        
+        # If insights exist, deserialize them
+        if project.insights:
+            try:
+                # Parse insights into Pydantic model
+                structured_insights = self.deserialize_project_insights(project.insights)
+                project_dict["insights"] = structured_insights
+            except Exception as e:
+                logger.error(f"Error deserializing insights for project {project_id}: {str(e)}")
+                # Fall back to raw insights
+                project_dict["insights"] = project.insights
+                
+        return project_dict
     
     async def list_projects(self, db: AsyncSession) -> List[Project]:
         """
@@ -80,6 +120,45 @@ class ProjectService:
         """
         result = await db.execute(select(Project))
         return result.scalars().all()
+        
+    async def list_projects_with_structured_insights(self, db: AsyncSession) -> List[Dict[str, Any]]:
+        """
+        List all projects with insights deserialized into Pydantic models
+        
+        Args:
+            db: Database session
+            
+        Returns:
+            List[Dict]: List of projects with structured insights
+        """
+        projects = await self.list_projects(db)
+        structured_projects = []
+        
+        for project in projects:
+            # Convert SQLAlchemy model to dict
+            project_dict = {
+                "id": project.id,
+                "name": project.name,
+                "description": project.description,
+                "status": project.status,
+                "created_at": project.created_at,
+                "updated_at": project.updated_at
+            }
+            
+            # If insights exist, deserialize them
+            if project.insights:
+                try:
+                    # Parse insights into Pydantic model
+                    structured_insights = self.deserialize_project_insights(project.insights)
+                    project_dict["insights"] = structured_insights
+                except Exception as e:
+                    logger.error(f"Error deserializing insights for project {project.id}: {str(e)}")
+                    # Fall back to raw insights
+                    project_dict["insights"] = project.insights
+            
+            structured_projects.append(project_dict)
+                
+        return structured_projects
     
     async def update_project(self, db: AsyncSession, project_id: str, project_update: ProjectUpdate) -> Optional[Project]:
         """
@@ -175,6 +254,24 @@ class ProjectService:
             project_id, 
             ProjectUpdate(status="analyzing")
         )
+    
+    def deserialize_project_insights(self, insights_data: Dict[str, Any]) -> Union[ProjectAnalysis, Dict[str, Any]]:
+        """
+        Deserialize project insights from JSON to Pydantic model
+        
+        Args:
+            insights_data: Raw insights data from database
+            
+        Returns:
+            Union[ProjectAnalysis, Dict[str, Any]]: Structured insights as Pydantic model or raw dict if parsing fails
+        """
+        try:
+            # Try to parse as ProjectAnalysis
+            return ProjectAnalysis.parse_obj(insights_data)
+        except Exception as e:
+            logger.warning(f"Could not parse insights as ProjectAnalysis: {str(e)}")
+            # Return the raw dict if parsing fails
+            return insights_data
     
     async def store_project_insights(self, db: AsyncSession, project_id: str, insights: Dict[str, Any]) -> None:
         """

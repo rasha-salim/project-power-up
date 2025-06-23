@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import ReactMarkdown from 'react-markdown';
 import { PaperAirplaneIcon, XMarkIcon, CheckIcon, ArrowPathIcon, InformationCircleIcon } from '@heroicons/react/24/outline';
 
 interface Message {
@@ -73,6 +74,16 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
     console.log('isAgentThinking:', isAgentThinking); // Debug log
   }, [isAgentThinking]);
 
+  useEffect(() => {
+    console.log('Save button state:', {
+      analysisComplete,
+      analysisSaved,
+      currentAnalysisId,
+      isConnected,
+      showButton: analysisComplete && !analysisSaved
+    });
+  }, [analysisComplete, analysisSaved, currentAnalysisId, isConnected]);
+
   const connectWebSocket = () => {
     // If there's already a connection that's open or connecting, don't create a new one
     if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)) {
@@ -122,16 +133,19 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        console.log('Received message:', data);
+        console.log('WebSocket message received:', data.type, {
+          hasAnalysisId: !!data.analysis_id,
+          messageLength: data.message?.length || 0,
+          sender: data.sender,
+          fullData: data
+        });
         
         // Check if this message has already been processed
-        if (data.message_id && processedMessageIds.current.has(data.message_id)) {
-          console.log(`Skipping duplicate message with ID: ${data.message_id}`);
-          return;
-        }
-        
-        // Add to processed messages if it has an ID
         if (data.message_id) {
+          if (processedMessageIds.current.has(data.message_id)) {
+            console.log('Skipping duplicate message:', data.message_id);
+            return; // Skip duplicate message
+          }
           processedMessageIds.current.add(data.message_id);
           
           // Keep the set from growing too large
@@ -154,7 +168,9 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
             }
             
             // Filter out preliminary agent messages since we have typing indicator
+            // BUT don't filter if this is an analysis content message (has analysis_id)
             if (data.type === 'agent_message' && 
+                !data.analysis_id &&  // Only filter if NOT an analysis message
                 (data.message.includes('Let me analyze') || 
                  data.message.includes('thinking') ||
                  data.message.includes('Processing'))) {
@@ -164,46 +180,66 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
             
             // If this is an agent message, set isAgentThinking to false
             if (data.type === 'agent_message') {
-              // Don't reset thinking state for preliminary messages
-              // Only reset when we get a substantial response (more than 50 characters) or an error
-              const isPreliminaryMessage = data.message.includes('Let me analyze') || 
-                                           data.message.includes('thinking') ||
-                                           data.message.includes('Processing') ||
-                                           data.message.length < 50;
-              
-              if (!isPreliminaryMessage || data.message.includes('error') || data.message.includes('apologize')) {
+              // Don't turn off thinking indicator if this is a thinking message
+              if (!data.is_thinking) {
+                console.log('Setting isAgentThinking to false - got final response');
                 setIsAgentThinking(false);
-                console.log('Setting isAgentThinking to false - got final response'); // Debug log
-              } else {
-                console.log('Keeping isAgentThinking true for preliminary message'); // Debug log
               }
+              
+              setMessages(prev => [...prev, {
+                id: generateMessageId(),
+                type: 'agent',
+                sender: data.sender || 'agent',
+                senderName: data.sender_name || 'Agent',
+                message: data.message || '',
+                timestamp: new Date().toISOString(),
+                message_id: data.message_id
+              }]);
+            } else {
+              setMessages(prev => [...prev, {
+                id: generateMessageId(),
+                type: data.type === 'user_message' ? 'user' : 'system',
+                sender: data.sender,
+                senderName: data.sender_name,
+                message: data.message,
+                timestamp: new Date().toISOString(),
+                message_id: data.message_id
+              }]);
             }
-            
-            setMessages(prev => [...prev, {
-              id: generateMessageId(),
-              type: data.type === 'agent_message' ? 'agent' : (data.type === 'user_message' ? 'user' : 'system'),
-              sender: data.sender,
-              senderName: data.sender_name,
-              message: data.message,
-              timestamp: new Date().toISOString(),
-              message_id: data.message_id
-            }]);
             break;
 
           case 'analysis_started':
+            console.log('Received analysis_started message:', data);
             setCurrentAnalysisId(data.analysis_id);
             setIsAnalyzing(true);
             setAnalysisComplete(false);
             setAnalysisSaved(false);  // Reset saved state when new analysis starts
+            setIsAgentThinking(true);  // Show thinking indicator during analysis
+            
+            // Add a system message about the analysis starting
+            setMessages(prev => [...prev, {
+              id: generateMessageId(),
+              type: 'system',
+              sender: 'system',
+              message: data.message || 'Starting technical analysis...',
+              timestamp: new Date().toISOString()
+            }]);
             break;
 
           case 'analysis_complete':
+            console.log('Handling analysis_complete:', {
+              analysis_id: data.analysis_id,
+              currentAnalysisId: currentAnalysisId,
+              willSetAnalysisId: data.analysis_id && !currentAnalysisId
+            });
+            
             setIsAnalyzing(false);
             setAnalysisComplete(true);
             setIsAgentThinking(false); // Reset typing indicator
+            setAnalysisSaved(false); // Reset saved state for new analysis
             
-            // Set the analysis ID if we don't have one yet
-            if (data.analysis_id && !currentAnalysisId) {
+            // Always set the analysis ID from the complete message
+            if (data.analysis_id) {
               setCurrentAnalysisId(data.analysis_id);
             }
             
@@ -449,6 +485,13 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
     } else {
       // General chat
       console.log('Sending chat_message:', userMessage);
+      
+      // Reset analysis saved state in case this triggers a new analysis
+      if (userMessage.toLowerCase().includes('analysis') || userMessage.includes('@technical')) {
+        setAnalysisSaved(false);
+        setAnalysisComplete(false);
+      }
+      
       wsRef.current.send(JSON.stringify({
         type: 'chat_message',
         message: userMessage
@@ -720,7 +763,23 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
                 </div>
               )}
               <div className="whitespace-pre-wrap flex items-center gap-2">
-                {message.message}
+                {message.type === 'agent' ? (
+                  <ReactMarkdown 
+                    className="prose prose-sm max-w-none"
+                    components={{
+                      h2: ({node, ...props}) => <h2 className="text-lg font-bold mt-2 mb-1" {...props} />,
+                      h3: ({node, ...props}) => <h3 className="text-base font-semibold mt-1 mb-1" {...props} />,
+                      ul: ({node, ...props}) => <ul className="list-disc list-inside ml-2" {...props} />,
+                      li: ({node, ...props}) => <li className="mb-1" {...props} />,
+                      p: ({node, ...props}) => <p className="mb-2" {...props} />,
+                      strong: ({node, ...props}) => <strong className="font-semibold" {...props} />
+                    }}
+                  >
+                    {message.message}
+                  </ReactMarkdown>
+                ) : (
+                  message.message
+                )}
                 {message.isLoading && (
                   <span className="inline-block animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-blue-500"></span>
                 )}

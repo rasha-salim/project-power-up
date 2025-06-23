@@ -4,16 +4,19 @@ import re
 import uuid
 import asyncio
 import json
+from datetime import datetime
+from decimal import Decimal
 import traceback
 from typing import Dict, Any, Optional, List, Tuple
-from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from crewai import Agent, Task, Crew, Process
 from langchain_anthropic import ChatAnthropic
+from app.models.analysis import ProjectAnalysis, TechnicalAnalysis, RiskAssessment, ProjectPlan
+from app.models.analysis import TechStackCategory, Risk, ResourceRequirements, ProjectPhase, Milestone, EffortDistribution, RiskLevel
 from app.models.project import Project
 from app.services.project_service import ProjectService
-from app.tools.document_search import DocumentSearchTool
 from app.services.websocket_manager import WebSocketManager
+from app.tools.document_search import DocumentSearchTool
 from app.core.agent_registry import agent_registry
 from app.config.config_loader import ConfigLoader
 
@@ -27,6 +30,23 @@ class AgentService:
         self.config_loader = ConfigLoader()
         self.running_tasks = {}
         self.pending_analyses = {}
+    
+    def _safe_json_dumps(self, obj, **kwargs):
+        """
+        Safely serialize an object to JSON, handling datetime and other non-serializable types
+        """
+        def json_serial(obj):
+            """JSON serializer for objects not serializable by default json code"""
+            if isinstance(obj, datetime):
+                return obj.isoformat()
+            elif isinstance(obj, Decimal):
+                return float(obj)
+            elif hasattr(obj, '__dict__'):
+                return obj.__dict__
+            else:
+                return str(obj)
+        
+        return json.dumps(obj, default=json_serial, **kwargs)
     
     async def start_analysis(self, db: AsyncSession, project_id: str, ws_manager: Optional[WebSocketManager] = None, force: bool = False) -> str:
         """
@@ -74,6 +94,225 @@ class AgentService:
         task.add_done_callback(cleanup_task)
         
         return analysis_id
+    
+    async def _execute_analysis_with_context(
+        self, 
+        analysis_id: str, 
+        project_id: str, 
+        db: AsyncSession,
+        ws_manager: Optional[WebSocketManager] = None,
+        additional_context: str = ""
+    ):
+        """
+        Execute analysis with additional context provided by the user
+        
+        Args:
+            analysis_id: ID of the analysis
+            project_id: ID of the project
+            db: Database session
+            ws_manager: WebSocket manager for real-time updates
+            additional_context: Additional context from user message
+        """
+        try:
+            logger.info(f"Starting analysis {analysis_id} with context: {additional_context}")
+            
+            # Update status
+            if ws_manager:
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "analysis_status",
+                        "status": "loading_documents",
+                        "analysis_id": analysis_id,
+                        "message": "Loading project documents..."
+                    }
+                )
+            
+            # Import document processor
+            from app.services.document_processor import DocumentProcessor
+            document_processor = DocumentProcessor()
+            
+            # Get all documents for this project
+            documents = await document_processor.list_documents(db, project_id)
+            
+            # Check if any documents are still processing
+            processing_docs = [doc for doc in documents if doc.status == "processing"]
+            if processing_docs:
+                logger.warning(f"Cannot start analysis - {len(processing_docs)} documents still processing")
+                if ws_manager:
+                    await ws_manager.broadcast(
+                        project_id,
+                        {
+                            "type": "error",
+                            "analysis_id": analysis_id,
+                            "message": f"Cannot start analysis - {len(processing_docs)} documents still processing"
+                        }
+                    )
+                return
+            
+            # Set up Anthropic LLM
+            anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
+            anthropic_model = os.getenv("ANTHROPIC_MODEL", "claude-3-haiku-20240307")
+            
+            if not anthropic_api_key:
+                raise ValueError("ANTHROPIC_API_KEY not found")
+            
+            # Initialize LLM
+            llm = ChatAnthropic(
+                model_name=anthropic_model,
+                anthropic_api_key=anthropic_api_key,
+                temperature=0.3,
+                max_tokens=4000
+            )
+            
+            # Create document search tool
+            document_search_tool = DocumentSearchTool(project_id)
+            
+            # Load agent configuration
+            agent_config = self.config_loader.get_agent_config("technical_analyst")
+            if not agent_config:
+                raise ValueError("Technical analyst agent configuration not found")
+            
+            # Create the technical agent
+            technical_agent = Agent(
+                role=agent_config["role"],
+                goal=agent_config["goal"],
+                backstory=agent_config["backstory"],
+                verbose=True,
+                allow_delegation=False,
+                llm=llm,
+                tools=[document_search_tool]
+            )
+            
+            # Get document previews
+            document_previews = []
+            for doc in documents[:5]:  # Limit to first 5 documents
+                preview = f"- {doc.filename}: {doc.content[:200]}..." if doc.content else f"- {doc.filename}: [No content]"
+                document_previews.append(preview)
+            
+            # Build task description with additional context
+            task_description = f"""
+            Analyze the technical aspects of project {project_id}.
+            
+            Additional Context from User:
+            {additional_context}
+            
+            Please incorporate this context into your analysis and ensure your recommendations
+            and assessments take this information into account.
+            
+            Available documents:
+            {chr(10).join(document_previews)}
+            
+            Provide a comprehensive technical analysis including:
+            1. Architecture recommendations
+            2. Technology stack suggestions
+            3. Technical challenges and risks
+            4. Implementation timeline
+            5. Resource requirements
+            
+            Make sure to consider the user's additional context in all aspects of your analysis.
+            """
+            
+            # Create task
+            task = Task(
+                description=task_description,
+                expected_output=agent_config["expected_output"],
+                agent=technical_agent
+            )
+            
+            # Create crew
+            crew = Crew(
+                agents=[technical_agent],
+                tasks=[task],
+                verbose=True,
+                process=Process.sequential
+            )
+            
+            # Update status
+            if ws_manager:
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "analysis_status",
+                        "status": "analyzing",
+                        "analysis_id": analysis_id,
+                        "message": "Analyzing project with your additional context..."
+                    }
+                )
+            
+            # Execute the analysis
+            result = crew.kickoff()
+            
+            # Convert result to string
+            if hasattr(result, 'raw'):
+                crew_result = result.raw
+            else:
+                crew_result = str(result)
+            
+            logger.info(f"Analysis completed for {analysis_id}")
+            
+            # Update pending analysis with result
+            self.pending_analyses[analysis_id] = {
+                "project_id": project_id,
+                "status": "completed",
+                "result": {
+                    "technical_analysis": crew_result,
+                    "additional_context": additional_context,
+                    "analysis_id": analysis_id,
+                    "project_id": project_id,
+                    "version": 1,
+                    "created_at": datetime.utcnow().isoformat()
+                },
+                "crew": crew,
+                "technical_agent": technical_agent,
+                "document_search_tool": document_search_tool
+            }
+            
+            # Send completion message
+            if ws_manager:
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "analysis_complete",
+                        "analysis_id": analysis_id,
+                        "result": self.pending_analyses[analysis_id]["result"],
+                        "message": "Analysis complete!",
+                        "show_save_button": True
+                    }
+                )
+                
+                # Send agent message
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "agent_message",
+                        "sender": "technical",
+                        "sender_name": "Technical Analysis Agent",
+                        "message": f"I've completed the analysis incorporating your context: '{additional_context}'. The analysis now reflects these considerations. Feel free to ask questions or request further updates.",
+                        "analysis_id": analysis_id
+                    }
+                )
+            
+        except Exception as e:
+            logger.error(f"Error in analysis execution: {str(e)}")
+            logger.error(traceback.format_exc())
+            
+            # Update status
+            self.pending_analyses[analysis_id] = {
+                "project_id": project_id,
+                "status": "error",
+                "error": str(e)
+            }
+            
+            if ws_manager:
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "error",
+                        "analysis_id": analysis_id,
+                        "message": f"Analysis failed: {str(e)}"
+                    }
+                )
     
     async def get_analysis_status(self, db: AsyncSession, analysis_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -217,7 +456,7 @@ class AgentService:
                         "sender": "technical_agent",
                         "sender_name": "Technical Analysis Agent",
                         "message": "Let me analyze your question...",
-                        "analysis_id": analysis_id
+                        "is_thinking": True
                     }
                 )
             
@@ -317,7 +556,6 @@ class AgentService:
                         "sender": "technical_agent",
                         "sender_name": "Technical Analysis Agent",
                         "message": "I'm incorporating your feedback and regenerating the analysis...",
-                        "analysis_id": analysis_id,
                         "is_thinking": True
                     }
                 )
@@ -350,8 +588,8 @@ class AgentService:
                 role=agent_config["role"],
                 goal=agent_config["goal"],
                 backstory=agent_config["backstory"],
-                verbose=agent_config["verbose"],
-                allow_delegation=agent_config["allow_delegation"],
+                verbose=True,
+                allow_delegation=False,
                 llm=llm,
                 tools=[document_search_tool]
             )
@@ -371,35 +609,38 @@ class AgentService:
                 })
             
             # Create context for the agent including previous analysis and user feedback
-            context_str = f"Project ID: {project_id}\n\nDocuments:\n"
+            context_str = f"""
+            Project ID: {project_id}\n\nDocuments:\n"""
             for doc in document_content:
                 context_str += f"\n--- Document: {doc['filename']} ---\n"
                 context_str += f"Description: {doc['description']}\n\n"
                 context_str += f"Preview: {doc['content_preview']}\n"
             
             # Add user feedback to context
-            feedback_context = f"\n\nPrevious Analysis Summary:\n{previous_result.get('technical_analysis', 'No previous analysis')[:500]}\n\n"
+            feedback_context = f"\n\nPrevious Analysis Summary:\n{self._safe_json_dumps(previous_result.get('technical_analysis', 'No previous analysis'), indent=2)[:500]}\n\n"
             feedback_context += f"User Feedback: {user_feedback}\n\n"
             
             # Create task exactly like in start_analysis
             regeneration_task = Task(
                 description=f"""
-                Regenerate the technical analysis for project '{project.name}' incorporating this user feedback: 
-                {user_feedback}
+                Previous Analysis:
+                {self._safe_json_dumps(previous_result.get("result", {}), indent=2)}
                 
-                Use the document_search tool to find relevant information in the project documents.
+                User Feedback:
+                {feedback}
                 
-                Your analysis should include:
-                1. Architecture recommendations
-                2. Technology stack suggestions
-                3. Feasibility assessment
-                4. Implementation approach
+                Project Details:
+                - Name: {project.name}
+                - Description: {project.description}
                 
-                Project context:
-                {context_str}
-                {feedback_context}
+                Please regenerate the technical analysis incorporating the user's feedback.
+                You MUST maintain the exact same structure and format as the previous analysis.
+                Return your response as a detailed technical analysis in the same format as before.
+                
+                IMPORTANT: Your output MUST be in the exact same format as the original technical analysis.
+                Do not use a simplified format with just a summary field.
                 """,
-                expected_output="Updated technical analysis report with architecture recommendations and technology stack",
+                expected_output="Updated technical analysis incorporating user feedback",
                 agent=technical_agent
             )
             
@@ -407,8 +648,8 @@ class AgentService:
             crew = Crew(
                 agents=[technical_agent],
                 tasks=[regeneration_task],
-                verbose=True,
-                process=Process.sequential
+                process=Process.sequential,
+                verbose=True
             )
             
             logger.info("Successfully created regeneration task and crew")
@@ -440,8 +681,9 @@ class AgentService:
                 
                 logger.info(f"Successfully updated analysis {analysis_id} with new version {new_version}")
                 
-                # Send the updated analysis via WebSocket
+                # Send the updated analysis via WebSocket - using the same message type as the New Analysis flow
                 if ws_manager:
+                    # First, send the analysis_complete message with is_regeneration flag
                     await ws_manager.broadcast(
                         project_id,
                         {
@@ -449,22 +691,22 @@ class AgentService:
                             "analysis_id": analysis_id,
                             "result": analysis_result,
                             "version": new_version,
+                            "is_regeneration": True,
                             "message": f"Analysis regenerated successfully (version {new_version})"
                         }
                     )
-            
-            # Send completion notification
-            if ws_manager:
-                await ws_manager.broadcast(
-                    project_id,
-                    {
-                        "type": "agent_message",
-                        "sender": "technical_agent",
-                        "sender_name": "Technical Analysis Agent",
-                        "message": "I've updated the analysis based on your feedback. The changes have been incorporated into the recommendations. You can now save this updated version or provide additional feedback.",
-                        "analysis_id": analysis_id
-                    }
-                )
+                    
+                    # Send a follow-up message
+                    await ws_manager.broadcast(
+                        project_id,
+                        {
+                            "type": "agent_message",
+                            "sender": "technical",
+                            "sender_name": "Technical Analysis Agent",
+                            "message": "I've updated the analysis based on your feedback. The changes have been incorporated into the recommendations. You can now save this updated version or provide additional feedback.",
+                            "analysis_id": analysis_id
+                        }
+                    )
             
             return True
             
@@ -594,6 +836,8 @@ class AgentService:
                 verbose=True
             )
             
+            logger.info("Executing crew for chat")
+            
             # Send initial thinking message
             if ws_manager:
                 await ws_manager.broadcast(
@@ -639,6 +883,200 @@ class AgentService:
             
             return error_msg
     
+    async def answer_analysis_question(
+        self, 
+        db: AsyncSession, 
+        project_id: str,
+        analysis_id: str,
+        question: str,
+        ws_manager: Optional[WebSocketManager] = None
+    ) -> Dict[str, Any]:
+        """
+        Answer specific questions about the analysis using the technical agent
+        
+        Args:
+            db: Database session
+            project_id: ID of the project
+            analysis_id: ID of the analysis
+            question: User's question about the analysis
+            ws_manager: WebSocket manager for real-time updates
+            
+        Returns:
+            Dict with status and response
+        """
+        try:
+            logger.info(f"Answering question about analysis {analysis_id}: {question}")
+            
+            # Check if we have the analysis in memory
+            if analysis_id not in self.pending_analyses:
+                logger.error(f"Analysis {analysis_id} not found in pending analyses")
+                
+                # Try to load from database
+                structured_analysis = await self.load_structured_analysis(db, project_id)
+                if not structured_analysis:
+                    return {
+                        "status": "error",
+                        "message": "Analysis not found. Please run a new analysis first."
+                    }
+                
+                # Store in pending analyses for reference
+                self.pending_analyses[analysis_id] = {
+                    "project_id": project_id,
+                    "result": {
+                        "technical_analysis": structured_analysis.dict() if hasattr(structured_analysis, 'dict') else structured_analysis
+                    }
+                }
+            
+            pending = self.pending_analyses[analysis_id]
+            analysis_result = pending.get("result", {})
+            
+            # Send thinking message
+            if ws_manager:
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "agent_message",
+                        "sender": "technical",
+                        "sender_name": "Technical Analysis Agent",
+                        "message": "Let me analyze your question...",
+                        "is_thinking": True,
+                        "analysis_id": analysis_id
+                    }
+                )
+            
+            # Set up Anthropic LLM
+            anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
+            anthropic_model = os.getenv("ANTHROPIC_MODEL", "claude-3-haiku-20240307")
+            
+            if not anthropic_api_key:
+                raise ValueError("ANTHROPIC_API_KEY not found in environment variables")
+            
+            # Initialize LLM
+            llm = ChatAnthropic(
+                model_name=anthropic_model,
+                anthropic_api_key=anthropic_api_key,
+                temperature=0.2,
+                max_tokens=2000
+            )
+            
+            # Create document search tool
+            document_search_tool = DocumentSearchTool(project_id)
+            
+            # Load agent configuration
+            agent_config = self.config_loader.get_agent_config("technical_analyst")
+            if not agent_config:
+                raise ValueError("Technical analyst agent configuration not found")
+            
+            # Create the agent with question-answering focus
+            technical_agent = Agent(
+                role=agent_config["role"],
+                goal=f"Answer specific questions about the technical analysis for project {project_id}",
+                backstory=agent_config["backstory"],
+                verbose=True,
+                allow_delegation=False,
+                llm=llm,
+                tools=[document_search_tool]
+            )
+            
+            # Prepare context from the analysis
+            # Extract the actual analysis content
+            if isinstance(analysis_result, dict):
+                # If we have technical_analysis key, use that
+                if "technical_analysis" in analysis_result:
+                    analysis_content = analysis_result["technical_analysis"]
+                else:
+                    analysis_content = analysis_result
+            else:
+                analysis_content = str(analysis_result)
+            
+            # If analysis_content is still a complex object, try to extract meaningful data
+            if isinstance(analysis_content, dict):
+                # Look for common analysis fields
+                relevant_fields = ["architecture", "tech_stack", "risks", "recommendations", 
+                                 "timeline", "challenges", "complexity_score", "risk_assessment",
+                                 "project_plan", "technical_analysis"]
+                extracted_content = {}
+                for field in relevant_fields:
+                    if field in analysis_content:
+                        extracted_content[field] = analysis_content[field]
+                if extracted_content:
+                    analysis_content = extracted_content
+            
+            analysis_context = f"""
+            Based on the following technical analysis:
+            
+            {self._safe_json_dumps(analysis_content, indent=2) if isinstance(analysis_content, dict) else analysis_content}
+            
+            Please answer this specific question: {question}
+            
+            Provide a focused, detailed answer based on the analysis results and project documents.
+            If the question asks about technical challenges, focus on complexity, risks, and implementation difficulties.
+            If the question asks about recommendations, provide specific actionable advice.
+            """
+            
+            # Create task for answering the question
+            answer_task = Task(
+                description=analysis_context,
+                expected_output="A detailed, specific answer to the user's question based on the analysis",
+                agent=technical_agent
+            )
+            
+            # Create crew
+            crew = Crew(
+                agents=[technical_agent],
+                tasks=[answer_task],
+                verbose=True,
+                process=Process.sequential
+            )
+            
+            # Execute the task
+            result = crew.kickoff()
+            
+            # Convert result to string
+            if hasattr(result, 'raw'):
+                answer = result.raw
+            else:
+                answer = str(result)
+            
+            logger.info(f"Successfully answered question for analysis {analysis_id}")
+            
+            # Send the answer via WebSocket
+            if ws_manager:
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "agent_message",
+                        "sender": "technical",
+                        "sender_name": "Technical Analysis Agent",
+                        "message": answer,
+                        "analysis_id": analysis_id,
+                        "is_answer": True
+                    }
+                )
+            
+            return {
+                "status": "success",
+                "answer": answer
+            }
+            
+        except Exception as e:
+            logger.error(f"Error answering question: {str(e)}")
+            logger.error(traceback.format_exc())
+            
+            if ws_manager:
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "error",
+                        "message": f"Failed to answer question: {str(e)}"
+                    }
+                )
+            
+            return {
+                "status": "error",
+                "message": str(e)
+            }
+
     async def regenerate_analysis_with_feedback(self, db: AsyncSession, analysis_id: str, feedback: str, ws_manager: Optional[WebSocketManager] = None) -> Dict[str, Any]:
         """
         Regenerate analysis with user feedback
@@ -649,7 +1087,7 @@ class AgentService:
                 raise ValueError(f"Analysis {analysis_id} not found")
             
             previous_analysis = self.pending_analyses[analysis_id]
-            project_id = previous_analysis.get("project_id")
+            project_id = previous_analysis.get('project_id')
             
             # Get project details
             project_service = ProjectService()
@@ -687,7 +1125,7 @@ class AgentService:
             regeneration_task = Task(
                 description=f"""
                 Previous Analysis:
-                {json.dumps(previous_analysis.get("result", {}), indent=2)}
+                {self._safe_json_dumps(previous_analysis.get("result", {}), indent=2)}
                 
                 User Feedback:
                 {feedback}
@@ -715,18 +1153,7 @@ class AgentService:
                 verbose=True
             )
             
-            # Send status update
-            if ws_manager:
-                await ws_manager.broadcast(
-                    project_id,
-                    {
-                        "type": "agent_message",
-                        "sender": "technical",
-                        "sender_name": "Technical Analysis Agent",
-                        "message": f"Regenerating analysis with your feedback (version {version})...",
-                        "is_thinking": True
-                    }
-                )
+            logger.info("Successfully created regeneration task and crew")
             
             # Execute the crew
             result = crew.kickoff()
@@ -734,59 +1161,70 @@ class AgentService:
             # Parse the result
             try:
                 # Try to parse as JSON first
-                analysis_result = json.loads(str(result))
+                if isinstance(result, str):
+                    data = json.loads(result)
+                else:
+                    data = result
             except:
                 # If not JSON, try to extract structured content from the text
                 result_str = str(result)
                 
                 # Create a more structured response that matches the original format
-                analysis_result = {
+                data = {
                     "technical_analysis": result_str,
                     "version": version,
                     "feedback_incorporated": feedback,
                     "timestamp": datetime.utcnow().isoformat()
                 }
             
-            # Update pending analysis
-            self.pending_analyses[analysis_id] = {
-                "project_id": project_id,
-                "result": analysis_result,
-                "version": version,
-                "timestamp": datetime.utcnow().isoformat()
-            }
-            
-            logger.info(f"Successfully regenerated analysis {analysis_id} with user feedback")
-            
-            # Send the updated analysis via WebSocket - using the same message type as the New Analysis flow
-            if ws_manager:
-                # First, send the analysis_complete message with is_regeneration flag
-                await ws_manager.broadcast(
-                    project_id,
-                    {
-                        "type": "analysis_complete",
-                        "analysis_id": analysis_id,
-                        "result": analysis_result,
-                        "version": version,
-                        "is_regeneration": True,
-                        "message": f"Analysis regenerated successfully (version {version})",
-                        "show_save_button": True
-                    }
-                )
+            # Update the analysis result with the new version
+            if analysis_id in self.pending_analyses:
+                # Create a complete result structure
+                analysis_result = {
+                    "technical_analysis": str(result),
+                    "version": version,
+                    "feedback_incorporated": feedback,
+                    "timestamp": datetime.utcnow().isoformat()
+                }
                 
-                # Send a follow-up message
-                await ws_manager.broadcast(
-                    project_id,
-                    {
-                        "type": "agent_message",
-                        "sender": "technical",
-                        "sender_name": "Technical Analysis Agent",
-                        "message": "I've updated the analysis based on your feedback. The changes have been incorporated into the recommendations. You can now save this updated version or provide additional feedback.",
-                        "analysis_id": analysis_id,
-                        "show_save_button": True
-                    }
-                )
+                # Update the pending analysis with the complete result
+                self.pending_analyses[analysis_id] = {
+                    "project_id": project_id,
+                    "result": analysis_result,
+                    "version": version,
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+                
+                logger.info(f"Successfully updated analysis {analysis_id} with new version {version}")
+                
+                # Send the updated analysis via WebSocket - using the same message type as the New Analysis flow
+                if ws_manager:
+                    # First, send the analysis_complete message with is_regeneration flag
+                    await ws_manager.broadcast(
+                        project_id,
+                        {
+                            "type": "analysis_complete",
+                            "analysis_id": analysis_id,
+                            "result": analysis_result,
+                            "version": version,
+                            "is_regeneration": True,
+                            "message": f"Analysis regenerated successfully (version {version})"
+                        }
+                    )
+                    
+                    # Send a follow-up message
+                    await ws_manager.broadcast(
+                        project_id,
+                        {
+                            "type": "agent_message",
+                            "sender": "technical",
+                            "sender_name": "Technical Analysis Agent",
+                            "message": "I've updated the analysis based on your feedback. The changes have been incorporated into the recommendations. You can now save this updated version or provide additional feedback.",
+                            "analysis_id": analysis_id
+                        }
+                    )
             
-            return analysis_result
+            return data
             
         except Exception as e:
             logger.error(f"Error regenerating analysis: {str(e)}")
@@ -846,7 +1284,10 @@ class AgentService:
             r'(?i)knowing that',
             r'(?i)considering',
             r'(?i)taking into account',
-            r'(?i)technical.*aspects'
+            r'(?i)technical.*aspects',
+            r'(?i)run.*new.*analysis.*(?:knowing|considering|with)',
+            r'(?i)please.*run.*analysis',
+            r'(?i)new.*analysis.*(?:knowing|considering|with)'
         ]
         
         is_feedback_request = any(re.search(pattern, message.lower()) for pattern in feedback_patterns)
@@ -865,7 +1306,58 @@ class AgentService:
         logger.info(f"Is analysis request: {is_analysis_request}")
         logger.info(f"Checking routing: feedback={is_feedback_request}, analysis={is_analysis_request}, has_analysis_id={bool(analysis_id)}")
         
-        if is_feedback_request and analysis_id and analysis_id in self.pending_analyses:
+        # Check if this is a question about the existing analysis
+        question_patterns = [
+            r'(?i)what.*(?:are|is).*(?:challenge|risk|issue|problem|difficulty)',
+            r'(?i)(?:tell|explain|describe).*(?:about|regarding)',
+            r'(?i)(?:how|why|when|where|what).*\?',
+            r'(?i)(?:can you|could you|please).*(?:explain|tell|describe|clarify)',
+            r'(?i)what.*technical.*challenge',
+            r'(?i)what.*recommendation',
+            r'(?i)what.*architecture',
+            r'(?i)what.*tech.*stack',
+            r'(?i)what.*timeline',
+            r'(?i)what.*resource',
+            r'(?i)what.*risk'
+        ]
+        
+        is_question = any(re.search(pattern, message.lower()) for pattern in question_patterns)
+        has_technical_mention = 'technical' in mentions or '@technical' in message.lower()
+        
+        logger.info(f"Is question: {is_question}")
+        logger.info(f"Has technical mention: {has_technical_mention}")
+        logger.info(f"Checking routing: feedback={is_feedback_request}, analysis={is_analysis_request}, question={is_question}, has_analysis_id={bool(analysis_id)}")
+        
+        # Check if we have an existing analysis (in memory or database)
+        has_existing_analysis = False
+        if analysis_id and analysis_id in self.pending_analyses:
+            has_existing_analysis = True
+            logger.info(f"Found analysis {analysis_id} in pending_analyses")
+        elif not analysis_id or analysis_id not in self.pending_analyses:
+            # Try to load from database
+            structured_analysis = await self.load_structured_analysis(db, project_id)
+            if structured_analysis:
+                has_existing_analysis = True
+                logger.info(f"Found existing analysis in database for project {project_id}")
+                # Create a temporary analysis_id if we don't have one
+                if not analysis_id:
+                    analysis_id = str(uuid.uuid4())
+                # Store in pending analyses for reference
+                self.pending_analyses[analysis_id] = {
+                    "project_id": project_id,
+                    "result": {
+                        "technical_analysis": structured_analysis.dict() if hasattr(structured_analysis, 'dict') else structured_analysis
+                    }
+                }
+        
+        logger.info(f"Has existing analysis: {has_existing_analysis}")
+        
+        if is_question and (has_technical_mention or analysis_id) and has_existing_analysis:
+            # This is a specific question about the existing analysis
+            logger.info(f"Routing to answer_analysis_question for analysis {analysis_id}")
+            return await self.answer_analysis_question(db, project_id, analysis_id, message, ws_manager)
+        
+        elif is_feedback_request and analysis_id and analysis_id in self.pending_analyses:
             # Handle feedback request
             logger.info(f"Processing feedback request for analysis {analysis_id}")
             
@@ -947,7 +1439,7 @@ class AgentService:
                 r'(?i)start.*analysis',
                 r'(?i)perform.*analysis',
                 r'(?i)technical.*analysis',
-                r'(?i)please\s+update.*analysis',
+                r'(?i)please.*update.*analysis',
                 r'(?i)update.*analysis',
                 r'(?i)regenerate.*analysis',
                 r'(?i)modify.*analysis'
@@ -980,12 +1472,30 @@ class AgentService:
                     }
                 )
             
-            # Execute the analysis with context
-            asyncio.create_task(
-                self._execute_analysis_with_context(
-                    new_analysis_id, project_id, db, ws_manager, additional_context
+            try:
+                logger.info(f"Creating async task for analysis {new_analysis_id} with context: {additional_context[:100]}...")
+                task = asyncio.create_task(
+                    self._execute_analysis_with_context(
+                        new_analysis_id, project_id, db, ws_manager, additional_context
+                    )
                 )
-            )
+                # Store the task reference
+                if not hasattr(self, 'analysis_tasks'):
+                    self.analysis_tasks = {}
+                self.analysis_tasks[new_analysis_id] = task
+                logger.info(f"Successfully created async task for analysis {new_analysis_id}")
+            except Exception as e:
+                logger.error(f"Failed to create async task for analysis: {str(e)}")
+                logger.error(f"Traceback: {traceback.format_exc()}")
+                if ws_manager:
+                    await ws_manager.broadcast(
+                        project_id,
+                        {
+                            "type": "error",
+                            "message": f"Failed to start analysis: {str(e)}"
+                        }
+                    )
+                return {"status": "error", "message": str(e)}
             
             return {"status": "success", "analysis_id": new_analysis_id}
             
@@ -1016,7 +1526,7 @@ class AgentService:
             
             chat_agent = Agent(
                 role="Project Assistant",
-                goal="Help users understand their project, answer questions about documents, and provide guidance",
+                goal="Help users understand their project, answer questions about documents, provide guidance, and assist with project-related queries",
                 backstory="""You are a helpful project assistant with broad expertise. You can:
                 - Answer questions about the project and its documents
                 - Provide technical guidance and suggestions
@@ -1098,6 +1608,42 @@ class AgentService:
                 )
             raise
 
+    async def load_structured_analysis(self, db: AsyncSession, project_id: str) -> Optional[ProjectAnalysis]:
+        """
+        Load structured analysis from project insights
+        
+        Args:
+            db: Database session
+            project_id: ID of the project
+            
+        Returns:
+            Optional[ProjectAnalysis]: Structured analysis if available, None otherwise
+        """
+        try:
+            # Import ProjectService
+            from app.services.project_service import ProjectService
+            project_service = ProjectService()
+            
+            # Get project with structured insights
+            project_data = await project_service.get_project_with_structured_insights(db, project_id)
+            
+            if not project_data or "insights" not in project_data:
+                logger.info(f"No insights found for project {project_id}")
+                return None
+                
+            insights = project_data["insights"]
+            
+            # If insights is already a Pydantic model, return it
+            if isinstance(insights, ProjectAnalysis):
+                return insights
+                
+            # Otherwise, try to parse it
+            return project_service.deserialize_project_insights(insights)
+            
+        except Exception as e:
+            logger.error(f"Error loading structured analysis for project {project_id}: {str(e)}")
+            return None
+    
     async def confirm_and_save_analysis(self, db: AsyncSession, analysis_id: str, ws_manager: Optional[WebSocketManager] = None) -> bool:
         """
         Confirm and save the analysis to project insights
@@ -1110,17 +1656,22 @@ class AgentService:
         Returns:
             bool: True if saved successfully, False otherwise
         """
+        logger.info(f"Confirming and saving analysis {analysis_id}")
+        
         try:
-            # Check if we have the analysis in memory
+            # Check if analysis exists in pending analyses
             if analysis_id not in self.pending_analyses:
                 logger.error(f"Analysis {analysis_id} not found in pending analyses")
                 return False
             
-            pending = self.pending_analyses[analysis_id]
-            project_id = pending["project_id"]
-            analysis_result = pending["result"]
+            # Get the pending analysis
+            pending_analysis = self.pending_analyses[analysis_id]
+            project_id = pending_analysis.get('project_id')
+            raw_result = pending_analysis.get('result', {})
             
-            logger.info(f"Saving confirmed analysis {analysis_id} for project {project_id}")
+            if not project_id:
+                logger.error(f"Project ID not found for analysis {analysis_id}")
+                return False
             
             # Send status update
             if ws_manager:
@@ -1133,34 +1684,52 @@ class AgentService:
                     }
                 )
             
-            # Store the results in the database
+            # Extract the raw agent output
+            raw_output = raw_result.get('technical_analysis', '')
+            
+            # Parse the raw output into a structured Pydantic model
+            project_analysis = self._parse_agent_output_to_pydantic(raw_output, analysis_id, project_id)
+            
+            # Convert Pydantic model to JSON-serializable dict for database storage
+            # Use json serialization/deserialization to ensure all objects are serializable
+            analysis_json = project_analysis.json()
+            analysis_dict = json.loads(analysis_json)
+            
+            logger.info(f"Converted analysis to JSON-serializable dictionary")
+            
+            # Initialize ProjectService
             project_service = ProjectService()
-            await project_service.store_project_insights(db, project_id, analysis_result)
+            
+            # Store the insights in the database
+            await project_service.store_project_insights(db, project_id, analysis_dict)
             
             # Remove from pending analyses
             del self.pending_analyses[analysis_id]
             
-            logger.info(f"Successfully saved analysis {analysis_id} to project insights")
-            
-            # Send confirmation
+            # Send confirmation via WebSocket
             if ws_manager:
                 await ws_manager.broadcast(
                     project_id,
                     {
                         "type": "analysis_saved",
                         "analysis_id": analysis_id,
-                        "message": "Analysis has been saved to project insights!"
+                        "project_id": project_id,
+                        "message": "Analysis has been saved to project insights"
                     }
                 )
             
+            logger.info(f"Analysis {analysis_id} saved successfully for project {project_id}")
             return True
             
         except Exception as e:
-            logger.error(f"Error saving analysis {analysis_id}: {e}")
+            logger.error(f"Error saving analysis {analysis_id}: {str(e)}")
+            logger.error(traceback.format_exc())
             
-            if ws_manager and analysis_id in self.pending_analyses:
+            # Send error via WebSocket
+            if ws_manager and 'project_id' in self.pending_analyses.get(analysis_id, {}):
+                project_id = self.pending_analyses[analysis_id]['project_id']
                 await ws_manager.broadcast(
-                    self.pending_analyses[analysis_id]["project_id"],
+                    project_id,
                     {
                         "type": "error",
                         "analysis_id": analysis_id,
@@ -1446,6 +2015,10 @@ class AgentService:
             
             # Send the analysis results via WebSocket for user review
             if ws_manager:
+                logger.info(f"WebSocket manager available, preparing to send messages for analysis {analysis_id}")
+                logger.info(f"Active connections for project {project_id}: {len(ws_manager.active_connections.get(project_id, []))}")
+                
+                logger.info(f"Sending analysis_complete message for analysis {analysis_id}")
                 await ws_manager.broadcast(
                     project_id,
                     {
@@ -1455,11 +2028,64 @@ class AgentService:
                             "technical_analysis": crew_result,
                             "completed_at": str(datetime.now())
                         },
-                        "message": "Initial analysis complete. Please review and ask any follow-up questions."
+                        "message": "Initial analysis complete. Please review and ask any follow-up questions.",
+                        "message_id": str(uuid.uuid4())
                     }
                 )
+                logger.info(f"Successfully sent analysis_complete message")
+                
+                # Send the actual analysis content as an agent message
+                logger.info(f"Sending agent_message with analysis content for {analysis_id}")
+                logger.info(f"Analysis content length: {len(crew_result)} characters")
+                
+                # Try to parse the crew_result if it's a JSON string
+                try:
+                    parsed_result = json.loads(crew_result) if isinstance(crew_result, str) else crew_result
+                    # Format the analysis content for better readability
+                    if isinstance(parsed_result, dict) and 'technical_analysis' in parsed_result:
+                        analysis_data = parsed_result['technical_analysis']
+                        formatted_message = f"""## Technical Analysis Results
+
+**Architecture Recommendations:**
+{analysis_data.get('technical_analysis', {}).get('architecture', 'No architecture recommendations available.')}
+
+**Technology Stack:**
+- Frontend: {', '.join(analysis_data.get('technical_analysis', {}).get('tech_stack', {}).get('frontend', []))}
+- Backend: {', '.join(analysis_data.get('technical_analysis', {}).get('tech_stack', {}).get('backend', []))}
+- Infrastructure: {', '.join(analysis_data.get('technical_analysis', {}).get('tech_stack', {}).get('infrastructure', []))}
+
+**Risk Assessment:**
+- Overall Risk Score: {analysis_data.get('risk_assessment', {}).get('overall_risk_score', 'N/A')}/10
+- Key Risks: {', '.join(analysis_data.get('risk_assessment', {}).get('key_risks', [])[:3])}
+
+**Project Timeline:**
+{analysis_data.get('project_plan', {}).get('timeline', 'Timeline not specified')}
+
+**Key Recommendations:**
+{chr(10).join(['- ' + rec for rec in analysis_data.get('recommendations', [])[:5]])}
+"""
+                    else:
+                        # If it's not in the expected format, just send the raw result
+                        formatted_message = crew_result
+                except:
+                    # If parsing fails, just use the raw result
+                    formatted_message = crew_result
+                
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "agent_message",
+                        "sender": "technical_agent",
+                        "sender_name": "Technical Analysis Agent",
+                        "message": formatted_message,
+                        "analysis_id": analysis_id,
+                        "message_id": str(uuid.uuid4())
+                    }
+                )
+                logger.info(f"Successfully sent agent_message with analysis content")
                 
                 # Send a follow-up message prompting for questions
+                logger.info(f"Sending follow-up prompt message")
                 await ws_manager.broadcast(
                     project_id,
                     {
@@ -1467,9 +2093,13 @@ class AgentService:
                         "sender": "technical_agent",
                         "sender_name": "Technical Analysis Agent",
                         "message": "I've completed my initial analysis of your project. Feel free to ask any questions about the analysis, request clarifications, or ask for additional insights. When you're satisfied, you can confirm to save these insights.",
-                        "analysis_id": analysis_id
+                        "analysis_id": analysis_id,
+                        "message_id": str(uuid.uuid4())
                     }
                 )
+                logger.info(f"Successfully sent follow-up prompt message")
+            else:
+                logger.warning(f"No WebSocket manager available for analysis {analysis_id}")
             
             logger.info(f"Completed initial analysis {analysis_id} for project {project_id}")
             
@@ -1769,6 +2399,10 @@ class AgentService:
             
             # Send the analysis results via WebSocket for user review
             if ws_manager:
+                logger.info(f"WebSocket manager available, preparing to send messages for analysis {analysis_id}")
+                logger.info(f"Active connections for project {project_id}: {len(ws_manager.active_connections.get(project_id, []))}")
+                
+                logger.info(f"Sending analysis_complete message for analysis {analysis_id}")
                 await ws_manager.broadcast(
                     project_id,
                     {
@@ -1778,11 +2412,64 @@ class AgentService:
                             "technical_analysis": crew_result,
                             "completed_at": str(datetime.now())
                         },
-                        "message": "Initial analysis complete. Please review and ask any follow-up questions."
+                        "message": "Initial analysis complete. Please review and ask any follow-up questions.",
+                        "message_id": str(uuid.uuid4())
                     }
                 )
+                logger.info(f"Successfully sent analysis_complete message")
+                
+                # Send the actual analysis content as an agent message
+                logger.info(f"Sending agent_message with analysis content for {analysis_id}")
+                logger.info(f"Analysis content length: {len(crew_result)} characters")
+                
+                # Try to parse the crew_result if it's a JSON string
+                try:
+                    parsed_result = json.loads(crew_result) if isinstance(crew_result, str) else crew_result
+                    # Format the analysis content for better readability
+                    if isinstance(parsed_result, dict) and 'technical_analysis' in parsed_result:
+                        analysis_data = parsed_result['technical_analysis']
+                        formatted_message = f"""## Technical Analysis Results
+
+**Architecture Recommendations:**
+{analysis_data.get('technical_analysis', {}).get('architecture', 'No architecture recommendations available.')}
+
+**Technology Stack:**
+- Frontend: {', '.join(analysis_data.get('technical_analysis', {}).get('tech_stack', {}).get('frontend', []))}
+- Backend: {', '.join(analysis_data.get('technical_analysis', {}).get('tech_stack', {}).get('backend', []))}
+- Infrastructure: {', '.join(analysis_data.get('technical_analysis', {}).get('tech_stack', {}).get('infrastructure', []))}
+
+**Risk Assessment:**
+- Overall Risk Score: {analysis_data.get('risk_assessment', {}).get('overall_risk_score', 'N/A')}/10
+- Key Risks: {', '.join(analysis_data.get('risk_assessment', {}).get('key_risks', [])[:3])}
+
+**Project Timeline:**
+{analysis_data.get('project_plan', {}).get('timeline', 'Timeline not specified')}
+
+**Key Recommendations:**
+{chr(10).join(['- ' + rec for rec in analysis_data.get('recommendations', [])[:5]])}
+"""
+                    else:
+                        # If it's not in the expected format, just send the raw result
+                        formatted_message = crew_result
+                except:
+                    # If parsing fails, just use the raw result
+                    formatted_message = crew_result
+                
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "agent_message",
+                        "sender": "technical_agent",
+                        "sender_name": "Technical Analysis Agent",
+                        "message": formatted_message,
+                        "analysis_id": analysis_id,
+                        "message_id": str(uuid.uuid4())
+                    }
+                )
+                logger.info(f"Successfully sent agent_message with analysis content")
                 
                 # Send a follow-up message prompting for questions
+                logger.info(f"Sending follow-up prompt message")
                 await ws_manager.broadcast(
                     project_id,
                     {
@@ -1790,9 +2477,13 @@ class AgentService:
                         "sender": "technical_agent",
                         "sender_name": "Technical Analysis Agent",
                         "message": "I've completed my initial analysis of your project. Feel free to ask any questions about the analysis, request clarifications, or ask for additional insights. When you're satisfied, you can confirm to save these insights.",
-                        "analysis_id": analysis_id
+                        "analysis_id": analysis_id,
+                        "message_id": str(uuid.uuid4())
                     }
                 )
+                logger.info(f"Successfully sent follow-up prompt message")
+            else:
+                logger.warning(f"No WebSocket manager available for analysis {analysis_id}")
             
             logger.info(f"Completed initial analysis {analysis_id} for project {project_id}")
             
@@ -1813,6 +2504,229 @@ class AgentService:
             import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")
             # In a real implementation, this would update the analysis status to error
+    
+    def _parse_agent_output_to_pydantic(self, raw_output: str, analysis_id: str, project_id: str) -> ProjectAnalysis:
+        """
+        Parse raw agent output into structured Pydantic models
+        
+        Args:
+            raw_output: Raw output from the agent
+            analysis_id: ID of the analysis
+            project_id: ID of the project
+            
+        Returns:
+            ProjectAnalysis: Structured analysis data
+        """
+        logger.info(f"Parsing raw agent output for analysis {analysis_id}")
+        
+        try:
+            # Try to parse as JSON first
+            try:
+                if isinstance(raw_output, str):
+                    data = json.loads(raw_output)
+                else:
+                    data = raw_output
+            except json.JSONDecodeError:
+                # If not valid JSON, use regex to extract structured data
+                logger.warning(f"Agent output is not valid JSON, using fallback parsing")
+                data = self._extract_structured_data_from_text(raw_output)
+            
+            # Extract technical analysis data
+            tech_data = data.get('technical_analysis', {}) if isinstance(data, dict) else {}
+            
+            # Create TechStackCategory
+            tech_stack = TechStackCategory(
+                frontend=tech_data.get('tech_stack', {}).get('frontend', []),
+                backend=tech_data.get('tech_stack', {}).get('backend', []),
+                infrastructure=tech_data.get('tech_stack', {}).get('infrastructure', []),
+                tools=tech_data.get('tech_stack', {}).get('tools', [])
+            )
+            
+            # Create TechnicalAnalysis
+            technical_analysis = TechnicalAnalysis(
+                architecture=tech_data.get('architecture', 'Not specified'),
+                tech_stack=tech_stack,
+                complexity_score=tech_data.get('complexity_score', 5.0),
+                maintainability_score=tech_data.get('maintainability_score', 5.0),
+                scalability_score=tech_data.get('scalability_score', 5.0),
+                performance_score=tech_data.get('performance_score', 5.0),
+                security_score=tech_data.get('security_score', 5.0)
+            )
+            
+            # Extract risk assessment data
+            risk_data = data.get('risk_assessment', {}) if isinstance(data, dict) else {}
+            
+            # Create Risk objects
+            risks = []
+            for risk_item in risk_data.get('key_risks', []):
+                if isinstance(risk_item, dict):
+                    # Try to parse risk level
+                    try:
+                        risk_level = RiskLevel(risk_item.get('level', 'Medium'))
+                    except ValueError:
+                        risk_level = RiskLevel.MEDIUM
+                    
+                    risks.append(Risk(
+                        name=risk_item.get('name', 'Unknown Risk'),
+                        level=risk_level,
+                        impact=risk_item.get('impact', 5),
+                        probability=risk_item.get('probability', 5),
+                        description=risk_item.get('description')
+                    ))
+            
+            # Create RiskAssessment
+            risk_assessment = RiskAssessment(
+                key_risks=risks,
+                overall_risk_score=risk_data.get('overall_risk_score', 5.0),
+                mitigation_strategies=risk_data.get('mitigation_strategies', [])
+            )
+            
+            # Extract project plan data
+            plan_data = data.get('project_plan', {}) if isinstance(data, dict) else {}
+            
+            # Create ProjectPhase objects
+            phases = []
+            for phase_item in plan_data.get('phases', []):
+                if isinstance(phase_item, dict):
+                    phases.append(ProjectPhase(
+                        name=phase_item.get('name', 'Unnamed Phase'),
+                        duration=phase_item.get('duration', 4),
+                        progress=phase_item.get('progress', 0),
+                        description=phase_item.get('description')
+                    ))
+            
+            # Create Milestone objects
+            milestones = []
+            for milestone_item in plan_data.get('milestones', []):
+                if isinstance(milestone_item, dict):
+                    milestones.append(Milestone(
+                        name=milestone_item.get('name', 'Unnamed Milestone'),
+                        date=milestone_item.get('date', datetime.now().isoformat()),
+                        status=milestone_item.get('status', 'upcoming'),
+                        description=milestone_item.get('description')
+                    ))
+            
+            # Create ResourceRequirements
+            resource_data = plan_data.get('resource_requirements', {})
+            resources = ResourceRequirements(
+                developers=resource_data.get('developers', 0),
+                designers=resource_data.get('designers', 0),
+                qa=resource_data.get('qa', 0),
+                devops=resource_data.get('devops', 0),
+                pm=resource_data.get('pm', 0),
+                other=resource_data.get('other', {})
+            )
+            
+            # Create EffortDistribution objects
+            effort_distribution = []
+            for effort_item in plan_data.get('effort_distribution', []):
+                if isinstance(effort_item, dict):
+                    effort_distribution.append(EffortDistribution(
+                        component=effort_item.get('component', 'Unknown'),
+                        effort=effort_item.get('effort', 0)
+                    ))
+            
+            # Create ProjectPlan
+            project_plan = ProjectPlan(
+                timeline=plan_data.get('timeline', 'Not specified'),
+                phases=phases,
+                milestones=milestones,
+                resource_requirements=resources,
+                estimated_cost=plan_data.get('estimated_cost', 0.0),
+                effort_distribution=effort_distribution
+            )
+            
+            # Extract recommendations
+            recommendations = data.get('recommendations', []) if isinstance(data, dict) else []
+            
+            # Create the complete ProjectAnalysis
+            project_analysis = ProjectAnalysis(
+                analysis_id=analysis_id,
+                project_id=project_id,
+                version=1,
+                technical_analysis=technical_analysis,
+                risk_assessment=risk_assessment,
+                project_plan=project_plan,
+                recommendations=recommendations,
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow()
+            )
+            
+            logger.info(f"Successfully parsed agent output into Pydantic model for analysis {analysis_id}")
+            return project_analysis
+            
+        except Exception as e:
+            logger.error(f"Error parsing agent output: {str(e)}")
+            logger.error(traceback.format_exc())
+            raise
+    
+    def _extract_structured_data_from_text(self, text: str) -> Dict[str, Any]:
+        """
+        Extract structured data from unstructured text using regex patterns
+        This is a fallback method when JSON parsing fails
+        
+        Args:
+            text: Raw text from agent output
+            
+        Returns:
+            Dict[str, Any]: Structured data extracted from text
+        """
+        # Initialize the structure
+        data = {
+            'technical_analysis': {
+                'architecture': '',
+                'tech_stack': {
+                    'frontend': [],
+                    'backend': [],
+                    'infrastructure': [],
+                    'tools': []
+                },
+                'complexity_score': 5.0,
+                'maintainability_score': 5.0,
+                'scalability_score': 5.0,
+                'performance_score': 5.0,
+                'security_score': 5.0
+            },
+            'risk_assessment': {
+                'key_risks': [],
+                'overall_risk_score': 5.0,
+                'mitigation_strategies': []
+            },
+            'project_plan': {
+                'timeline': '',
+                'phases': [],
+                'milestones': [],
+                'resource_requirements': {},
+                'estimated_cost': 0.0,
+                'effort_distribution': []
+            },
+            'recommendations': []
+        }
+        
+        # Extract architecture
+        arch_match = re.search(r'Architecture[:\s]+(.*?)(?:\n|$)', text, re.IGNORECASE)
+        if arch_match:
+            data['technical_analysis']['architecture'] = arch_match.group(1).strip()
+        
+        # Extract tech stack
+        # Frontend
+        frontend_match = re.search(r'Frontend[:\s]+(.*?)(?:\n|$)', text, re.IGNORECASE)
+        if frontend_match:
+            frontend_techs = re.findall(r'\b([\w\+\#\.]+)\b', frontend_match.group(1))
+            data['technical_analysis']['tech_stack']['frontend'] = frontend_techs
+        
+        # Backend
+        backend_match = re.search(r'Backend[:\s]+(.*?)(?:\n|$)', text, re.IGNORECASE)
+        if backend_match:
+            backend_techs = re.findall(r'\b([\w\+\#\.]+)\b', backend_match.group(1))
+            data['technical_analysis']['tech_stack']['backend'] = backend_techs
+        
+        # Extract recommendations
+        recommendations = re.findall(r'(?:Recommendation|Recommend)[:\s]+(.*?)(?:\n|$)', text, re.IGNORECASE)
+        if recommendations:
+            data['recommendations'] = [rec.strip() for rec in recommendations]
+        
+        return data
     
     def parse_agent_mention(self, message: str) -> Tuple[Optional[str], str]:
         """
