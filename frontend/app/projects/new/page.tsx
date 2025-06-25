@@ -69,13 +69,11 @@ export default function NewProjectPage() {
         name: formData.name,
         description: formData.description,
         status: 'draft',
-        metadata: {
-          goal: formData.goal,
-          deadline: formData.deadline,
-          team_size: formData.teamSize,
-          industry: formData.industry,
-          budget: formData.budget
-        }
+        goal: formData.goal,
+        deadline: formData.deadline,
+        team_size: parseInt(formData.teamSize) || null,
+        industry: formData.industry,
+        budget: formData.budget
       };
 
       const projectResponse = await fetch('/api/v1/projects', {

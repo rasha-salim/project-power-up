@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Dict, Any, Optional
 import logging
 from app.db.init_db_simple import get_async_db
-from app.services.agent_service import AgentService
+from app.services.agent_service_v2 import AgentServiceV2
 from app.models.agent import AgentResponse, AgentTask
 from app.core.agent_registry import agent_registry, AgentInfo
 from pydantic import BaseModel
@@ -12,7 +12,7 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 # Initialize the agent service
-agent_service = AgentService()
+agent_service = AgentServiceV2()
 
 class AgentInfoResponse(BaseModel):
     """Response model for agent information"""
@@ -44,7 +44,7 @@ async def start_analysis(
         ws_manager = WebSocketManager()
         
         # Start analysis with WebSocket manager for real-time updates
-        analysis_id = await agent_service.start_analysis(db, project_id, ws_manager)
+        analysis_id = await agent_service.execute_analysis_with_context(project_id, db, ws_manager)
         
         return {
             "analysis_id": analysis_id,

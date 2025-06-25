@@ -47,6 +47,13 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
   const [showAgentSuggestions, setShowAgentSuggestions] = useState(false);
   const [agentSearchTerm, setAgentSearchTerm] = useState('');
   const [analysisSaved, setAnalysisSaved] = useState(false);  
+  const [analysisProgress, setAnalysisProgress] = useState<string>('');
+  const [analysisError, setAnalysisError] = useState<{
+    message: string;
+    type: string;
+    recoverable: boolean;
+    analysisId?: string;
+  } | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -66,8 +73,27 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
+  // Only auto-scroll when messages are added and user is already near the bottom
   useEffect(() => {
-    scrollToBottom();
+    // Check if user is already near the bottom before auto-scrolling
+    const shouldScrollToBottom = () => {
+      if (!messagesEndRef.current) return false;
+      
+      const container = messagesEndRef.current.parentElement;
+      if (!container) return false;
+      
+      // Calculate distance from bottom
+      const distanceFromBottom = 
+        container.scrollHeight - (container.scrollTop + container.clientHeight);
+      
+      // Only auto-scroll if user is already close to the bottom (within 100px)
+      // or if this is the first message
+      return distanceFromBottom < 100 || messages.length <= 1;
+    };
+
+    if (shouldScrollToBottom()) {
+      scrollToBottom();
+    }
   }, [messages]);
 
   useEffect(() => {
@@ -140,22 +166,11 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
           fullData: data
         });
         
-        // Check if this message has already been processed
-        if (data.message_id) {
-          if (processedMessageIds.current.has(data.message_id)) {
-            console.log('Skipping duplicate message:', data.message_id);
-            return; // Skip duplicate message
-          }
-          processedMessageIds.current.add(data.message_id);
-          
-          // Keep the set from growing too large
-          if (processedMessageIds.current.size > 100) {
-            // Convert to array, remove oldest entries, convert back to set
-            const idsArray = Array.from(processedMessageIds.current);
-            processedMessageIds.current = new Set(idsArray.slice(-50));
-          }
+        // Clear any previous errors when receiving new messages
+        if (data.type !== 'error' && data.type !== 'analysis_failed') {
+          setAnalysisError(null);
         }
-        
+
         switch (data.type) {
           case 'user_message':
           case 'agent_message':
@@ -224,6 +239,41 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
               message: data.message || 'Starting technical analysis...',
               timestamp: new Date().toISOString()
             }]);
+            break;
+
+          case 'analysis_status':
+            if (data.status === 'analyzing') {
+              setIsAgentThinking(true);
+              setAnalysisProgress(data.message || 'Analyzing...');
+            } else if (data.status === 'retrying') {
+              setAnalysisProgress(data.message || 'Retrying analysis...');
+            } else if (data.status === 'already_running') {
+              setCurrentAnalysisId(data.analysis_id);
+              setAnalysisProgress(data.message || 'Analysis in progress...');
+            }
+            break;
+
+          case 'analysis_failed':
+            console.log('Analysis failed:', data);
+            setIsAgentThinking(false);
+            setAnalysisProgress('');
+            setAnalysisError({
+              message: data.message || 'Analysis failed',
+              type: data.error_details?.error_type || 'unknown',
+              recoverable: data.error_details?.recoverable || false,
+              analysisId: data.analysis_id
+            });
+            
+            // Add system message about the failure
+            const errorMessage: Message = {
+              id: generateMessageId(),
+              type: 'system',
+              sender: 'system',
+              message: data.message || 'Analysis failed due to an error',
+              timestamp: new Date().toISOString(),
+              senderName: 'System'
+            };
+            setMessages(prev => [...prev, errorMessage]);
             break;
 
           case 'analysis_complete':
@@ -344,6 +394,12 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
               message_id: data.message_id
             }]);
             setIsAnalyzing(false);
+            setAnalysisError({
+              message: data.message || 'An error occurred',
+              type: 'general',
+              recoverable: data.error_details?.recoverable || false,
+              analysisId: data.error_details?.analysis_id
+            });
             break;
 
           case 'ping':
@@ -459,6 +515,17 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
     }));
   };
 
+  const cancelAnalysis = () => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN || !currentAnalysisId) {
+      return;
+    }
+
+    wsRef.current.send(JSON.stringify({
+      type: 'cancel_analysis',
+      analysis_id: currentAnalysisId
+    }));
+  };
+
   const confirmAndSaveAnalysis = async () => {
     if (!currentAnalysisId || !isConnected) {
       return;
@@ -496,26 +563,6 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
         timestamp: new Date().toISOString()
       }]);
     }
-  };
-
-  const cancelAnalysis = () => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN || !currentAnalysisId) {
-      return;
-    }
-
-    const message = {
-      type: 'cancel_analysis',
-      analysis_id: currentAnalysisId
-    };
-
-    wsRef.current.send(JSON.stringify(message));
-    
-    setMessages(prev => [...prev, {
-      id: generateMessageId(),
-      type: 'system',
-      message: 'Cancelling analysis...',
-      timestamp: new Date().toISOString()
-    }]);
   };
 
   const sendMessage = () => {
@@ -617,6 +664,19 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
     }
   }, []); // Empty dependency array to run only once on mount
 
+  const retryAnalysis = () => {
+    if (!analysisError?.analysisId) return;
+    
+    setAnalysisError(null);
+    setAnalysisProgress('Retrying analysis...');
+    
+    // Send retry message
+    wsRef.current?.send(JSON.stringify({
+      type: 'start_analysis',
+      force: true // Force retry even if previous analysis exists
+    }));
+  };
+
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
@@ -639,27 +699,6 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
               <InformationCircleIcon className="h-5 w-5" />
               Agents
             </button>
-            {!isAnalyzing && !analysisComplete && (
-              <>
-                <button
-                  onClick={() => startAnalysis(false)}
-                  disabled={!isConnected}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  Start Analysis
-                </button>
-              </>
-            )}
-            {isAnalyzing && (
-              <button
-                onClick={cancelAnalysis}
-                disabled={!isConnected || !currentAnalysisId}
-                className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-              >
-                <XMarkIcon className="h-5 w-5" />
-                Cancel Analysis
-              </button>
-            )}
             {analysisComplete && !analysisSaved && (
               <button
                 onClick={confirmAndSaveAnalysis}
@@ -670,13 +709,24 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
                 Save to Insights
               </button>
             )}
-            {analysisComplete && analysisSaved && (
+            {!isAnalyzing && !analysisComplete && (
               <button
-                onClick={() => startAnalysis(true)}
+                onClick={() => startAnalysis()}
                 disabled={!isConnected}
-                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
               >
-                New Analysis
+                <ArrowPathIcon className="h-5 w-5" />
+                Start Analysis
+              </button>
+            )}
+            {isAnalyzing && (
+              <button
+                onClick={cancelAnalysis}
+                disabled={!isConnected}
+                className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                <XMarkIcon className="h-5 w-5" />
+                Cancel Analysis
               </button>
             )}
           </div>
@@ -734,6 +784,62 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-6 space-y-4">
+        {/* Analysis Error Banner */}
+        {analysisError && (
+          <div className={`p-4 rounded-lg border-l-4 ${
+            analysisError.recoverable 
+              ? 'bg-yellow-50 border-yellow-400 text-yellow-800' 
+              : 'bg-red-50 border-red-400 text-red-800'
+          }`}>
+            <div className="flex items-start justify-between">
+              <div className="flex-1">
+                <h4 className="font-medium mb-1">
+                  {analysisError.recoverable ? '⚠️ Analysis Issue' : '❌ Analysis Failed'}
+                </h4>
+                <p className="text-sm mb-2">{analysisError.message}</p>
+                {analysisError.recoverable && (
+                  <p className="text-xs opacity-75 mb-3">
+                    This appears to be a temporary issue. You can try again.
+                  </p>
+                )}
+              </div>
+              <button
+                onClick={() => setAnalysisError(null)}
+                className="text-gray-400 hover:text-gray-600 ml-2"
+              >
+                ✕
+              </button>
+            </div>
+            
+            {analysisError.recoverable && (
+              <div className="flex gap-2">
+                <button
+                  onClick={retryAnalysis}
+                  className="px-3 py-1 bg-yellow-600 text-white text-sm rounded hover:bg-yellow-700 transition-colors"
+                >
+                  🔄 Retry Analysis
+                </button>
+                <button
+                  onClick={() => setAnalysisError(null)}
+                  className="px-3 py-1 bg-gray-500 text-white text-sm rounded hover:bg-gray-600 transition-colors"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Analysis Progress Indicator */}
+        {analysisProgress && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+            <div className="flex items-center gap-2">
+              <div className="animate-spin w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full"></div>
+              <span className="text-blue-700 text-sm">{analysisProgress}</span>
+            </div>
+          </div>
+        )}
+
         {messages.map((message) => (
           <div
             key={message.id}

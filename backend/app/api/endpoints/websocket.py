@@ -8,7 +8,7 @@ import traceback
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from app.core.config import settings
 from app.services.websocket_manager import WebSocketManager
-from app.services.agent_service import AgentService
+from app.services.agent_service_v2 import AgentServiceV2
 
 # Configure detailed logging
 logger = logging.getLogger(__name__)
@@ -25,8 +25,8 @@ router = APIRouter()
 # Create a single global instance of WebSocketManager
 ws_manager = WebSocketManager()
 
-# Create a single global instance of AgentService
-agent_service = AgentService()
+# Create a single global instance of AgentServiceV2
+agent_service = AgentServiceV2()
 
 # Dictionary to store active connections by project_id and client_id
 active_connections = {}
@@ -140,15 +140,19 @@ async def agent_conversation_websocket(
                             from app.db.init_db_simple import get_async_db
                             
                             # Get database session
-                            from app.db.init_db_simple import get_async_db
                             db = await anext(get_async_db().__aiter__())
                             
                             # Register the current connection if not already registered
                             if websocket not in ws_manager.active_connections.get(project_id, []):
                                 await ws_manager.connect(websocket, project_id)
                             
-                            # Start agent analysis
-                            analysis_id = await agent_service.start_analysis(db, project_id, ws_manager, force=force_analysis)
+                            # Start agent analysis - use the correct method name
+                            analysis_id = await agent_service.execute_analysis_with_context(
+                                project_id=project_id, 
+                                db=db, 
+                                ws_manager=ws_manager, 
+                                force=force_analysis
+                            )
                             
                             # Send confirmation to client
                             await websocket.send_text(json.dumps({
@@ -158,12 +162,12 @@ async def agent_conversation_websocket(
                             }))
                             
                         except Exception as e:
-                            logger.error(f"Error starting agent analysis: {str(e)}")
+                            logger.error(f"Error starting analysis: {str(e)}")
                             await websocket.send_text(json.dumps({
                                 "type": "error",
                                 "message": f"Failed to start analysis: {str(e)}"
                             }))
-                    
+                        
                     elif message_type == "cancel_analysis":
                         # Cancel agent analysis
                         analysis_id = data.get("analysis_id")

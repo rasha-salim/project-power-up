@@ -3,7 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
 import logging
-from app.core.config import settings
+import sys
+from app.core.config import settings, validation_success
 from app.api.routes import api_router
 from app.db.init_db_simple import init_db
 from app.db.connection_pool import initialize_pool, close_pool
@@ -23,19 +24,6 @@ app = FastAPI(
     description="Intelligent Project Planning System API",
     version="0.1.0",
 )
-
-# TEST: Direct WebSocket endpoint before middleware
-@app.websocket("/test-ws-direct")
-async def test_websocket_direct(websocket: WebSocket):
-    """Test WebSocket endpoint added directly to app"""
-    try:
-        await websocket.accept()
-        await websocket.send_text("Direct WebSocket Test - No Middleware")
-        data = await websocket.receive_text()
-        await websocket.send_text(f"Echo: {data}")
-        await websocket.close()
-    except Exception as e:
-        logger.error(f"Test WebSocket error: {e}")
 
 # Add CORS middleware with explicit WebSocket support
 app.add_middleware(
@@ -61,6 +49,11 @@ logger.info("=== End Routes ===")
 async def startup_event():
     """Initialize database connections and other startup tasks"""
     logger.info("Starting up application...")
+    
+    # Validate configuration
+    if not validation_success:
+        logger.error("Configuration validation failed")
+        sys.exit(1)
     
     # Initialize database tables and schema
     await init_db()

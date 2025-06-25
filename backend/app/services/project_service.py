@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from app.models.project import Project, ProjectCreate, ProjectUpdate
 from app.models.analysis import ProjectAnalysis
+from app.services.analysis_helper import AnalysisDataHelper
 from app.db.init_db_simple import get_chroma_client
 
 logger = logging.getLogger(__name__)
@@ -31,7 +32,12 @@ class ProjectService:
                 id=project_create.id,
                 name=project_create.name,
                 description=project_create.description,
-                status=project_create.status
+                status=project_create.status,
+                team_size=project_create.team_size,
+                deadline=project_create.deadline,
+                goal=project_create.goal,
+                industry=project_create.industry,
+                budget=project_create.budget
             )
             
             # Add to session and commit
@@ -91,6 +97,11 @@ class ProjectService:
             "name": project.name,
             "description": project.description,
             "status": project.status,
+            "team_size": project.team_size,
+            "deadline": project.deadline,
+            "goal": project.goal,
+            "industry": project.industry,
+            "budget": project.budget,
             "created_at": project.created_at,
             "updated_at": project.updated_at
         }
@@ -141,6 +152,11 @@ class ProjectService:
                 "name": project.name,
                 "description": project.description,
                 "status": project.status,
+                "team_size": project.team_size,
+                "deadline": project.deadline,
+                "goal": project.goal,
+                "industry": project.industry,
+                "budget": project.budget,
                 "created_at": project.created_at,
                 "updated_at": project.updated_at
             }
@@ -186,6 +202,21 @@ class ProjectService:
             
         if project_update.status is not None:
             project.status = project_update.status
+            
+        if project_update.team_size is not None:
+            project.team_size = project_update.team_size
+            
+        if project_update.deadline is not None:
+            project.deadline = project_update.deadline
+            
+        if project_update.goal is not None:
+            project.goal = project_update.goal
+            
+        if project_update.industry is not None:
+            project.industry = project_update.industry
+            
+        if project_update.budget is not None:
+            project.budget = project_update.budget
             
         if project_update.insights is not None:
             project.insights = project_update.insights

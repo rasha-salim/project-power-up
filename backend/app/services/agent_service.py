@@ -16,6 +16,7 @@ from app.models.analysis import TechStackCategory, Risk, ResourceRequirements, P
 from app.models.project import Project
 from app.services.project_service import ProjectService
 from app.services.websocket_manager import WebSocketManager
+from app.services.analysis_helper import AnalysisDataHelper
 from app.tools.document_search import DocumentSearchTool
 from app.core.agent_registry import agent_registry
 from app.config.config_loader import ConfigLoader
@@ -187,7 +188,7 @@ class AgentService:
             # Get document previews
             document_previews = []
             for doc in documents[:5]:  # Limit to first 5 documents
-                preview = f"- {doc.filename}: {doc.content[:200]}..." if doc.content else f"- {doc.filename}: [No content]"
+                preview = f"- {doc.filename}: {doc.content[:200]}..." if hasattr(doc, 'content') and doc.content else f"- {doc.filename}: [No content available]"
                 document_previews.append(preview)
             
             # Build task description with additional context
@@ -2062,10 +2063,18 @@ class AgentService:
                 # Try to parse the crew_result if it's a JSON string
                 try:
                     parsed_result = json.loads(crew_result) if isinstance(crew_result, str) else crew_result
-                    # Format the analysis content for better readability
-                    if isinstance(parsed_result, dict) and 'technical_analysis' in parsed_result:
-                        analysis_data = parsed_result['technical_analysis']
-                        formatted_message = f"""## Technical Analysis Results
+                    
+                    # Try to create a ProjectAnalysis object and use the helper for formatting
+                    try:
+                        project_analysis = self._parse_agent_output_to_pydantic(crew_result, analysis_id, project_id)
+                        formatted_message = AnalysisDataHelper.format_analysis_summary(project_analysis)
+                        logger.info("Successfully formatted analysis using AnalysisDataHelper")
+                    except Exception as parse_error:
+                        logger.warning(f"Could not parse to ProjectAnalysis, using fallback formatting: {parse_error}")
+                        # Fallback to original formatting if parsing fails
+                        if isinstance(parsed_result, dict) and 'technical_analysis' in parsed_result:
+                            analysis_data = parsed_result['technical_analysis']
+                            formatted_message = f"""## Technical Analysis Results
 
 **Architecture Recommendations:**
 {analysis_data.get('technical_analysis', {}).get('architecture', 'No architecture recommendations available.')}
@@ -2085,9 +2094,9 @@ class AgentService:
 **Key Recommendations:**
 {chr(10).join(['- ' + rec for rec in analysis_data.get('recommendations', [])[:5]])}
 """
-                    else:
-                        # If it's not in the expected format, just send the raw result
-                        formatted_message = crew_result
+                        else:
+                            # If it's not in the expected format, just send the raw result
+                            formatted_message = crew_result
                 except:
                     # If parsing fails, just use the raw result
                     formatted_message = crew_result
@@ -2446,10 +2455,18 @@ class AgentService:
                 # Try to parse the crew_result if it's a JSON string
                 try:
                     parsed_result = json.loads(crew_result) if isinstance(crew_result, str) else crew_result
-                    # Format the analysis content for better readability
-                    if isinstance(parsed_result, dict) and 'technical_analysis' in parsed_result:
-                        analysis_data = parsed_result['technical_analysis']
-                        formatted_message = f"""## Technical Analysis Results
+                    
+                    # Try to create a ProjectAnalysis object and use the helper for formatting
+                    try:
+                        project_analysis = self._parse_agent_output_to_pydantic(crew_result, analysis_id, project_id)
+                        formatted_message = AnalysisDataHelper.format_analysis_summary(project_analysis)
+                        logger.info("Successfully formatted analysis using AnalysisDataHelper")
+                    except Exception as parse_error:
+                        logger.warning(f"Could not parse to ProjectAnalysis, using fallback formatting: {parse_error}")
+                        # Fallback to original formatting if parsing fails
+                        if isinstance(parsed_result, dict) and 'technical_analysis' in parsed_result:
+                            analysis_data = parsed_result['technical_analysis']
+                            formatted_message = f"""## Technical Analysis Results
 
 **Architecture Recommendations:**
 {analysis_data.get('technical_analysis', {}).get('architecture', 'No architecture recommendations available.')}
@@ -2469,9 +2486,9 @@ class AgentService:
 **Key Recommendations:**
 {chr(10).join(['- ' + rec for rec in analysis_data.get('recommendations', [])[:5]])}
 """
-                    else:
-                        # If it's not in the expected format, just send the raw result
-                        formatted_message = crew_result
+                        else:
+                            # If it's not in the expected format, just send the raw result
+                            formatted_message = crew_result
                 except:
                     # If parsing fails, just use the raw result
                     formatted_message = crew_result

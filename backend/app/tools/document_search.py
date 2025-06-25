@@ -50,13 +50,19 @@ class DocumentSearchTool(BaseTool):
         
         load_dotenv()
         
-        # Get database connection string from environment
-        database_url = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/power_up")
-        # Convert from async to sync format if needed
+        # Use unified database configuration from settings
+        from app.core.config import settings
+        database_url = settings.DATABASE_URI
+        
+        # Convert from async to sync format if needed for PostgreSQL
         if database_url.startswith("postgresql+asyncpg"):
             database_url = database_url.replace("postgresql+asyncpg", "postgresql")
+        elif database_url.startswith("postgresql://") and settings.is_postgresql:
+            # Already in sync format, keep as is
+            pass
         
         logger.info(f"Fetching documents synchronously from database for project {self.project_id}")
+        logger.info(f"Using database: {database_url}")
         
         # Set up retry parameters
         max_retries = 3

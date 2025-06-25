@@ -3,12 +3,18 @@ Script to initialize the database and create tables
 """
 import asyncio
 import logging
+import sys
 import os
 from sqlalchemy import create_engine, Column, String, Text, DateTime, JSON, MetaData
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.schema import CreateTable
 from datetime import datetime
 import uuid
+
+# Add the parent directory to the path so we can import the app modules
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+
+from app.core.config import settings
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -30,15 +36,8 @@ class Project(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-# Database connection settings
-POSTGRES_USER = "postgres"
-POSTGRES_PASSWORD = "postgres"
-POSTGRES_SERVER = "localhost"
-POSTGRES_PORT = "5432"
-POSTGRES_DB = "project_planning"
-
-# Construct the database URL
-DATABASE_URL = f"postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_SERVER}:{POSTGRES_PORT}/{POSTGRES_DB}"
+# Use the same database configuration as the main application
+DATABASE_URL = str(settings.DATABASE_URI)
 
 def create_tables():
     """Create all database tables"""

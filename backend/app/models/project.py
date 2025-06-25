@@ -1,8 +1,8 @@
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, date
 import uuid
-from sqlalchemy import Column, String, Text, DateTime, JSON
+from sqlalchemy import Column, String, Text, DateTime, JSON, Integer, Date
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID
 
@@ -17,6 +17,11 @@ class Project(Base):
     name = Column(String, nullable=False)
     description = Column(Text, nullable=True)
     status = Column(String, nullable=False, default="draft")  # draft, analyzing, completed
+    team_size = Column(Integer, nullable=True)
+    deadline = Column(Date, nullable=True)
+    goal = Column(Text, nullable=True)
+    industry = Column(String, nullable=True)
+    budget = Column(String, nullable=True)
     insights = Column(JSON, nullable=True)  # Stores analysis results
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -26,6 +31,11 @@ class ProjectBase(BaseModel):
     """Base Pydantic model for Project"""
     name: str
     description: Optional[str] = None
+    team_size: Optional[int] = None
+    deadline: Optional[date] = None
+    goal: Optional[str] = None
+    industry: Optional[str] = None
+    budget: Optional[str] = None
 
 
 class ProjectCreate(ProjectBase):
@@ -39,6 +49,11 @@ class ProjectUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     status: Optional[str] = None
+    team_size: Optional[int] = None
+    deadline: Optional[date] = None
+    goal: Optional[str] = None
+    industry: Optional[str] = None
+    budget: Optional[str] = None
     insights: Optional[Dict[str, Any]] = None
 
 
@@ -48,6 +63,11 @@ class ProjectResponse(BaseModel):
     name: str
     description: Optional[str] = None
     status: str
+    team_size: Optional[int] = None
+    deadline: Optional[date] = None
+    goal: Optional[str] = None
+    industry: Optional[str] = None
+    budget: Optional[str] = None
     insights: Optional[Dict[str, Any]] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
