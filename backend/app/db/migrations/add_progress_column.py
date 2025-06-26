@@ -11,8 +11,8 @@ async def run_migration():
     """Add progress column to documents table"""
     logger.info("Running migration: Adding progress column to documents table")
     
-    # Get connection pool
-    pg_pool = get_pool()
+    # Get connection pool - properly await the async function
+    pg_pool = await get_pool()
     if not pg_pool:
         logger.error("Database connection pool not available")
         return False
