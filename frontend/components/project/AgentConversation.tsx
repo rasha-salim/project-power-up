@@ -163,6 +163,7 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
           hasAnalysisId: !!data.analysis_id,
           messageLength: data.message?.length || 0,
           sender: data.sender,
+          hasResult: !!data.result,
           fullData: data
         });
         
@@ -188,9 +189,20 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
                 !data.analysis_id &&  // Only filter if NOT an analysis message
                 (data.message.includes('Let me analyze') || 
                  data.message.includes('thinking') ||
-                 data.message.includes('Processing'))) {
-              console.log('Filtering out preliminary message:', data.message);
+                 data.message.includes('Processing') ||
+                 data.message.includes('Starting analysis') ||
+                 data.message.includes('Analyzing your project'))) {
+              console.log('Filtering out preliminary message:', data.message.substring(0, 100));
               return; // Skip these messages
+            }
+            
+            // Log analysis messages to debug
+            if (data.type === 'agent_message' && data.analysis_id) {
+              console.log('Received analysis content message:', {
+                analysis_id: data.analysis_id,
+                message_length: data.message?.length,
+                sender: data.sender
+              });
             }
             
             // If this is an agent message, set isAgentThinking to false
@@ -280,7 +292,10 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
             console.log('Handling analysis_complete:', {
               analysis_id: data.analysis_id,
               currentAnalysisId: currentAnalysisId,
-              willSetAnalysisId: data.analysis_id && !currentAnalysisId
+              willSetAnalysisId: data.analysis_id && !currentAnalysisId,
+              hasResult: !!data.result,
+              resultKeys: data.result ? Object.keys(data.result) : [],
+              resultData: data.result
             });
             
             setIsAnalyzing(false);
@@ -296,14 +311,19 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
             // Check if this is a regenerated analysis
             const isRegenerated = data.result?.version && data.result.version > 1;
             
+            // If we have result data, show it; otherwise show a waiting message
+            const messageText = data.result && Object.keys(data.result).length > 0
+              ? (isRegenerated 
+                  ? `Analysis has been updated based on your feedback (Version ${data.result?.version || 1})`
+                  : 'Analysis completed successfully!')
+              : 'Analysis completed! Waiting for detailed results...';
+            
             setMessages(prev => [...prev, {
               id: generateMessageId(),
               type: 'result',
               sender: data.sender || 'technical_agent',
               senderName: data.sender_name || 'Technical Analysis Agent',
-              message: isRegenerated 
-                ? `Analysis has been updated based on your feedback (Version ${data.result?.version || 1})`
-                : 'Analysis completed successfully!',
+              message: messageText,
               timestamp: new Date().toISOString(),
               result: data.result,
               message_id: data.message_id
@@ -313,8 +333,13 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
             if (onAnalysisComplete && data.result) {
               onAnalysisComplete(data.result);
             }
-            break;
             
+            // Log if we're missing result data
+            if (!data.result || Object.keys(data.result).length === 0) {
+              console.warn('Analysis complete but no result data received. Expecting follow-up agent_message.');
+            }
+            break;
+
           case 'analysis_result':
             console.log('Handling analysis_result message');
             setIsAnalyzing(false);
@@ -870,7 +895,11 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
                     components={{
                       h2: ({node, ...props}) => <h2 className="text-lg font-bold mt-2 mb-1" {...props} />,
                       h3: ({node, ...props}) => <h3 className="text-base font-semibold mt-1 mb-1" {...props} />,
-                      ul: ({node, ...props}) => <ul className="list-disc list-inside ml-2" {...props} />,
+                      ul: ({node, ordered, ...props}) => 
+                        ordered ? 
+                          <ol className="list-decimal list-inside ml-2" {...props} /> : 
+                          <ul className="list-disc list-inside ml-2" {...props} />,
+                      ol: ({node, ...props}) => <ol className="list-decimal list-inside ml-2" {...props} />,
                       li: ({node, ...props}) => <li className="mb-1" {...props} />,
                       p: ({node, ...props}) => <p className="mb-2" {...props} />,
                       strong: ({node, ...props}) => <strong className="font-semibold" {...props} />
@@ -888,11 +917,17 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
               {message.result && (
                 <div className="mt-2 pt-2 border-t border-gray-300">
                   <div className="text-sm font-semibold mb-1">Analysis Results:</div>
-                  <pre className="text-xs overflow-x-auto bg-white bg-opacity-50 p-2 rounded">
-                    {typeof message.result.technical_analysis === 'string' 
-                      ? message.result.technical_analysis 
-                      : JSON.stringify(message.result, null, 2)}
-                  </pre>
+                  <div className="text-xs overflow-x-auto bg-white bg-opacity-50 p-2 rounded">
+                    {typeof message.result.technical_analysis === 'string' ? (
+                      <ReactMarkdown className="prose prose-xs max-w-none">
+                        {message.result.technical_analysis}
+                      </ReactMarkdown>
+                    ) : message.result.technical_analysis ? (
+                      <pre>{JSON.stringify(message.result.technical_analysis, null, 2)}</pre>
+                    ) : (
+                      <pre>{JSON.stringify(message.result, null, 2)}</pre>
+                    )}
+                  </div>
                 </div>
               )}
               <div className="text-xs opacity-75 mt-1">

@@ -11,10 +11,9 @@ interface ProjectHeaderProps {
     created_at: string;
     updated_at: string;
   };
-  onStartAnalysis: () => void;
 }
 
-export default function ProjectHeader({ project, onStartAnalysis }: ProjectHeaderProps) {
+export default function ProjectHeader({ project }: ProjectHeaderProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [name, setName] = useState(project.name);
   const [description, setDescription] = useState(project.description);
@@ -106,20 +105,11 @@ export default function ProjectHeader({ project, onStartAnalysis }: ProjectHeade
               <>
                 <button 
                   onClick={() => setIsEditing(true)}
-                  className="btn btn-outline"
+                  className="btn btn-secondary"
                 >
                   <PencilIcon className="w-4 h-4 mr-1" />
                   Edit
                 </button>
-                {project.status === 'draft' && (
-                  <button 
-                    onClick={onStartAnalysis}
-                    className="btn btn-primary"
-                  >
-                    <PlayIcon className="w-4 h-4 mr-1" />
-                    Start Analysis
-                  </button>
-                )}
               </>
             )}
           </div>

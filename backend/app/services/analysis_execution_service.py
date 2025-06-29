@@ -177,14 +177,52 @@ class AnalysisExecutionService:
                     if existing_analysis:
                         logger.info(f"Found existing analysis for project {project_id}")
                         if ws_manager:
+                            # Include the actual analysis data in the completion message
                             await ws_manager.broadcast(
                                 project_id,
                                 {
                                     "type": "analysis_complete",
                                     "analysis_id": analysis_id,
-                                    "message": "Using existing analysis results"
+                                    "result": {
+                                        "technical_analysis": existing_analysis.technical_analysis,
+                                        "completed_at": str(existing_analysis.created_at)
+                                    },
+                                    "message": "Using existing analysis results",
+                                    "message_id": str(uuid.uuid4())
                                 }
                             )
+                            
+                            # Also send the formatted analysis content as an agent message
+                            try:
+                                from app.services.analysis_helper import AnalysisDataHelper
+                                formatted_message = AnalysisDataHelper.format_analysis_summary(existing_analysis)
+                                
+                                await ws_manager.broadcast(
+                                    project_id,
+                                    {
+                                        "type": "agent_message",
+                                        "sender": "technical_agent",
+                                        "sender_name": "Technical Analysis Agent",
+                                        "message": formatted_message,
+                                        "analysis_id": analysis_id,
+                                        "message_id": str(uuid.uuid4())
+                                    }
+                                )
+                                logger.info(f"Successfully sent existing analysis content as agent_message")
+                            except Exception as e:
+                                logger.error(f"Failed to format existing analysis: {e}")
+                                # Send raw analysis as fallback
+                                await ws_manager.broadcast(
+                                    project_id,
+                                    {
+                                        "type": "agent_message",
+                                        "sender": "technical_agent", 
+                                        "sender_name": "Technical Analysis Agent",
+                                        "message": str(existing_analysis.technical_analysis),
+                                        "analysis_id": analysis_id,
+                                        "message_id": str(uuid.uuid4())
+                                    }
+                                )
                         return {"status": "existing", "analysis": existing_analysis}
                 
                 # Create technical analysis agent with error handling
@@ -232,18 +270,6 @@ class AnalysisExecutionService:
                     process=Process.sequential
                 )
                 
-                # Update status
-                if ws_manager:
-                    await ws_manager.broadcast(
-                        project_id,
-                        {
-                            "type": "analysis_status",
-                            "status": "analyzing",
-                            "analysis_id": analysis_id,
-                            "message": "🤖 AI agents are analyzing your project..."
-                        }
-                    )
-                
                 # Execute the crew with timeout
                 logger.info("Executing crew for technical analysis")
                 try:
@@ -260,17 +286,101 @@ class AnalysisExecutionService:
                     str(crew_result), analysis_id, project_id
                 )
                 
-                # Send completion message
+                # Debug logging before broadcasts
+                logger.info(f"About to broadcast analysis completion for project_id: {project_id} (type: {type(project_id)})")
+                logger.info(f"WebSocket manager exists: {ws_manager is not None}")
+                logger.info(f"Analysis ID: {analysis_id}")
+                logger.info(f"Structured analysis created: {structured_analysis is not None}")
+                
+                # Prepare structured data safely
+                structured_data = None
+                if structured_analysis:
+                    try:
+                        structured_data = structured_analysis.dict()
+                        # Convert datetime objects to strings for JSON serialization
+                        if 'created_at' in structured_data:
+                            structured_data['created_at'] = str(structured_data['created_at'])
+                        if 'updated_at' in structured_data:
+                            structured_data['updated_at'] = str(structured_data['updated_at'])
+                        logger.info(f"Structured analysis serialized successfully, keys: {list(structured_data.keys())}")
+                    except Exception as e:
+                        logger.error(f"Failed to serialize structured_analysis: {e}")
+                        structured_data = None
+                
+                # Send completion message with actual analysis data
                 if ws_manager:
-                    await ws_manager.broadcast(
-                        project_id,
-                        {
+                    try:
+                        completion_message = {
                             "type": "analysis_complete",
                             "analysis_id": analysis_id,
+                            "result": {
+                                "technical_analysis": str(crew_result),
+                                "structured_analysis": structured_data,
+                                "completed_at": str(datetime.now())
+                            },
                             "message": "✅ Technical analysis completed successfully!",
                             "attempts": attempt
                         }
-                    )
+                        
+                        logger.info(f"Broadcasting analysis_complete message: {completion_message['type']}")
+                        await ws_manager.broadcast(project_id, completion_message)
+                        logger.info(f"Successfully broadcasted analysis_complete message")
+                        
+                    except Exception as e:
+                        logger.error(f"Failed to broadcast analysis_complete message: {e}")
+                        logger.error(f"Error type: {type(e).__name__}")
+                        import traceback
+                        logger.error(f"Full traceback: {traceback.format_exc()}")
+                    
+                    # Also send the formatted analysis content as an agent message
+                    try:
+                        from app.services.analysis_helper import AnalysisDataHelper
+                        
+                        if structured_analysis:
+                            formatted_message = AnalysisDataHelper.format_analysis_summary(structured_analysis)
+                            logger.info(f"Analysis formatted successfully, length: {len(formatted_message)}")
+                        else:
+                            formatted_message = str(crew_result)
+                            logger.info(f"Using raw analysis as fallback, length: {len(formatted_message)}")
+                        
+                        agent_message = {
+                            "type": "agent_message",
+                            "sender": "technical_agent",
+                            "sender_name": "Technical Analysis Agent",
+                            "message": formatted_message,
+                            "analysis_id": analysis_id,
+                            "message_id": str(uuid.uuid4())
+                        }
+                        
+                        logger.info(f"Broadcasting agent_message with analysis content")
+                        await ws_manager.broadcast(project_id, agent_message)
+                        logger.info(f"Successfully broadcasted agent_message with analysis content")
+                        
+                    except Exception as e:
+                        logger.error(f"Failed to format or broadcast analysis content: {e}")
+                        logger.error(f"Error type: {type(e).__name__}")
+                        import traceback
+                        logger.error(f"Full traceback: {traceback.format_exc()}")
+                        
+                        # Send raw analysis as fallback
+                        try:
+                            fallback_message = {
+                                "type": "agent_message",
+                                "sender": "technical_agent", 
+                                "sender_name": "Technical Analysis Agent",
+                                "message": str(crew_result),
+                                "analysis_id": analysis_id,
+                                "message_id": str(uuid.uuid4())
+                            }
+                            
+                            logger.info(f"Broadcasting fallback agent_message with raw analysis")
+                            await ws_manager.broadcast(project_id, fallback_message)
+                            logger.info(f"Successfully broadcasted fallback agent_message")
+                            
+                        except Exception as fallback_error:
+                            logger.error(f"Failed to broadcast fallback message: {fallback_error}")
+                else:
+                    logger.error(f"WebSocket manager is None - cannot broadcast messages!")
                 
                 logger.info(f"Analysis {analysis_id} completed successfully on attempt {attempt}")
                 return {
@@ -478,17 +588,101 @@ class AnalysisExecutionService:
                 str(crew_result), analysis_id, project_id
             )
             
-            # Send completion
+            # Debug logging before broadcasts
+            logger.info(f"About to broadcast regeneration completion for project_id: {project_id} (type: {type(project_id)})")
+            logger.info(f"WebSocket manager exists: {ws_manager is not None}")
+            logger.info(f"Analysis ID: {analysis_id}")
+            logger.info(f"Structured analysis created: {structured_analysis is not None}")
+            
+            # Prepare structured data safely
+            structured_data = None
+            if structured_analysis:
+                try:
+                    structured_data = structured_analysis.dict()
+                    # Convert datetime objects to strings for JSON serialization
+                    if 'created_at' in structured_data:
+                        structured_data['created_at'] = str(structured_data['created_at'])
+                    if 'updated_at' in structured_data:
+                        structured_data['updated_at'] = str(structured_data['updated_at'])
+                    logger.info(f"Structured analysis serialized successfully, keys: {list(structured_data.keys())}")
+                except Exception as e:
+                    logger.error(f"Failed to serialize structured_analysis: {e}")
+                    structured_data = None
+            
+            # Send completion with actual analysis data
             if ws_manager:
-                await ws_manager.broadcast(
-                    project_id,
-                    {
+                try:
+                    completion_message = {
                         "type": "analysis_complete",
                         "analysis_id": analysis_id,
+                        "result": {
+                            "technical_analysis": str(crew_result),
+                            "structured_analysis": structured_data,
+                            "completed_at": str(datetime.now())
+                        },
                         "message": "✅ Analysis regenerated with your feedback!",
                         "is_regeneration": True
                     }
-                )
+                    
+                    logger.info(f"Broadcasting regeneration analysis_complete message: {completion_message['type']}")
+                    await ws_manager.broadcast(project_id, completion_message)
+                    logger.info(f"Successfully broadcasted regeneration analysis_complete message")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to broadcast regeneration analysis_complete message: {e}")
+                    logger.error(f"Error type: {type(e).__name__}")
+                    import traceback
+                    logger.error(f"Full traceback: {traceback.format_exc()}")
+                
+                # Also send the formatted analysis content as an agent message
+                try:
+                    from app.services.analysis_helper import AnalysisDataHelper
+                    
+                    if structured_analysis:
+                        formatted_message = AnalysisDataHelper.format_analysis_summary(structured_analysis)
+                        logger.info(f"Regenerated analysis formatted successfully, length: {len(formatted_message)}")
+                    else:
+                        formatted_message = str(crew_result)
+                        logger.info(f"Using raw regenerated analysis as fallback, length: {len(formatted_message)}")
+                    
+                    agent_message = {
+                        "type": "agent_message",
+                        "sender": "technical_agent",
+                        "sender_name": "Technical Analysis Agent", 
+                        "message": formatted_message,
+                        "analysis_id": analysis_id,
+                        "message_id": str(uuid.uuid4())
+                    }
+                    
+                    logger.info(f"Broadcasting regenerated agent_message with analysis content")
+                    await ws_manager.broadcast(project_id, agent_message)
+                    logger.info(f"Successfully broadcasted regenerated agent_message with analysis content")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to format or broadcast regenerated analysis content: {e}")
+                    logger.error(f"Error type: {type(e).__name__}")
+                    import traceback
+                    logger.error(f"Full traceback: {traceback.format_exc()}")
+                    
+                    # Send raw analysis as fallback
+                    try:
+                        fallback_message = {
+                            "type": "agent_message",
+                            "sender": "technical_agent",
+                            "sender_name": "Technical Analysis Agent",
+                            "message": str(crew_result),
+                            "analysis_id": analysis_id,
+                            "message_id": str(uuid.uuid4())
+                        }
+                        
+                        logger.info(f"Broadcasting fallback regenerated agent_message with raw analysis")
+                        await ws_manager.broadcast(project_id, fallback_message)
+                        logger.info(f"Successfully broadcasted fallback regenerated agent_message")
+                        
+                    except Exception as fallback_error:
+                        logger.error(f"Failed to broadcast regenerated fallback message: {fallback_error}")
+            else:
+                logger.error(f"WebSocket manager is None - cannot broadcast regeneration messages!")
             
             return {
                 "status": "regenerated",

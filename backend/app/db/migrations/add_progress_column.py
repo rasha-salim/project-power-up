@@ -1,9 +1,13 @@
 """
 Migration script to add progress column to documents table
+
+TODO: MIGRATION PRIORITY 2 - Migrate to SQLAlchemy AsyncSession for consistency
+Currently uses asyncpg connection pool - target for Phase 2 migration
+See docs/database-migration-plan.md for details
 """
 import asyncio
 import logging
-from app.db.connection_pool import get_pool
+from app.db.connection_pool import get_pool  # TODO: Replace with SQLAlchemy AsyncSession
 
 logger = logging.getLogger(__name__)
 

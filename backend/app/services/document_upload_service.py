@@ -1,6 +1,10 @@
 """
 Document Upload Service
 Handles document uploads using the PostgreSQL connection pool
+
+TODO: MIGRATION PRIORITY 1 - Migrate to SQLAlchemy AsyncSession for consistency
+Currently uses asyncpg connection pool - target for Phase 2 migration
+See docs/database-migration-plan.md for details
 """
 import os
 import uuid
@@ -11,7 +15,7 @@ from fastapi import UploadFile, HTTPException, status
 import asyncpg
 
 from app.core.config import settings
-from app.db.connection_pool import get_pool
+from app.db.connection_pool import get_pool  # TODO: Replace with SQLAlchemy AsyncSession
 
 # Configure logging
 logger = logging.getLogger(__name__)

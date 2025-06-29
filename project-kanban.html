@@ -1,0 +1,751 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Project Power-Up - Database Migration Kanban</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+
+        .kanban-container {
+            display: flex;
+            gap: 20px;
+            overflow-x: auto;
+            padding: 10px;
+            min-height: 70vh;
+        }
+
+        .column {
+            min-width: 300px;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+
+        .column-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+
+        .column-title {
+            font-size: 1.2rem;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .column-count {
+            background: #6366f1;
+            color: white;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.8rem;
+            font-weight: bold;
+        }
+
+        .card {
+            background: white;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            border-left: 4px solid #6366f1;
+            transition: transform 0.2s, box-shadow 0.2s;
+            cursor: grab;
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+        }
+
+        .card:active {
+            cursor: grabbing;
+        }
+
+        .card-title {
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 8px;
+            font-size: 0.95rem;
+        }
+
+        .card-description {
+            color: #666;
+            font-size: 0.85rem;
+            line-height: 1.4;
+            margin-bottom: 12px;
+        }
+
+        .card-meta {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .card-priority {
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 0.7rem;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+
+        .priority-high {
+            background: #fee2e2;
+            color: #dc2626;
+        }
+
+        .priority-medium {
+            background: #fef3c7;
+            color: #d97706;
+        }
+
+        .priority-low {
+            background: #d1fae5;
+            color: #059669;
+        }
+
+        .card-assignee {
+            font-size: 0.8rem;
+            color: #666;
+            font-style: italic;
+        }
+
+        .column.backlog { border-top: 4px solid #9ca3af; }
+        .column.todo { border-top: 4px solid #3b82f6; }
+        .column.in-progress { border-top: 4px solid #f59e0b; }
+        .column.in-review { border-top: 4px solid #8b5cf6; }
+        .column.done { border-top: 4px solid #10b981; }
+
+        .backlog .column-count { background: #9ca3af; }
+        .todo .column-count { background: #3b82f6; }
+        .in-progress .column-count { background: #f59e0b; }
+        .in-review .column-count { background: #8b5cf6; }
+        .done .column-count { background: #10b981; }
+
+        .backlog .card { border-left-color: #9ca3af; }
+        .todo .card { border-left-color: #3b82f6; }
+        .in-progress .card { border-left-color: #f59e0b; }
+        .in-review .card { border-left-color: #8b5cf6; }
+        .done .card { border-left-color: #10b981; }
+
+        .progress-bar {
+            background: rgba(255,255,255,0.9);
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        .progress-fill {
+            background: linear-gradient(90deg, #10b981 0%, #059669 100%);
+            height: 8px;
+            border-radius: 4px;
+            transition: width 0.3s ease;
+        }
+
+        .progress-text {
+            margin-top: 8px;
+            font-weight: bold;
+            color: #333;
+        }
+
+        @media (max-width: 768px) {
+            .kanban-container {
+                flex-direction: column;
+            }
+            
+            .column {
+                min-width: unset;
+            }
+        }
+
+        .drag-over {
+            background: rgba(99, 102, 241, 0.1);
+            border: 2px dashed #6366f1;
+        }
+
+        .add-card-btn {
+            width: 100%;
+            padding: 12px;
+            background: rgba(99, 102, 241, 0.1);
+            border: 2px dashed #6366f1;
+            border-radius: 8px;
+            color: #6366f1;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-align: center;
+        }
+
+        .add-card-btn:hover {
+            background: rgba(99, 102, 241, 0.2);
+            border-color: #4f46e5;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            backdrop-filter: blur(5px);
+        }
+
+        .modal-content {
+            background: white;
+            margin: 10% auto;
+            padding: 30px;
+            border-radius: 12px;
+            width: 80%;
+            max-width: 500px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+
+        .modal-header {
+            font-size: 1.5rem;
+            font-weight: bold;
+            margin-bottom: 20px;
+            color: #333;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #555;
+        }
+
+        .form-group input,
+        .form-group textarea,
+        .form-group select {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #e0e0e0;
+            border-radius: 6px;
+            font-size: 14px;
+            transition: border-color 0.2s;
+        }
+
+        .form-group input:focus,
+        .form-group textarea:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #6366f1;
+        }
+
+        .form-group textarea {
+            resize: vertical;
+            min-height: 80px;
+        }
+
+        .modal-buttons {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+            margin-top: 20px;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: #6366f1;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #4f46e5;
+        }
+
+        .btn-secondary {
+            background: #e5e7eb;
+            color: #374151;
+        }
+
+        .btn-secondary:hover {
+            background: #d1d5db;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🚀 Project Power-Up</h1>
+        <p>Database Migration & Codebase Improvements Kanban Board</p>
+    </div>
+
+    <div class="progress-bar">
+        <div class="progress-fill" style="width: 40%"></div>
+        <div class="progress-text">Overall Progress: 40% Complete</div>
+    </div>
+
+    <div class="kanban-container">
+        <!-- BACKLOG -->
+        <div class="column backlog" data-status="backlog">
+            <div class="column-header">
+                <div class="column-title">BACKLOG</div>
+                <div class="column-count">8</div>
+            </div>
+            
+            <div class="card" draggable="true" data-id="task-1">
+                <div class="card-title">Add Comprehensive Test Suite</div>
+                <div class="card-description">Create pytest tests for database migration compatibility layer and existing functionality</div>
+                <div class="card-meta">
+                    <span class="card-priority priority-medium">Medium</span>
+                    <span class="card-assignee">Future Sprint</span>
+                </div>
+            </div>
+
+            <div class="card" draggable="true" data-id="task-2">
+                <div class="card-title">Fix CORS Configuration</div>
+                <div class="card-description">Replace wildcard CORS with specific domains for production security</div>
+                <div class="card-meta">
+                    <span class="card-priority priority-medium">Medium</span>
+                    <span class="card-assignee">Security</span>
+                </div>
+            </div>
+
+            <div class="card" draggable="true" data-id="task-3">
+                <div class="card-title">Implement Rate Limiting</div>
+                <div class="card-description">Add API rate limiting to prevent DoS attacks and API abuse</div>
+                <div class="card-meta">
+                    <span class="card-priority priority-medium">Medium</span>
+                    <span class="card-assignee">Security</span>
+                </div>
+            </div>
+
+            <div class="card" draggable="true" data-id="task-4">
+                <div class="card-title">Clean Up Upload Directory</div>
+                <div class="card-description">Archive/remove 150+ old uploaded files to reduce storage bloat</div>
+                <div class="card-meta">
+                    <span class="card-priority priority-low">Low</span>
+                    <span class="card-assignee">Maintenance</span>
+                </div>
+            </div>
+
+            <div class="card" draggable="true" data-id="task-5">
+                <div class="card-title">ChromaDB Collection Cleanup</div>
+                <div class="card-description">Review and consolidate 15+ ChromaDB collections to optimize storage</div>
+                <div class="card-meta">
+                    <span class="card-priority priority-low">Low</span>
+                    <span class="card-assignee">Optimization</span>
+                </div>
+            </div>
+
+            <div class="card" draggable="true" data-id="task-6">
+                <div class="card-title">Add Input Validation</div>
+                <div class="card-description">Review subprocess usage and add input validation for security</div>
+                <div class="card-meta">
+                    <span class="card-priority priority-medium">Medium</span>
+                    <span class="card-assignee">Security</span>
+                </div>
+            </div>
+
+            <div class="card" draggable="true" data-id="task-7">
+                <div class="card-title">Performance Optimization</div>
+                <div class="card-description">Optimize async/sync patterns and identify potential blocking operations</div>
+                <div class="card-meta">
+                    <span class="card-priority priority-low">Low</span>
+                    <span class="card-assignee">Performance</span>
+                </div>
+            </div>
+
+            <div class="card" draggable="true" data-id="task-8">
+                <div class="card-title">Documentation Updates</div>
+                <div class="card-description">Update README and API documentation with migration changes</div>
+                <div class="card-meta">
+                    <span class="card-priority priority-low">Low</span>
+                    <span class="card-assignee">Documentation</span>
+                </div>
+            </div>
+            
+            <div class="add-card-btn" onclick="openAddCardModal('backlog')">
+                + Add New Card
+            </div>
+        </div>
+
+        <!-- TODO -->
+        <div class="column todo" data-status="todo">
+            <div class="column-header">
+                <div class="column-title">TODO</div>
+                <div class="column-count">3</div>
+            </div>
+
+            <div class="card" draggable="true" data-id="task-9">
+                <div class="card-title">Test Compatibility Layer</div>
+                <div class="card-description">Test DatabaseService functionality and ensure no regressions in existing code</div>
+                <div class="card-meta">
+                    <span class="card-priority priority-high">High</span>
+                    <span class="card-assignee">Phase 1</span>
+                </div>
+            </div>
+
+            <div class="card" draggable="true" data-id="task-10">
+                <div class="card-title">Update Import Statements</div>
+                <div class="card-description">Optionally update imports to use compatibility layer for better consistency</div>
+                <div class="card-meta">
+                    <span class="card-priority priority-medium">Medium</span>
+                    <span class="card-assignee">Phase 1</span>
+                </div>
+            </div>
+
+            <div class="card" draggable="true" data-id="task-11">
+                <div class="card-title">Create Migration Tests</div>
+                <div class="card-description">Develop tests specifically for database migration process and compatibility</div>
+                <div class="card-meta">
+                    <span class="card-priority priority-high">High</span>
+                    <span class="card-assignee">Testing</span>
+                </div>
+            </div>
+            
+            <div class="add-card-btn" onclick="openAddCardModal('todo')">
+                + Add New Card
+            </div>
+        </div>
+
+        <!-- IN PROGRESS -->
+        <div class="column in-progress" data-status="in-progress">
+            <div class="column-header">
+                <div class="column-title">IN PROGRESS</div>
+                <div class="column-count">0</div>
+            </div>
+            <!-- No current tasks in progress -->
+            
+            <div class="add-card-btn" onclick="openAddCardModal('in-progress')">
+                + Add New Card
+            </div>
+        </div>
+
+        <!-- IN REVIEW -->
+        <div class="column in-review" data-status="in-review">
+            <div class="column-header">
+                <div class="column-title">IN REVIEW</div>
+                <div class="column-count">0</div>
+            </div>
+            <!-- No current tasks in review -->
+            
+            <div class="add-card-btn" onclick="openAddCardModal('in-review')">
+                + Add New Card
+            </div>
+        </div>
+
+        <!-- DONE -->
+        <div class="column done" data-status="done">
+            <div class="column-header">
+                <div class="column-title">DONE</div>
+                <div class="column-count">7</div>
+            </div>
+
+            <div class="card" draggable="true" data-id="task-12">
+                <div class="card-title">Codebase Security Analysis</div>
+                <div class="card-description">Analyzed codebase for security vulnerabilities and identified major issues</div>
+                <div class="card-meta">
+                    <span class="card-priority priority-high">High</span>
+                    <span class="card-assignee">✅ Complete</span>
+                </div>
+            </div>
+
+            <div class="card" draggable="true" data-id="task-13">
+                <div class="card-title">Database Pattern Analysis</div>
+                <div class="card-description">Identified inconsistent database access patterns (asyncpg vs SQLAlchemy)</div>
+                <div class="card-meta">
+                    <span class="card-priority priority-high">High</span>
+                    <span class="card-assignee">✅ Complete</span>
+                </div>
+            </div>
+
+            <div class="card" draggable="true" data-id="task-14">
+                <div class="card-title">Migration Documentation</div>
+                <div class="card-description">Created comprehensive database migration plan with phases and tracking</div>
+                <div class="card-meta">
+                    <span class="card-priority priority-high">High</span>
+                    <span class="card-assignee">✅ Complete</span>
+                </div>
+            </div>
+
+            <div class="card" draggable="true" data-id="task-15">
+                <div class="card-title">TODO Comments Added</div>
+                <div class="card-description">Added migration TODO comments to all files using connection pool</div>
+                <div class="card-meta">
+                    <span class="card-priority priority-medium">Medium</span>
+                    <span class="card-assignee">✅ Complete</span>
+                </div>
+            </div>
+
+            <div class="card" draggable="true" data-id="task-16">
+                <div class="card-title">Compatibility Layer Created</div>
+                <div class="card-description">Built DatabaseService with unified interface for both asyncpg and SQLAlchemy</div>
+                <div class="card-meta">
+                    <span class="card-priority priority-high">High</span>
+                    <span class="card-assignee">✅ Complete</span>
+                </div>
+            </div>
+
+            <div class="card" draggable="true" data-id="task-17">
+                <div class="card-title">CLAUDE.md Creation</div>
+                <div class="card-description">Created comprehensive guidance document for Claude Code instances</div>
+                <div class="card-meta">
+                    <span class="card-priority priority-medium">Medium</span>
+                    <span class="card-assignee">✅ Complete</span>
+                </div>
+            </div>
+
+            <div class="card" draggable="true" data-id="task-18">
+                <div class="card-title">Project Kanban Board</div>
+                <div class="card-description">Created interactive HTML Kanban board for project tracking</div>
+                <div class="card-meta">
+                    <span class="card-priority priority-medium">Medium</span>
+                    <span class="card-assignee">✅ Complete</span>
+                </div>
+            </div>
+            
+            <div class="add-card-btn" onclick="openAddCardModal('done')">
+                + Add New Card
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Card Modal -->
+    <div id="addCardModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">Add New Card</div>
+            <form id="addCardForm">
+                <div class="form-group">
+                    <label for="cardTitle">Task Title</label>
+                    <input type="text" id="cardTitle" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="cardDescription">Description</label>
+                    <textarea id="cardDescription" required></textarea>
+                </div>
+                
+                <div class="form-group">
+                    <label for="cardPriority">Priority</label>
+                    <select id="cardPriority" required>
+                        <option value="priority-high">High</option>
+                        <option value="priority-medium" selected>Medium</option>
+                        <option value="priority-low">Low</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="cardAssignee">Assignee</label>
+                    <input type="text" id="cardAssignee" placeholder="Who's responsible?" required>
+                </div>
+                
+                <div class="modal-buttons">
+                    <button type="button" class="btn btn-secondary" onclick="closeAddCardModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Add Card</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // Simple drag and drop functionality
+        let draggedElement = null;
+
+        // Add drag event listeners to all cards
+        document.querySelectorAll('.card').forEach(card => {
+            card.addEventListener('dragstart', function(e) {
+                draggedElement = this;
+                this.style.opacity = '0.5';
+            });
+
+            card.addEventListener('dragend', function(e) {
+                this.style.opacity = '1';
+                draggedElement = null;
+            });
+        });
+
+        // Add drop zone functionality to columns
+        document.querySelectorAll('.column').forEach(column => {
+            column.addEventListener('dragover', function(e) {
+                e.preventDefault();
+                this.classList.add('drag-over');
+            });
+
+            column.addEventListener('dragleave', function(e) {
+                this.classList.remove('drag-over');
+            });
+
+            column.addEventListener('drop', function(e) {
+                e.preventDefault();
+                this.classList.remove('drag-over');
+                
+                if (draggedElement && draggedElement.parentNode !== this) {
+                    this.appendChild(draggedElement);
+                    updateColumnCounts();
+                    updateProgress();
+                }
+            });
+        });
+
+        // Update column counts
+        function updateColumnCounts() {
+            document.querySelectorAll('.column').forEach(column => {
+                const count = column.querySelectorAll('.card').length;
+                const countElement = column.querySelector('.column-count');
+                countElement.textContent = count;
+            });
+        }
+
+        // Update progress bar
+        function updateProgress() {
+            const totalCards = document.querySelectorAll('.card').length;
+            const doneCards = document.querySelectorAll('.done .card').length;
+            const progress = Math.round((doneCards / totalCards) * 100);
+            
+            document.querySelector('.progress-fill').style.width = progress + '%';
+            document.querySelector('.progress-text').textContent = `Overall Progress: ${progress}% Complete`;
+        }
+
+        // Initialize counts on page load
+        updateColumnCounts();
+        updateProgress();
+
+        // Add click handler for card details (optional enhancement)
+        document.querySelectorAll('.card').forEach(card => {
+            card.addEventListener('dblclick', function() {
+                alert(`Task: ${this.querySelector('.card-title').textContent}\n\nDescription: ${this.querySelector('.card-description').textContent}`);
+            });
+        });
+
+        // Modal functionality
+        let currentTargetColumn = null;
+        let cardCounter = 19; // Start from 19 since we have 18 existing cards
+
+        function openAddCardModal(columnStatus) {
+            currentTargetColumn = columnStatus;
+            document.getElementById('addCardModal').style.display = 'block';
+            document.getElementById('cardTitle').focus();
+        }
+
+        function closeAddCardModal() {
+            document.getElementById('addCardModal').style.display = 'none';
+            document.getElementById('addCardForm').reset();
+            currentTargetColumn = null;
+        }
+
+        // Handle form submission
+        document.getElementById('addCardForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const title = document.getElementById('cardTitle').value;
+            const description = document.getElementById('cardDescription').value;
+            const priority = document.getElementById('cardPriority').value;
+            const assignee = document.getElementById('cardAssignee').value;
+            
+            // Create new card element
+            const newCard = document.createElement('div');
+            newCard.className = 'card';
+            newCard.draggable = true;
+            newCard.setAttribute('data-id', `task-${cardCounter++}`);
+            
+            newCard.innerHTML = `
+                <div class="card-title">${title}</div>
+                <div class="card-description">${description}</div>
+                <div class="card-meta">
+                    <span class="card-priority ${priority}">${priority.replace('priority-', '').charAt(0).toUpperCase() + priority.replace('priority-', '').slice(1)}</span>
+                    <span class="card-assignee">${assignee}</span>
+                </div>
+            `;
+            
+            // Add drag functionality to new card
+            newCard.addEventListener('dragstart', function(e) {
+                draggedElement = this;
+                this.style.opacity = '0.5';
+            });
+
+            newCard.addEventListener('dragend', function(e) {
+                this.style.opacity = '1';
+                draggedElement = null;
+            });
+
+            // Add double-click functionality
+            newCard.addEventListener('dblclick', function() {
+                alert(`Task: ${this.querySelector('.card-title').textContent}\n\nDescription: ${this.querySelector('.card-description').textContent}`);
+            });
+            
+            // Find target column and insert card before the "Add Card" button
+            const targetColumn = document.querySelector(`[data-status="${currentTargetColumn}"]`);
+            const addButton = targetColumn.querySelector('.add-card-btn');
+            targetColumn.insertBefore(newCard, addButton);
+            
+            // Update counts and progress
+            updateColumnCounts();
+            updateProgress();
+            
+            // Close modal
+            closeAddCardModal();
+        });
+
+        // Close modal when clicking outside
+        window.addEventListener('click', function(e) {
+            if (e.target === document.getElementById('addCardModal')) {
+                closeAddCardModal();
+            }
+        });
+
+        // Close modal with Escape key
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                closeAddCardModal();
+            }
+        });
+    </script>
+</body>
+</html>

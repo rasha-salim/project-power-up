@@ -395,7 +395,6 @@ export default function ProjectDetailPage() {
       {/* Project header */}
       <ProjectHeader 
         project={project} 
-        onStartAnalysis={handleStartAnalysis} 
       />
 
       {/* Main content */}

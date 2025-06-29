@@ -7,7 +7,7 @@ import sys
 from app.core.config import settings, validation_success
 from app.api.routes import api_router
 from app.db.init_db_simple import init_db
-from app.db.connection_pool import initialize_pool, close_pool
+from app.db.connection_pool import initialize_pool, close_pool  # TODO: Remove after migration to SQLAlchemy
 
 # Configure logging
 logging.basicConfig(
@@ -59,6 +59,8 @@ async def startup_event():
     await init_db()
     
     # Initialize PostgreSQL connection pool
+    # TODO: MIGRATION PRIORITY 3 - Remove connection pool after migration to SQLAlchemy
+    # See docs/database-migration-plan.md for details
     pool_initialized = await initialize_pool()
     if pool_initialized:
         logger.info("PostgreSQL connection pool initialized")

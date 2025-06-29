@@ -1,9 +1,9 @@
 version: "1.0"
 agents:
   technical_analyst:
-    role: "Technical Analyst"
-    goal: "Analyze project requirements and provide technical recommendations"
-    backstory: "You are an experienced technical architect with expertise in software design, technology selection, and feasibility analysis. Your job is to analyze project requirements and provide detailed technical recommendations."
+    role: "Senior Technical Architect & Project Analyst"
+    goal: "Provide comprehensive technical analysis including architecture design, technology recommendations, risk assessment, project planning, timeline estimation, and cost analysis"
+    backstory: "You are a highly experienced senior technical architect with over 15 years of experience in software design, technology selection, risk assessment, and project planning. You have successfully led numerous complex software projects from conception to deployment. Your expertise spans multiple domains including web applications, mobile apps, enterprise systems, and cloud infrastructure. You are skilled at breaking down complex requirements, identifying potential risks, estimating realistic timelines and costs, and providing actionable recommendations. You always provide quantitative assessments and detailed analysis covering technical complexity, maintainability, scalability, risks, project phases, resource requirements, and comprehensive recommendations."
     verbose: true
     allow_delegation: false
     llm:
@@ -53,8 +53,66 @@ agents:
 
 tasks:
   technical_analysis:
-    description: "Analyze project requirements and provide technical recommendations"
-    expected_output: "Technical analysis report with architecture recommendations and technology stack"
+    description: "Analyze project requirements and provide comprehensive technical recommendations covering architecture, technology stack, complexity assessment, risk analysis, project planning, timeline estimation, and cost analysis"
+    expected_output: |
+      A comprehensive technical analysis report that includes:
+      
+      ## Technical Analysis
+      **Architecture**: [Specific architectural pattern, e.g., "Microservices", "Monolithic", "Serverless", "Event-driven"]
+      
+      **Tech Stack**:
+      - Frontend: [React, Vue.js, Angular, Next.js, etc.]
+      - Backend: [Node.js, Python/Django, Java/Spring, .NET Core, etc.]
+      - Database: [PostgreSQL, MongoDB, MySQL, Redis, etc.]
+      - Infrastructure: [AWS, Azure, GCP, Docker, Kubernetes, etc.]
+      - Tools: [Git, Jenkins, Docker, Terraform, etc.]
+      
+      **Scores**:
+      - Complexity: [1-10]
+      - Maintainability: [1-10]
+      - Scalability: [1-10]
+      
+      ## Risk Assessment
+      - Overall Risk Score: [1-10]
+      - Key Risks:
+        - [Risk Name]: [Low/Medium/High/Critical] - [Brief impact description]
+        - [Risk Name]: [Low/Medium/High/Critical] - [Brief impact description]
+        - [Risk Name]: [Low/Medium/High/Critical] - [Brief impact description]
+      
+      ## Project Plan
+      **Timeline**: [X weeks/months]
+      **Estimated Cost**: $[Amount]
+      **Team Size**: [X developers]
+      
+      **Project Phases**:
+      1. [Phase Name] - [Duration] - [Key deliverables]
+      2. [Phase Name] - [Duration] - [Key deliverables]
+      3. [Phase Name] - [Duration] - [Key deliverables]
+      
+      **Milestones**:
+      - [Milestone Name] - [Date/Week]
+      - [Milestone Name] - [Date/Week]
+      - [Milestone Name] - [Date/Week]
+      
+      ## Recommendations
+      - [Specific actionable recommendation]
+      - [Specific actionable recommendation]
+      - [Specific actionable recommendation]
+      
+      ## Explanations
+      **Complexity Score Reasoning**: [Detailed explanation of why the complexity score was assigned]
+      
+      **Maintainability Score Reasoning**: [Detailed explanation of maintainability assessment]
+      
+      **Scalability Score Reasoning**: [Detailed explanation of scalability potential]
+      
+      **Risk Analysis Details**: [Detailed explanation of identified risks, their probability, and potential impact]
+      
+      **Technology Choice Rationale**: [Detailed explanation of why specific technologies were recommended]
+      
+      **Cost Estimation Breakdown**: [Detailed breakdown of cost factors and assumptions]
+      
+      Provide specific technology names, numerical scores, and structured data that can be easily parsed while including detailed explanations in the separate explanations section.
     agent: "technical_analyst"
     dependencies: []
     context_requirements:

@@ -57,3 +57,7 @@ uploads/
 # OS specific
 .DS_Store
 Thumbs.db
+
+# Development Rules (keep local for now)
+.cursorrules
+docs/development-rules.md
