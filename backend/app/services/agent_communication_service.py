@@ -11,6 +11,7 @@ from app.models.project import Project
 from app.services.project_service import ProjectService
 from app.services.websocket_manager import WebSocketManager
 from app.core.agent_registry import agent_registry
+from app.tools.document_search import DocumentSearchTool
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,19 @@ class AgentCommunicationService:
         """Initialize the agent communication service"""
         self.anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
         self.anthropic_model = os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
+    
+    def _is_document_related(self, message: str) -> bool:
+        """Check if message is asking about project documents or content"""
+        import re
+        document_patterns = [
+            r'\b(document|file|requirement|specification|design)\b',
+            r'\b(what.*says?|what.*contains?|find.*in)\b',
+            r'\b(according to|based on|mentioned in)\b',
+            r'\b(search|look for|find)\b.*\b(document|file|content)\b'
+        ]
+        
+        message_lower = message.lower()
+        return any(re.search(pattern, message_lower) for pattern in document_patterns)
     
     def _get_llm(self, temperature: float = 0.3) -> ChatAnthropic:
         """Get configured Anthropic LLM instance"""
@@ -75,24 +89,40 @@ class AgentCommunicationService:
                     }
                 )
             
-            # Create chat agent
+            # Create chat agent with optional document search
             llm = self._get_llm()
+            
+            # Determine if we need document search capabilities
+            needs_document_search = self._is_document_related(message)
+            tools = [DocumentSearchTool(project_id)] if needs_document_search else []
+            
+            backstory = f"""You are a helpful project assistant for the project '{project.name}'. 
+            You help users understand their project, answer questions, and provide guidance.
+            
+            Project Details:
+            - Name: {project.name}
+            - Description: {project.description or 'No description provided'}
+            - Industry: {getattr(project, 'industry', 'Not specified')}
+            - Team Size: {getattr(project, 'team_size', 'Not specified')}
+            """
+            
+            if needs_document_search:
+                backstory += """
+                
+                IMPORTANT: You have access to project documents. When users ask about project content, 
+                requirements, specifications, or design details, use the document_search tool to find 
+                relevant information in the uploaded project documents. Always search the documents 
+                before providing answers about project-specific content.
+                """
             
             chat_agent = Agent(
                 role="Project Assistant",
-                goal="Help users with their project questions and provide guidance",
-                backstory=f"""You are a helpful project assistant for the project '{project.name}'. 
-                You help users understand their project, answer questions, and provide guidance.
-                
-                Project Details:
-                - Name: {project.name}
-                - Description: {project.description or 'No description provided'}
-                - Industry: {getattr(project, 'industry', 'Not specified')}
-                - Team Size: {getattr(project, 'team_size', 'Not specified')}
-                """,
+                goal="Help users with their project questions and provide guidance based on project documents when available",
+                backstory=backstory,
                 verbose=True,
                 allow_delegation=False,
-                llm=llm
+                llm=llm,
+                tools=tools
             )
             
             # Create task

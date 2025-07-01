@@ -38,6 +38,36 @@ class UserInteractionService:
             anthropic_api_key=self.anthropic_api_key
         )
     
+    def detect_analysis_request(self, message: str) -> bool:
+        """
+        Detect if a user message is requesting analysis
+        
+        Args:
+            message: User's message
+            
+        Returns:
+            bool: True if message requests analysis
+        """
+        analysis_patterns = [
+            r'\b(analyze|analysis|technical analysis|project analysis)\b',
+            r'\b(assess|evaluate|review)\b.*\b(project|code|architecture|technical)\b',
+            r'\b(what.*risks?|risk assessment)\b',
+            r'\b(estimate|timeline|cost|budget)\b.*\b(analysis|assessment)\b',
+            r'\b(recommend|recommendation)s?\b.*\b(technology|tech stack|architecture)\b',
+            r'\b(run|perform|do|execute)\b.*\b(analysis|assessment)\b',
+            r'\b(create|generate|provide)\b.*\b(analysis|technical analysis|assessment)\b',
+            r'\b(update|refresh|regenerate)\b.*\b(analysis|assessment)\b',
+            r'\btell me about.*\b(risks?|technology|architecture|timeline|cost)\b'
+        ]
+        
+        message_lower = message.lower()
+        for pattern in analysis_patterns:
+            if re.search(pattern, message_lower):
+                logger.info(f"Detected analysis request pattern: {pattern}")
+                return True
+        
+        return False
+
     async def handle_user_message(
         self, 
         db: AsyncSession, 
@@ -68,8 +98,21 @@ class UserInteractionService:
             # Detect feedback patterns
             is_feedback, feedback_type = self.detect_feedback_patterns(cleaned_message)
             
+            # Detect analysis requests
+            is_analysis_request = self.detect_analysis_request(cleaned_message)
+            
             # Route based on message type
-            if is_feedback and analysis_id:
+            if is_analysis_request:
+                # Route to analysis execution
+                logger.info(f"Routing message to analysis execution: {cleaned_message}")
+                return {
+                    "type": "analysis_request", 
+                    "message": cleaned_message,
+                    "agent_id": agent_id,
+                    "existing_analysis_id": analysis_id,
+                    "requires_analysis_execution": True
+                }
+            elif is_feedback and analysis_id:
                 return await self.handle_feedback_message(
                     db, project_id, analysis_id, cleaned_message, ws_manager
                 )

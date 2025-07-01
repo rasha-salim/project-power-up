@@ -918,13 +918,98 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
                 <div className="mt-2 pt-2 border-t border-gray-300">
                   <div className="text-sm font-semibold mb-1">Analysis Results:</div>
                   <div className="text-xs overflow-x-auto bg-white bg-opacity-50 p-2 rounded">
-                    {typeof message.result.technical_analysis === 'string' ? (
+                    {message.result.raw_analysis ? (
+                      // Display raw analysis as markdown if available
                       <ReactMarkdown className="prose prose-xs max-w-none">
-                        {message.result.technical_analysis}
+                        {message.result.raw_analysis}
                       </ReactMarkdown>
-                    ) : message.result.technical_analysis ? (
-                      <pre>{JSON.stringify(message.result.technical_analysis, null, 2)}</pre>
+                    ) : message.result.technical_analysis || message.result.risk_assessment || message.result.project_plan ? (
+                      // Display structured analysis data
+                      <div className="space-y-3">
+                        {message.result.technical_analysis && (
+                          <div>
+                            <h4 className="font-semibold text-sm mb-1">Technical Analysis</h4>
+                            <div className="text-xs space-y-1">
+                              <p><strong>Architecture:</strong> {message.result.technical_analysis.architecture}</p>
+                              <div>
+                                <strong>Tech Stack:</strong>
+                                <ul className="ml-4 mt-1">
+                                  {message.result.technical_analysis.tech_stack?.frontend?.length > 0 && (
+                                    <li>Frontend: {message.result.technical_analysis.tech_stack.frontend.join(', ')}</li>
+                                  )}
+                                  {message.result.technical_analysis.tech_stack?.backend?.length > 0 && (
+                                    <li>Backend: {message.result.technical_analysis.tech_stack.backend.join(', ')}</li>
+                                  )}
+                                  {message.result.technical_analysis.tech_stack?.infrastructure?.length > 0 && (
+                                    <li>Infrastructure: {message.result.technical_analysis.tech_stack.infrastructure.join(', ')}</li>
+                                  )}
+                                  {message.result.technical_analysis.tech_stack?.tools?.length > 0 && (
+                                    <li>Tools: {message.result.technical_analysis.tech_stack.tools.join(', ')}</li>
+                                  )}
+                                </ul>
+                              </div>
+                              <div>
+                                <strong>Scores:</strong> 
+                                Complexity: {message.result.technical_analysis.complexity_score}/10, 
+                                Maintainability: {message.result.technical_analysis.maintainability_score}/10, 
+                                Scalability: {message.result.technical_analysis.scalability_score}/10
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                        
+                        {message.result.risk_assessment && (
+                          <div>
+                            <h4 className="font-semibold text-sm mb-1">Risk Assessment</h4>
+                            <div className="text-xs space-y-1">
+                              <p><strong>Overall Risk Score:</strong> {message.result.risk_assessment.overall_risk_score}/10</p>
+                              {message.result.risk_assessment.key_risks?.length > 0 && (
+                                <div>
+                                  <strong>Key Risks:</strong>
+                                  <ul className="ml-4 mt-1">
+                                    {message.result.risk_assessment.key_risks.map((risk: any, idx: number) => (
+                                      <li key={idx}>{risk.name} ({risk.level}) - {risk.description}</li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                        
+                        {message.result.project_plan && (
+                          <div>
+                            <h4 className="font-semibold text-sm mb-1">Project Plan</h4>
+                            <div className="text-xs space-y-1">
+                              <p><strong>Timeline:</strong> {message.result.project_plan.timeline}</p>
+                              <p><strong>Estimated Cost:</strong> ${message.result.project_plan.estimated_cost?.toLocaleString()}</p>
+                              {message.result.project_plan.phases?.length > 0 && (
+                                <div>
+                                  <strong>Phases:</strong>
+                                  <ul className="ml-4 mt-1">
+                                    {message.result.project_plan.phases.map((phase: any, idx: number) => (
+                                      <li key={idx}>{phase.name} ({phase.duration} weeks) - {phase.description}</li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                        
+                        {message.result.recommendations?.length > 0 && (
+                          <div>
+                            <h4 className="font-semibold text-sm mb-1">Recommendations</h4>
+                            <ul className="text-xs ml-4">
+                              {message.result.recommendations.map((rec: string, idx: number) => (
+                                <li key={idx}>{rec}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
                     ) : (
+                      // Fallback to JSON display
                       <pre>{JSON.stringify(message.result, null, 2)}</pre>
                     )}
                   </div>

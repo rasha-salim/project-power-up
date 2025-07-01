@@ -126,6 +126,8 @@ async def agent_conversation_websocket(
                     elif message_type == "start_analysis":
                         # Trigger agent analysis
                         force_analysis = data.get("force", False)
+                        additional_context = data.get("additional_context", "")
+                        existing_analysis_id = data.get("existing_analysis_id")
                         logger.info(f"Starting agent analysis for project {project_id} requested by client {client_id}, force={force_analysis}")
                         
                         # Send acknowledgment to client
@@ -146,13 +148,25 @@ async def agent_conversation_websocket(
                             if websocket not in ws_manager.active_connections.get(project_id, []):
                                 await ws_manager.connect(websocket, project_id)
                             
-                            # Start agent analysis - use the correct method name
-                            analysis_id = await agent_service.execute_analysis_with_context(
-                                project_id=project_id, 
-                                db=db, 
-                                ws_manager=ws_manager, 
-                                force=force_analysis
-                            )
+                            # Check if this is an incremental analysis request
+                            if existing_analysis_id and additional_context:
+                                # Start incremental analysis
+                                analysis_id = await agent_service.execute_incremental_analysis(
+                                    project_id=project_id,
+                                    existing_analysis_id=existing_analysis_id,
+                                    new_context=additional_context,
+                                    db=db,
+                                    ws_manager=ws_manager
+                                )
+                            else:
+                                # Start regular analysis
+                                analysis_id = await agent_service.execute_analysis_with_context(
+                                    project_id=project_id, 
+                                    db=db, 
+                                    ws_manager=ws_manager, 
+                                    force=force_analysis,
+                                    additional_context=additional_context
+                                )
                             
                             # Send confirmation to client
                             await websocket.send_text(json.dumps({
