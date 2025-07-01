@@ -1,0 +1,20 @@
+# ChromaDB data files should not be committed
+chromadb/**/*.bin
+chromadb/**/*.log
+chromadb/chroma.sqlite3*
+
+# Temporary debug/test files  
+test_*.py
+debug_*.py
+diagnose_*.py
+cleanup_*.py
+investigate_*.py
+verify_*.py
+simple_*.py
+quick_*.py
+reset_*.py
+
+# Screenshots from debugging
+../*.png
+../*.jpg
+../*.jpeg
