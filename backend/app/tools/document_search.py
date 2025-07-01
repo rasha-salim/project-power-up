@@ -11,10 +11,14 @@ class DocumentSearchTool(BaseTool):
     """Tool for searching project documents using ChromaDB"""
     
     name: str = "document_search"
-    description: str = "Search for information in project documents based on a query"
+    description: str = "Search for information in project documents based on a query. Takes query as input and returns relevant document content."
     project_id: str = ""
     chroma_client: Any = None
     has_chroma_documents: bool = False
+    
+    # Add args_schema if needed by CrewAI
+    class Config:
+        arbitrary_types_allowed = True
     
     def __init__(self, project_id: str):
         """
@@ -32,6 +36,17 @@ class DocumentSearchTool(BaseTool):
         
         # Set up a flag to track if ChromaDB has documents
         self.has_chroma_documents = False
+        
+        # Log tool initialization
+        logger.info(f"DocumentSearchTool initialized for project {project_id}")
+        print(f"🔧 TOOL INIT: DocumentSearchTool for project {project_id}")
+        
+        # Test if tool is callable
+        try:
+            test_result = self._run("test", 1)
+            print(f"🔧 TOOL TEST: Tool is callable, test result length: {len(test_result)}")
+        except Exception as e:
+            print(f"🔧 TOOL TEST ERROR: {e}")
     
     def _get_documents_from_db(self) -> List[Dict]:
         """
@@ -158,7 +173,9 @@ class DocumentSearchTool(BaseTool):
         Returns:
             String with search results
         """
-        logger.info(f"Searching documents for project {self.project_id} with query: {query}")
+        logger.info(f"🔍 DOCUMENT SEARCH TOOL CALLED - Project: {self.project_id}, Query: '{query}', Limit: {limit}")
+        print(f"🔍 DOCUMENT SEARCH TOOL CALLED - Project: {self.project_id}, Query: '{query}'")  # Console output for visibility
+        print(f"🔍 TOOL EXECUTION START: {self.__class__.__name__} at {__import__('datetime').datetime.now()}")  # Timestamp for tracking
         
         try:
             # First try with ChromaDB
@@ -254,7 +271,9 @@ class DocumentSearchTool(BaseTool):
                         f"Content snippet: {doc.get('content', '')[:500]}..."
                     )
                 
-                return "\n\n".join(formatted_results)
+                result = "\n\n".join(formatted_results)
+                print(f"🔍 DATABASE FALLBACK COMPLETE: Found {len(formatted_results)} results, total length: {len(result)} characters")
+                return result
             
             # Format results from ChromaDB (if we have them)
             if not results or not results["documents"] or len(results["documents"][0]) == 0:
@@ -274,8 +293,11 @@ class DocumentSearchTool(BaseTool):
                     f"Content: {document_text}\n"
                 )
             
-            return "\n\n".join(formatted_results)
+            result = "\n\n".join(formatted_results)
+            print(f"🔍 TOOL EXECUTION COMPLETE: Found {len(formatted_results)} results, total length: {len(result)} characters")
+            return result
         
         except Exception as e:
             logger.error(f"Error searching documents: {e}")
+            print(f"🔍 TOOL EXECUTION ERROR: {str(e)}")
             return f"Error searching documents: {str(e)}"

@@ -42,7 +42,8 @@ class AgentServiceV2:
         db: AsyncSession, 
         ws_manager: Optional[WebSocketManager] = None, 
         force: bool = False,
-        additional_context: str = ""
+        additional_context: str = "",
+        existing_analysis_id: Optional[str] = None
     ) -> str:
         """
         Execute analysis with enhanced error handling and state management
@@ -53,6 +54,7 @@ class AgentServiceV2:
             ws_manager: WebSocket manager for real-time updates
             force: Whether to force new analysis even if one exists
             additional_context: Additional context for the analysis
+            existing_analysis_id: ID of existing analysis for incremental updates
             
         Returns:
             str: Analysis ID
@@ -61,7 +63,12 @@ class AgentServiceV2:
             ValueError: If project is not found or invalid
             RuntimeError: If analysis execution fails
         """
-        analysis_id = str(uuid.uuid4())
+        # Use existing analysis ID for incremental updates, otherwise generate new one
+        if existing_analysis_id:
+            analysis_id = existing_analysis_id
+            logger.info(f"Using existing analysis ID {analysis_id} for incremental analysis")
+        else:
+            analysis_id = str(uuid.uuid4())
         
         try:
             logger.info(f"Starting analysis execution for project {project_id} (ID: {analysis_id})")
@@ -113,7 +120,7 @@ class AgentServiceV2:
             # Create and start analysis task
             task = asyncio.create_task(
                 self._execute_analysis_task(
-                    analysis_id, project_id, db, ws_manager, force, additional_context
+                    analysis_id, project_id, db, ws_manager, force, additional_context, existing_analysis_id
                 )
             )
             
@@ -171,15 +178,24 @@ class AgentServiceV2:
         db: AsyncSession, 
         ws_manager: Optional[WebSocketManager], 
         force: bool,
-        additional_context: str
+        additional_context: str,
+        existing_analysis_id: Optional[str] = None
     ) -> None:
         """Internal task for executing analysis with comprehensive error handling"""
         try:
             logger.info(f"Starting analysis task {analysis_id} for project {project_id}")
             
+            # Get existing analysis context if this is an incremental update
+            existing_context = None
+            if existing_analysis_id:
+                existing_analysis = self.analysis_manager.get_pending_analysis(existing_analysis_id)
+                if existing_analysis:
+                    existing_context = existing_analysis.get('result')
+                    logger.info(f"Found existing analysis context for incremental update")
+            
             # Execute analysis using execution service
             result = await self.execution_service.execute_analysis(
-                analysis_id, project_id, db, ws_manager, force, additional_context
+                analysis_id, project_id, db, ws_manager, force, additional_context, existing_context
             )
             
             # Store result in management service
@@ -272,7 +288,43 @@ class AgentServiceV2:
             )
             
             # Handle different response types
-            if result.get("type") == "chat" and result.get("requires_chat_service"):
+            if result.get("type") == "analysis_request" and result.get("requires_analysis_execution"):
+                # Route to analysis execution with enhanced document search
+                logger.info(f"Executing chat-based analysis request for project {project_id}")
+                
+                # Check if this is an incremental analysis (user has existing analysis)
+                existing_analysis_id = result.get("existing_analysis_id")
+                additional_context = result.get("message", "")
+                
+                if existing_analysis_id:
+                    # Execute incremental analysis with existing context
+                    logger.info(f"Executing incremental analysis based on existing analysis {existing_analysis_id}")
+                    analysis_id = await self.execute_incremental_analysis(
+                        project_id=project_id,
+                        existing_analysis_id=existing_analysis_id,
+                        new_context=additional_context,
+                        db=db,
+                        ws_manager=ws_manager
+                    )
+                else:
+                    # Execute new analysis with chat context
+                    logger.info(f"Executing new analysis from chat request")
+                    analysis_id = await self.execute_analysis_with_context(
+                        project_id=project_id,
+                        db=db,
+                        ws_manager=ws_manager,
+                        force=True,  # Force new analysis for chat requests
+                        additional_context=f"User request via chat: {additional_context}"
+                    )
+                
+                return {
+                    "type": "analysis_triggered",
+                    "analysis_id": analysis_id,
+                    "message": "Analysis started based on your request",
+                    "is_incremental": bool(existing_analysis_id)
+                }
+                
+            elif result.get("type") == "chat" and result.get("requires_chat_service"):
                 # Route to communication service for general chat
                 return await self.communication_service.chat_with_agent(
                     db, project_id, result["message"], ws_manager
@@ -403,6 +455,153 @@ class AgentServiceV2:
         return await self.analysis_manager.save_analysis_to_project(
             db, analysis_id, ws_manager
         )
+    
+    async def confirm_and_save_analysis(
+        self, 
+        db: AsyncSession, 
+        analysis_id: str, 
+        ws_manager: Optional[WebSocketManager] = None
+    ) -> bool:
+        """
+        Confirm and save analysis to project insights
+        This method is called by the WebSocket handler when user clicks save button
+        
+        Args:
+            db: Database session
+            analysis_id: ID of the analysis to save
+            ws_manager: WebSocket manager for real-time updates
+            
+        Returns:
+            bool: True if saved successfully
+        """
+        try:
+            logger.info(f"Confirming and saving analysis {analysis_id}")
+            
+            # Check if analysis exists in pending analyses
+            pending_analysis = self.analysis_manager.get_pending_analysis(analysis_id)
+            if not pending_analysis:
+                logger.error(f"Analysis {analysis_id} not found in pending analyses")
+                if ws_manager:
+                    await ws_manager.broadcast(
+                        'unknown',
+                        {
+                            "type": "error",
+                            "message": "❌ Analysis not found or already saved"
+                        }
+                    )
+                return False
+            
+            # Save the analysis
+            success = await self.analysis_manager.save_analysis_to_project(
+                db, analysis_id, ws_manager
+            )
+            
+            if success:
+                logger.info(f"Analysis {analysis_id} confirmed and saved successfully")
+            else:
+                logger.error(f"Failed to save analysis {analysis_id}")
+            
+            return success
+            
+        except Exception as e:
+            logger.error(f"Error confirming and saving analysis {analysis_id}: {str(e)}")
+            
+            # Send error message via WebSocket if possible
+            if ws_manager:
+                try:
+                    pending_analysis = self.analysis_manager.get_pending_analysis(analysis_id)
+                    project_id = pending_analysis.get('project_id', 'unknown') if pending_analysis else 'unknown'
+                    await ws_manager.broadcast(
+                        project_id,
+                        {
+                            "type": "error",
+                            "message": f"❌ Failed to save analysis: {str(e)}"
+                        }
+                    )
+                except Exception as ws_error:
+                    logger.error(f"Failed to send error notification via WebSocket: {str(ws_error)}")
+            
+            return False
+    
+    async def execute_incremental_analysis(
+        self, 
+        project_id: str, 
+        existing_analysis_id: str,
+        new_context: str,
+        db: AsyncSession, 
+        ws_manager: Optional[WebSocketManager] = None
+    ) -> str:
+        """
+        Execute incremental analysis with new context based on existing analysis
+        
+        Args:
+            project_id: ID of the project
+            existing_analysis_id: ID of the existing analysis to build upon
+            new_context: New context or requirements from user
+            db: Database session
+            ws_manager: WebSocket manager for real-time updates
+            
+        Returns:
+            str: New analysis ID for the incremental analysis
+        """
+        try:
+            logger.info(f"Starting incremental analysis for project {project_id} based on {existing_analysis_id}")
+            
+            # Check if existing analysis exists
+            existing_analysis = self.analysis_manager.get_pending_analysis(existing_analysis_id)
+            if not existing_analysis:
+                # Try to get from project insights/database
+                from app.services.project_service import ProjectService
+                project_service = ProjectService()
+                project = await project_service.get_project(db, project_id)
+                if project and project.insights:
+                    logger.info(f"Found existing analysis in project insights")
+                    # Store it as pending for reference
+                    self.analysis_manager.store_pending_analysis(
+                        existing_analysis_id, project_id, project.insights
+                    )
+                else:
+                    logger.warning(f"Existing analysis {existing_analysis_id} not found")
+            
+            # Generate new analysis ID for the incremental analysis
+            new_analysis_id = str(uuid.uuid4())
+            
+            # Send notification about incremental analysis starting
+            if ws_manager:
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "incremental_analysis_started",
+                        "analysis_id": new_analysis_id,
+                        "base_analysis_id": existing_analysis_id,
+                        "message": "🔄 Starting incremental analysis with new context...",
+                        "new_context": new_context
+                    }
+                )
+            
+            # Execute analysis with existing context
+            return await self.execute_analysis_with_context(
+                project_id=project_id,
+                db=db,
+                ws_manager=ws_manager,
+                force=True,  # Force new analysis even if one exists
+                additional_context=f"Previous analysis context exists. New requirements: {new_context}",
+                existing_analysis_id=existing_analysis_id
+            )
+            
+        except Exception as e:
+            logger.error(f"Error executing incremental analysis: {str(e)}")
+            
+            if ws_manager:
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "error",
+                        "message": f"❌ Failed to start incremental analysis: {str(e)}"
+                    }
+                )
+            
+            raise RuntimeError(f"Incremental analysis failed: {str(e)}")
     
     async def cancel_analysis(self, analysis_id: str) -> bool:
         """

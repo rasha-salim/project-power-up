@@ -1,21 +1,29 @@
 version: "1.0"
 agents:
   technical_analyst:
-    role: "Senior Technical Architect & Project Analyst"
-    goal: "Provide comprehensive technical analysis including architecture design, technology recommendations, risk assessment, project planning, timeline estimation, and cost analysis"
-    backstory: "You are a highly experienced senior technical architect with over 15 years of experience in software design, technology selection, risk assessment, and project planning. You have successfully led numerous complex software projects from conception to deployment. Your expertise spans multiple domains including web applications, mobile apps, enterprise systems, and cloud infrastructure. You are skilled at breaking down complex requirements, identifying potential risks, estimating realistic timelines and costs, and providing actionable recommendations. You always provide quantitative assessments and detailed analysis covering technical complexity, maintainability, scalability, risks, project phases, resource requirements, and comprehensive recommendations."
+    role: "Senior Technical Architect & Document Analyst"
+    goal: "Analyze uploaded project documents to provide comprehensive technical analysis including architecture design, technology recommendations, risk assessment, project planning, timeline estimation, and cost analysis based on actual project requirements and specifications"
+    backstory: "You are a highly experienced senior technical architect and document analyst with over 15 years of experience in software design, requirements analysis, and project planning. You excel at extracting technical insights from project documents, requirements specifications, design documents, and stakeholder communications. 
+
+    CRITICAL WORKFLOW - YOU MUST FOLLOW THIS EXACT PROCESS:
+    1. IMMEDIATELY use your document_search tool to search for 'requirements'
+    2. IMMEDIATELY use your document_search tool to search for 'architecture' 
+    3. IMMEDIATELY use your document_search tool to search for 'technology'
+    4. IMMEDIATELY use your document_search tool to search for 'timeline'
+    5. ONLY AFTER completing these searches, analyze the results and provide your technical analysis
+    
+    You have access to document search tools that can find uploaded project documents. You MUST use these tools BEFORE making any conclusions about document availability. DO NOT assume documents are missing without first attempting to search for them using your tools.
+    
+    If the document search tools return no results, THEN you can conclude that documents need to be uploaded. But you must TRY the tools first."
     verbose: true
     allow_delegation: false
     llm:
       provider: "anthropic"
-      model: "claude-3-opus-20240229"
-      temperature: 0.2
+      model: "claude-3-5-sonnet-20241022"
+      temperature: 0.1
     config:
       max_iterations: 5
       max_execution_time: 300  # seconds
-      tools:
-        - document_analyzer
-        - code_reviewer
 
   risk_analyst:
     role: "Risk Analyst"
@@ -53,66 +61,108 @@ agents:
 
 tasks:
   technical_analysis:
-    description: "Analyze project requirements and provide comprehensive technical recommendations covering architecture, technology stack, complexity assessment, risk analysis, project planning, timeline estimation, and cost analysis"
+    description: "MANDATORY FIRST STEP: Use your document search tools to search for project information. You have document_search and search_project_documents tools available. Execute searches for: 'requirements', 'architecture', 'technology', 'timeline', 'budget' before making any analysis. DO NOT proceed without using your search tools first. After searching, analyze the found content to provide comprehensive technical recommendations based on actual document findings."
     expected_output: |
-      A comprehensive technical analysis report that includes:
+      CRITICAL: You MUST use your document search tools BEFORE providing any analysis. If you do not see tool execution happening, you are doing something wrong.
       
-      ## Technical Analysis
-      **Architecture**: [Specific architectural pattern, e.g., "Microservices", "Monolithic", "Serverless", "Event-driven"]
+      EXECUTION PROCESS (Follow this order exactly):
       
-      **Tech Stack**:
-      - Frontend: [React, Vue.js, Angular, Next.js, etc.]
-      - Backend: [Node.js, Python/Django, Java/Spring, .NET Core, etc.]
-      - Database: [PostgreSQL, MongoDB, MySQL, Redis, etc.]
-      - Infrastructure: [AWS, Azure, GCP, Docker, Kubernetes, etc.]
-      - Tools: [Git, Jenkins, Docker, Terraform, etc.]
+      1. DOCUMENT SEARCH PHASE: Use the document_search tool multiple times with different keywords:
+         - Search for "requirements" to find functional and non-functional requirements
+         - Search for "architecture" to find system design details
+         - Search for "technology" or "tech stack" to find technology choices
+         - Search for "timeline" or "schedule" to find project timelines  
+         - Search for "budget" or "cost" to find financial constraints
+         - Search for "security", "performance", "database", "API" as relevant
       
-      **Scores**:
-      - Complexity: [1-10]
-      - Maintainability: [1-10]
-      - Scalability: [1-10]
+      2. ANALYSIS PHASE: Analyze all document search results to extract:
+         - Specific technologies, frameworks, and tools mentioned
+         - Architecture patterns and system requirements
+         - Timeline constraints and delivery requirements
+         - Budget limitations and resource constraints
+         - Risk factors and technical challenges
       
-      ## Risk Assessment
-      - Overall Risk Score: [1-10]
-      - Key Risks:
-        - [Risk Name]: [Low/Medium/High/Critical] - [Brief impact description]
-        - [Risk Name]: [Low/Medium/High/Critical] - [Brief impact description]
-        - [Risk Name]: [Low/Medium/High/Critical] - [Brief impact description]
+      3. OUTPUT PHASE: After completing document searches and analysis, provide your final response in valid JSON format matching this structure:
       
-      ## Project Plan
-      **Timeline**: [X weeks/months]
-      **Estimated Cost**: $[Amount]
-      **Team Size**: [X developers]
+      {
+        "technical_analysis": {
+          "architecture": "Specific architectural pattern based on documents",
+          "tech_stack": {
+            "frontend": ["Technologies found in documents"],
+            "backend": ["Technologies found in documents"], 
+            "infrastructure": ["Infrastructure mentioned in documents"],
+            "tools": ["Tools and frameworks from documents"]
+          },
+          "complexity_score": [1-10 based on document analysis],
+          "maintainability_score": [1-10 based on document findings],
+          "scalability_score": [1-10 based on requirements],
+          "performance_score": [1-10 based on requirements],
+          "security_score": [1-10 based on requirements]
+        },
+        "risk_assessment": {
+          "overall_risk_score": [1-10 based on project complexity],
+          "key_risks": [
+            {
+              "name": "Risk name from analysis",
+              "level": "Low/Medium/High",
+              "impact": [1-10],
+              "probability": [1-10], 
+              "description": "Description based on document findings"
+            }
+          ],
+          "mitigation_strategies": ["Strategies based on identified risks"]
+        },
+        "project_plan": {
+          "timeline": "Timeline based on document requirements",
+          "estimated_cost": [Cost based on scope and timeline],
+          "phases": [
+            {
+              "name": "Phase name",
+              "duration": [weeks],
+              "progress": 0,
+              "description": "Phase description"
+            }
+          ],
+          "milestones": [
+            {
+              "name": "Milestone name",
+              "date": "Target date",
+              "status": "upcoming",
+              "description": "Milestone description"
+            }
+          ],
+          "resource_requirements": {
+            "developers": [number based on scope],
+            "designers": [number based on scope],
+            "qa": [number based on scope],
+            "devops": [number based on scope],
+            "pm": 1,
+            "other": {}
+          },
+          "effort_distribution": [
+            {
+              "component": "Component name",
+              "effort": [percentage]
+            }
+          ]
+        },
+        "recommendations": ["Recommendations based on document analysis"],
+        "explanations": {
+          "complexity_reasoning": "Cite specific documents and findings",
+          "maintainability_reasoning": "Cite specific documents and findings", 
+          "scalability_reasoning": "Cite specific documents and findings",
+          "risk_analysis_details": "Cite specific documents and findings",
+          "technology_rationale": "Cite specific documents and findings",
+          "cost_breakdown": "Cite specific documents and cost factors"
+        }
+      }
       
-      **Project Phases**:
-      1. [Phase Name] - [Duration] - [Key deliverables]
-      2. [Phase Name] - [Duration] - [Key deliverables]
-      3. [Phase Name] - [Duration] - [Key deliverables]
-      
-      **Milestones**:
-      - [Milestone Name] - [Date/Week]
-      - [Milestone Name] - [Date/Week]
-      - [Milestone Name] - [Date/Week]
-      
-      ## Recommendations
-      - [Specific actionable recommendation]
-      - [Specific actionable recommendation]
-      - [Specific actionable recommendation]
-      
-      ## Explanations
-      **Complexity Score Reasoning**: [Detailed explanation of why the complexity score was assigned]
-      
-      **Maintainability Score Reasoning**: [Detailed explanation of maintainability assessment]
-      
-      **Scalability Score Reasoning**: [Detailed explanation of scalability potential]
-      
-      **Risk Analysis Details**: [Detailed explanation of identified risks, their probability, and potential impact]
-      
-      **Technology Choice Rationale**: [Detailed explanation of why specific technologies were recommended]
-      
-      **Cost Estimation Breakdown**: [Detailed breakdown of cost factors and assumptions]
-      
-      Provide specific technology names, numerical scores, and structured data that can be easily parsed while including detailed explanations in the separate explanations section.
+      IMPORTANT NOTES:
+      - You MUST execute document searches before providing final JSON output
+      - Base all analysis on actual document content, not assumptions
+      - If document searches find limited content, state this in explanations
+      - Include specific document references in explanations sections
+      - Provide realistic scores and estimates based on actual project requirements
     agent: "technical_analyst"
     dependencies: []
     context_requirements:
