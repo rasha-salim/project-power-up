@@ -27,6 +27,7 @@ ENV/
 # Database
 *.db
 *.sqlite3
+project_powerup.db
 
 # IDE
 .idea/
@@ -37,6 +38,9 @@ ENV/
 # Logs
 logs/
 *.log
+document_processor_debug.log
+document_processing_started.txt
+document_processing_completed.txt
 
 # Frontend
 node_modules/
@@ -50,9 +54,11 @@ out/
 
 # Vector DB
 chroma_db/
+chromadb/
 
-# Uploads
+# Uploads & Processing
 uploads/
+minimal_uploads/
 
 # OS specific
 .DS_Store
