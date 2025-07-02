@@ -290,15 +290,16 @@ class AgentServiceV2:
             # Handle different response types
             if result.get("type") == "analysis_request" and result.get("requires_analysis_execution"):
                 # Route to analysis execution with enhanced document search
-                logger.info(f"Executing chat-based analysis request for project {project_id}")
+                request_type = result.get("request_type", "new")
+                logger.info(f"Executing {request_type} analysis request for project {project_id}")
                 
                 # Check if this is an incremental analysis (user has existing analysis)
                 existing_analysis_id = result.get("existing_analysis_id")
                 additional_context = result.get("message", "")
                 
-                if existing_analysis_id:
+                if existing_analysis_id and request_type in ['update', 'update_with_context']:
                     # Execute incremental analysis with existing context
-                    logger.info(f"Executing incremental analysis based on existing analysis {existing_analysis_id}")
+                    logger.info(f"Executing incremental {request_type} analysis based on existing analysis {existing_analysis_id}")
                     analysis_id = await self.execute_incremental_analysis(
                         project_id=project_id,
                         existing_analysis_id=existing_analysis_id,
@@ -306,6 +307,14 @@ class AgentServiceV2:
                         db=db,
                         ws_manager=ws_manager
                     )
+                    
+                    return {
+                        "type": "analysis_triggered",
+                        "analysis_id": analysis_id,
+                        "message": f"🔄 {request_type.replace('_', ' ').title()} analysis started with your additional context",
+                        "is_incremental": True,
+                        "request_type": request_type
+                    }
                 else:
                     # Execute new analysis with chat context
                     logger.info(f"Executing new analysis from chat request")
@@ -316,18 +325,28 @@ class AgentServiceV2:
                         force=True,  # Force new analysis for chat requests
                         additional_context=f"User request via chat: {additional_context}"
                     )
+                    
+                    return {
+                        "type": "analysis_triggered",
+                        "analysis_id": analysis_id,
+                        "message": "🚀 New analysis started based on your request",
+                        "is_incremental": False,
+                        "request_type": request_type
+                    }
                 
-                return {
-                    "type": "analysis_triggered",
-                    "analysis_id": analysis_id,
-                    "message": "Analysis started based on your request",
-                    "is_incremental": bool(existing_analysis_id)
-                }
+            elif result.get("type") == "technical_question" and result.get("requires_technical_response"):
+                # Handle technical questions directed to technical agent
+                logger.info(f"Handling technical question for project {project_id}")
+                return await self.communication_service.chat_with_technical_agent(
+                    db, project_id, result["message"], result.get("existing_analysis_id"), ws_manager
+                )
                 
             elif result.get("type") == "chat" and result.get("requires_chat_service"):
-                # Route to communication service for general chat
-                return await self.communication_service.chat_with_agent(
-                    db, project_id, result["message"], ws_manager
+                # Route to communication service for general chat with project context
+                has_context = result.get("has_project_context", False)
+                logger.info(f"Routing to general chat {'with' if has_context else 'without'} project context")
+                return await self.communication_service.chat_with_project_assistant(
+                    db, project_id, result["message"], result.get("existing_analysis_id"), ws_manager
                 )
             elif result.get("type") == "feedback" and result.get("requires_regeneration"):
                 # Handle feedback and regeneration

@@ -244,12 +244,8 @@ class AnalysisExecutionService:
                     logger.info(f"Created DocumentSearchTool for project {project_id}: {document_tool.name}")
                     print(f"🔧 TOOL CREATED: {document_tool.name} for project {project_id}")
                     
-                    # Also try alternative function-based tool
-                    from app.tools.alternative_document_search import search_project_documents
-                    print(f"🔧 ALTERNATIVE TOOL IMPORTED: search_project_documents")
-                    
-                    # Create agent with both tools for testing
-                    agent_tools = [document_tool, search_project_documents]
+                    # Create agent with document search tool
+                    agent_tools = [document_tool]
                     technical_agent = Agent(
                         role=agent_config["role"],
                         goal=agent_config["goal"],
@@ -853,8 +849,19 @@ class AnalysisExecutionService:
         - You should recommend that the team upload project requirements, specifications, or design documents
         """
         
+        # Build context section
+        context_section = ""
+        if additional_context:
+            context_section = f"""
+        
+        🔥 CRITICAL USER REQUIREMENTS - MUST ADDRESS IN ANALYSIS:
+        {additional_context}
+        
+        ⚠️ IMPORTANT: The above requirements MUST be prominently reflected in your analysis output, especially in timelines, recommendations, and risk assessments.
+        """
+        
         base_description = f"""
-        Analyze the project '{project.name}' and provide a comprehensive technical analysis based on the uploaded project documents.
+        Analyze the project '{project.name}' and provide a comprehensive technical analysis based on the uploaded project documents.{context_section}
         
         Project Details:
         - Name: {project.name}
@@ -921,8 +928,7 @@ class AnalysisExecutionService:
         Use the document_search tool to find more detailed information beyond this preview.
         """
         
-        if additional_context:
-            base_description += f"\n\nAdditional Context:\n{additional_context}"
+        # Additional context is already included prominently at the top
         
         # Add forced search results if available
         if forced_search_results and "No documents found" not in forced_search_results:

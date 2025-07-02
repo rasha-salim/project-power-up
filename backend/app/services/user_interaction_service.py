@@ -38,35 +38,95 @@ class UserInteractionService:
             anthropic_api_key=self.anthropic_api_key
         )
     
-    def detect_analysis_request(self, message: str) -> bool:
+    def detect_analysis_request(self, message: str) -> Tuple[bool, str]:
         """
-        Detect if a user message is requesting analysis
+        Detect if a user message is requesting analysis and classify the type
         
         Args:
             message: User's message
             
         Returns:
-            bool: True if message requests analysis
+            Tuple[bool, str]: (is_analysis_request, request_type)
+                request_type can be: 'new', 'update', 'update_with_context'
         """
-        analysis_patterns = [
-            r'\b(analyze|analysis|technical analysis|project analysis)\b',
-            r'\b(assess|evaluate|review)\b.*\b(project|code|architecture|technical)\b',
-            r'\b(what.*risks?|risk assessment)\b',
-            r'\b(estimate|timeline|cost|budget)\b.*\b(analysis|assessment)\b',
-            r'\b(recommend|recommendation)s?\b.*\b(technology|tech stack|architecture)\b',
-            r'\b(run|perform|do|execute)\b.*\b(analysis|assessment)\b',
-            r'\b(create|generate|provide)\b.*\b(analysis|technical analysis|assessment)\b',
-            r'\b(update|refresh|regenerate)\b.*\b(analysis|assessment)\b',
-            r'\btell me about.*\b(risks?|technology|architecture|timeline|cost)\b'
-        ]
+        analysis_patterns = {
+            'update_with_context': [
+                r'\b(update|refresh|regenerate|modify|change)\b.*\b(analysis|assessment)\b.*\b(with|considering|knowing|given|since|because)\b',
+                r'\b(please update|update the)\b.*\b(analysis|assessment)\b.*\b(knowing|considering|with|given)\b',
+                r'\b(revise|adjust|modify)\b.*\b(analysis|assessment)\b.*\b(to include|considering|with|for)\b'
+            ],
+            'update': [
+                r'\b(update|refresh|regenerate|redo)\b.*\b(analysis|assessment)\b',
+                r'\b(please update|update the)\b.*\b(analysis|assessment)\b',
+                r'\b(run.*again|re-run|rerun)\b.*\b(analysis|assessment)\b',
+                r'\b(revise|adjust|modify)\b.*\b(analysis|assessment)\b'
+            ],
+            'new': [
+                r'\b(analyze|analysis|technical analysis|project analysis)\b',
+                r'\b(assess|evaluate|review)\b.*\b(project|code|architecture|technical)\b',
+                r'\b(what.*risks?|risk assessment)\b',
+                r'\b(estimate|timeline|cost|budget)\b.*\b(analysis|assessment)\b',
+                r'\b(recommend|recommendation)s?\b.*\b(technology|tech stack|architecture)\b',
+                r'\b(run|perform|do|execute)\b.*\b(analysis|assessment)\b',
+                r'\b(create|generate|provide)\b.*\b(analysis|technical analysis|assessment)\b',
+                r'\btell me about.*\b(risks?|technology|architecture|timeline|cost)\b'
+            ]
+        }
         
         message_lower = message.lower()
-        for pattern in analysis_patterns:
-            if re.search(pattern, message_lower):
-                logger.info(f"Detected analysis request pattern: {pattern}")
-                return True
         
-        return False
+        # Check in priority order: update_with_context -> update -> new
+        for request_type in ['update_with_context', 'update', 'new']:
+            patterns = analysis_patterns[request_type]
+            for pattern in patterns:
+                if re.search(pattern, message_lower):
+                    logger.info(f"Detected {request_type} analysis request pattern: {pattern}")
+                    return True, request_type
+        
+        return False, 'none'
+
+    async def _get_latest_analysis_id(self, db: AsyncSession, project_id: str) -> Optional[str]:
+        """
+        Get the latest analysis ID for a project
+        
+        Args:
+            db: Database session
+            project_id: ID of the project
+            
+        Returns:
+            Optional[str]: Latest analysis ID or None
+        """
+        try:
+            # Get project with insights to check for existing analysis
+            project_service = ProjectService()
+            project = await project_service.get_project(db, project_id)
+            
+            if project and project.insights:
+                # If project has insights, it means there's an existing analysis
+                # We can use the project_id as a reference since insights are stored per project
+                logger.info(f"Found existing analysis insights for project {project_id}")
+                return f"project_{project_id}_latest"  # Synthetic ID for latest analysis
+            
+            # Check pending analyses
+            pending_analyses = self.analysis_manager.get_all_pending_analyses()
+            project_analyses = [
+                (analysis_id, analysis_data) 
+                for analysis_id, analysis_data in pending_analyses.items() 
+                if analysis_data.get('project_id') == project_id
+            ]
+            
+            if project_analyses:
+                # Return the most recent pending analysis
+                latest_analysis_id = max(project_analyses, key=lambda x: x[1].get('created_at', 0))[0]
+                logger.info(f"Found pending analysis {latest_analysis_id} for project {project_id}")
+                return latest_analysis_id
+            
+            logger.info(f"No existing analysis found for project {project_id}")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error getting latest analysis ID for project {project_id}: {str(e)}")
+            return None
 
     async def handle_user_message(
         self, 
@@ -98,20 +158,44 @@ class UserInteractionService:
             # Detect feedback patterns
             is_feedback, feedback_type = self.detect_feedback_patterns(cleaned_message)
             
-            # Detect analysis requests
-            is_analysis_request = self.detect_analysis_request(cleaned_message)
+            # Detect analysis requests with type classification
+            is_analysis_request, request_type = self.detect_analysis_request(cleaned_message)
             
-            # Route based on message type
-            if is_analysis_request:
-                # Route to analysis execution
-                logger.info(f"Routing message to analysis execution: {cleaned_message}")
-                return {
+            # Get existing analysis context for project
+            existing_analysis_id = await self._get_latest_analysis_id(db, project_id)
+            
+            # Route based on message type (prioritize agent mentions over analysis detection)
+            if agent_id:
+                # Agent mentioned - route to specific agent for chat, not analysis
+                logger.info(f"Agent mentioned ({agent_id}) - routing to agent chat instead of analysis")
+                return await self._handle_general_chat(
+                    db, project_id, cleaned_message, agent_id, existing_analysis_id, ws_manager
+                )
+            elif is_analysis_request:
+                # Route to analysis execution with enhanced context
+                logger.info(f"Routing {request_type} analysis request: {cleaned_message}")
+                
+                response = {
                     "type": "analysis_request", 
                     "message": cleaned_message,
                     "agent_id": agent_id,
-                    "existing_analysis_id": analysis_id,
+                    "request_type": request_type,
                     "requires_analysis_execution": True
                 }
+                
+                # Handle different analysis request types
+                if request_type in ['update', 'update_with_context'] and existing_analysis_id:
+                    # Use existing analysis for incremental updates
+                    response["existing_analysis_id"] = existing_analysis_id
+                    response["has_existing_context"] = True
+                    logger.info(f"Using existing analysis {existing_analysis_id} for {request_type}")
+                elif request_type == 'new' or not existing_analysis_id:
+                    # Force new analysis
+                    response["existing_analysis_id"] = None
+                    response["has_existing_context"] = False
+                    logger.info(f"Creating new analysis for {request_type} request")
+                
+                return response
             elif is_feedback and analysis_id:
                 return await self.handle_feedback_message(
                     db, project_id, analysis_id, cleaned_message, ws_manager
@@ -121,13 +205,10 @@ class UserInteractionService:
                     db, project_id, analysis_id, cleaned_message, ws_manager
                 )
             else:
-                # General chat - delegate to communication service
-                return {
-                    "type": "chat",
-                    "message": cleaned_message,
-                    "agent_id": agent_id,
-                    "requires_chat_service": True
-                }
+                # General chat - enhance with project context
+                return await self._handle_general_chat(
+                    db, project_id, cleaned_message, agent_id, existing_analysis_id, ws_manager
+                )
                 
         except Exception as e:
             logger.error(f"Error handling user message: {str(e)}")
@@ -411,3 +492,47 @@ class UserInteractionService:
                     context_parts.append(f"{i}. {rec}")
         
         return "\n".join(context_parts)
+    
+    async def _handle_general_chat(
+        self,
+        db: AsyncSession,
+        project_id: str,
+        message: str,
+        agent_id: Optional[str],
+        existing_analysis_id: Optional[str],
+        ws_manager: Optional[WebSocketManager] = None
+    ) -> Dict[str, Any]:
+        """
+        Handle general chat with enhanced project context
+        
+        Args:
+            db: Database session
+            project_id: ID of the project
+            message: User's message
+            agent_id: Mentioned agent ID (if any)
+            existing_analysis_id: Existing analysis ID for context
+            ws_manager: WebSocket manager for real-time updates
+            
+        Returns:
+            Dict with response information
+        """
+        # Determine which agent to use
+        if agent_id == "technical_analyst":
+            # User specifically mentioned technical agent for a question
+            return {
+                "type": "technical_question",
+                "message": message,
+                "agent_id": agent_id,
+                "existing_analysis_id": existing_analysis_id,
+                "requires_technical_response": True
+            }
+        else:
+            # General chat - use project assistant with enhanced context
+            return {
+                "type": "chat",
+                "message": message,
+                "agent_id": agent_id or "project_assistant",  # Default to project assistant
+                "existing_analysis_id": existing_analysis_id,
+                "requires_chat_service": True,
+                "has_project_context": bool(existing_analysis_id)
+            }
