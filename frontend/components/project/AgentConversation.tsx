@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { PaperAirplaneIcon, XMarkIcon, CheckIcon, ArrowPathIcon, InformationCircleIcon } from '@heroicons/react/24/outline';
+import { PaperAirplaneIcon, XMarkIcon, CheckIcon, ArrowPathIcon, InformationCircleIcon, StopIcon } from '@heroicons/react/24/outline';
 
 interface Message {
   id: string;
@@ -427,6 +427,22 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
             });
             break;
 
+          case 'conversation_stopped':
+            console.log('Conversation stopped:', data);
+            setIsAgentThinking(false);
+            setAnalysisProgress('');
+            setIsAnalyzing(false);
+            
+            // Add system message about the stop
+            setMessages(prev => [...prev, {
+              id: generateMessageId(),
+              type: 'system',
+              sender: 'system',
+              message: data.message || '🛑 Conversation stopped',
+              timestamp: new Date().toISOString()
+            }]);
+            break;
+
           case 'ping':
             // Ignore ping messages
             break;
@@ -549,6 +565,33 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
       type: 'cancel_analysis',
       analysis_id: currentAnalysisId
     }));
+  };
+
+  const stopAgentConversation = () => {
+    // Stop any ongoing agent thinking/processing
+    setIsAgentThinking(false);
+    setAnalysisProgress('');
+    
+    // If there's an active analysis, cancel it
+    if (currentAnalysisId && isAnalyzing) {
+      cancelAnalysis();
+    }
+    
+    // Send a stop message to interrupt any ongoing agent processing
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: 'stop_conversation'
+      }));
+    }
+    
+    // Add a system message indicating the conversation was stopped
+    setMessages(prev => [...prev, {
+      id: generateMessageId(),
+      type: 'system',
+      sender: 'system',
+      message: '🛑 Conversation stopped by user',
+      timestamp: new Date().toISOString()
+    }]);
   };
 
   const confirmAndSaveAnalysis = async () => {
@@ -1096,14 +1139,26 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
               className="flex-1 px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               disabled={!isConnected || isAgentThinking}
             />
-            <button
-              type="submit"
-              disabled={!isConnected || !inputMessage.trim() || isAgentThinking}
-              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-            >
-              <PaperAirplaneIcon className="h-5 w-5" />
-              Send
-            </button>
+            {isAgentThinking ? (
+              <button
+                type="button"
+                onClick={stopAgentConversation}
+                className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 flex items-center gap-2"
+                title="Stop agent conversation"
+              >
+                <StopIcon className="h-5 w-5" />
+                Stop
+              </button>
+            ) : (
+              <button
+                type="submit"
+                disabled={!isConnected || !inputMessage.trim()}
+                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                <PaperAirplaneIcon className="h-5 w-5" />
+                Send
+              </button>
+            )}
           </form>
         </div>
         {!isConnected && (

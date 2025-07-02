@@ -259,21 +259,34 @@ class AgentCommunicationService:
             tools = [DocumentSearchTool(project_id)] if self._is_document_related(message) else []
             
             backstory = f"""You are an intelligent project assistant for '{project.name}'. 
-            You have access to project documents and analysis results. You can:
+
+            PRIORITY INSTRUCTIONS - ANSWER DIRECTLY FROM ANALYSIS DATA:
+            1. **FIRST**: Check the Current Context below for specific information
+            2. **SECOND**: If not in context, search project documents using document_search tool
+            3. **LAST**: Only provide general guidance if specific data is unavailable
             
-            1. Answer questions about the project based on available documents
-            2. Provide insights from technical analysis when available
-            3. Help users understand project status, risks, timelines, and recommendations
-            4. Guide users to appropriate specialized agents when needed
+            RESPONSE STYLE:
+            - Give DIRECT, SPECIFIC answers when data is available
+            - For timeline questions: State the timeline directly from analysis
+            - For cost questions: Give exact figures from analysis  
+            - For technical questions: Provide specific architecture/tech stack details
+            - For risk questions: List specific risks and scores
+            - Keep answers concise and factual
             
-            Current Context:
+            CURRENT ANALYSIS DATA:
             {context}
             
-            Be helpful, knowledgeable, and direct users to @technical for technical analysis questions."""
+            CAPABILITIES:
+            1. Answer questions about timeline, costs, risks, recommendations from analysis
+            2. Provide project status and technical details from analysis results
+            3. Search project documents for additional information when needed
+            4. Route complex technical questions to @technical agent
+            
+            Remember: Use the analysis data above to give precise, direct answers. Don't be vague when specific information is available."""
             
             agent = Agent(
-                role="Project Assistant",
-                goal="Help users understand their project and provide useful information",
+                role="Project Assistant", 
+                goal="Provide direct, specific answers about project timeline, costs, risks, and recommendations using available analysis data",
                 backstory=backstory,
                 llm=llm,
                 tools=tools,
@@ -475,28 +488,96 @@ class AgentCommunicationService:
             }
     
     def _get_analysis_summary(self, insights: Dict[str, Any]) -> str:
-        """Get a summary of analysis for context"""
+        """Get a comprehensive summary of analysis for context"""
         try:
             summary_parts = []
             
+            # Technical Analysis
             if "technical_analysis" in insights:
                 tech = insights["technical_analysis"]
-                summary_parts.append(f"Architecture: {tech.get('architecture', 'Not specified')[:100]}...")
+                summary_parts.append("=== TECHNICAL ANALYSIS ===")
+                summary_parts.append(f"Architecture: {tech.get('architecture', 'Not specified')}")
                 
                 if "tech_stack" in tech and tech["tech_stack"]:
                     stack = tech["tech_stack"]
-                    summary_parts.append(f"Tech Stack: Frontend: {stack.get('frontend', [])}, Backend: {stack.get('backend', [])}")
+                    summary_parts.append("Tech Stack:")
+                    if stack.get('frontend'):
+                        summary_parts.append(f"  - Frontend: {', '.join(stack['frontend'])}")
+                    if stack.get('backend'):
+                        summary_parts.append(f"  - Backend: {', '.join(stack['backend'])}")
+                    if stack.get('infrastructure'):
+                        summary_parts.append(f"  - Infrastructure: {', '.join(stack['infrastructure'])}")
                 
                 summary_parts.append(f"Complexity Score: {tech.get('complexity_score', 'N/A')}/10")
+                summary_parts.append(f"Maintainability Score: {tech.get('maintainability_score', 'N/A')}/10")
+                summary_parts.append(f"Scalability Score: {tech.get('scalability_score', 'N/A')}/10")
             
+            # Project Plan & Timeline
             if "project_plan" in insights:
                 plan = insights["project_plan"]
-                summary_parts.append(f"Timeline: {plan.get('timeline', 'Not specified')}")
-                summary_parts.append(f"Estimated Cost: ${plan.get('estimated_cost', 0)}")
+                summary_parts.append("\n=== PROJECT TIMELINE & PLAN ===")
+                timeline = plan.get('timeline', 'Not specified')
+                summary_parts.append(f"Overall Timeline: {timeline}")
+                
+                if "phases" in plan and plan["phases"]:
+                    summary_parts.append("Implementation Phases:")
+                    for i, phase in enumerate(plan["phases"], 1):
+                        if isinstance(phase, dict):
+                            phase_name = phase.get('name', f'Phase {i}')
+                            phase_duration = phase.get('duration', 'TBD')
+                            summary_parts.append(f"  {i}. {phase_name}: {phase_duration}")
+                        else:
+                            summary_parts.append(f"  {i}. {phase}")
+                
+                if "milestones" in plan and plan["milestones"]:
+                    summary_parts.append("Key Milestones:")
+                    for milestone in plan["milestones"][:5]:  # Top 5 milestones
+                        if isinstance(milestone, dict):
+                            summary_parts.append(f"  - {milestone.get('name', 'Milestone')}: {milestone.get('date', 'TBD')}")
+                        else:
+                            summary_parts.append(f"  - {milestone}")
+                
+                summary_parts.append(f"Estimated Cost: ${plan.get('estimated_cost', 0):,}")
+                
+                if "resource_requirements" in plan:
+                    resources = plan["resource_requirements"]
+                    if isinstance(resources, dict):
+                        summary_parts.append("Resource Requirements:")
+                        if "developers" in resources:
+                            dev_count = resources["developers"]
+                            if isinstance(dev_count, dict):
+                                total_devs = sum(dev_count.values()) if dev_count.values() else dev_count.get('total', 'TBD')
+                            else:
+                                total_devs = dev_count
+                            summary_parts.append(f"  - Developers: {total_devs}")
+                        if "duration" in resources:
+                            summary_parts.append(f"  - Duration: {resources['duration']}")
             
-            return "\n".join(summary_parts)
-        except:
-            return "Analysis summary not available"
+            # Risk Assessment
+            if "risk_assessment" in insights:
+                risks = insights["risk_assessment"]
+                summary_parts.append("\n=== RISK ASSESSMENT ===")
+                summary_parts.append(f"Overall Risk Score: {risks.get('overall_risk_score', 'N/A')}/10")
+                
+                if "key_risks" in risks and risks["key_risks"]:
+                    summary_parts.append("Top Risks:")
+                    for risk in risks["key_risks"][:3]:  # Top 3 risks
+                        if isinstance(risk, dict):
+                            risk_name = risk.get('name', 'Unknown Risk')
+                            risk_level = risk.get('severity', risk.get('level', 'Unknown'))
+                            summary_parts.append(f"  - {risk_name} ({risk_level})")
+                        else:
+                            summary_parts.append(f"  - {risk}")
+            
+            # Recommendations
+            if "recommendations" in insights and insights["recommendations"]:
+                summary_parts.append("\n=== KEY RECOMMENDATIONS ===")
+                for i, rec in enumerate(insights["recommendations"][:3], 1):  # Top 3 recommendations
+                    summary_parts.append(f"{i}. {rec}")
+            
+            return "\n".join(summary_parts) if summary_parts else "Analysis data available but no summary could be generated"
+        except Exception as e:
+            return f"Analysis summary not available (error: {str(e)})"
     
     def _get_technical_analysis_summary(self, insights: Dict[str, Any]) -> str:
         """Get a technical-focused summary of analysis"""

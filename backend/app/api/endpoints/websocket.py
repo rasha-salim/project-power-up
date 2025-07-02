@@ -373,6 +373,55 @@ async def agent_conversation_websocket(
                                 "message": f"Failed to regenerate analysis: {str(e)}"
                             }))
                     
+                    elif message_type == "stop_conversation":
+                        # Handle stop conversation request
+                        logger.info(f"Stop conversation requested for project {project_id} by client {client_id}")
+                        
+                        try:
+                            # Import dependencies
+                            from sqlalchemy.ext.asyncio import AsyncSession
+                            from app.db.init_db_simple import get_async_db
+                            
+                            # Get database session
+                            db = await anext(get_async_db().__aiter__())
+                            
+                            # Stop any running agent conversations by canceling running tasks
+                            # We'll use the agent service to stop all running tasks for this project
+                            stopped_tasks = []
+                            
+                            # Get all running analyses for this project and cancel them
+                            for analysis_id, task in list(agent_service.analysis_manager.running_tasks.items()):
+                                if not task.done():
+                                    # Get the analysis data to check if it belongs to this project
+                                    pending_analysis = agent_service.analysis_manager.get_pending_analysis(analysis_id)
+                                    if pending_analysis and pending_analysis.get('project_id') == project_id:
+                                        success = await agent_service.cancel_analysis(analysis_id)
+                                        if success:
+                                            stopped_tasks.append(analysis_id)
+                                            logger.info(f"Cancelled analysis task {analysis_id} for project {project_id}")
+                            
+                            # Send confirmation back to the client
+                            stop_message = {
+                                "type": "conversation_stopped",
+                                "message": "🛑 Conversation stopped successfully",
+                                "stopped_tasks": stopped_tasks
+                            }
+                            await websocket.send_text(json.dumps(stop_message))
+                            
+                            # Broadcast to other clients in the same project
+                            await broadcast_message(project_id, client_id, {
+                                "type": "conversation_stopped",
+                                "message": f"Conversation stopped by another user",
+                                "stopped_tasks": stopped_tasks
+                            })
+                            
+                        except Exception as e:
+                            logger.error(f"Error stopping conversation: {str(e)}")
+                            await websocket.send_text(json.dumps({
+                                "type": "error",
+                                "message": f"Failed to stop conversation: {str(e)}"
+                            }))
+                    
                     else:
                         # Handle unknown message types
                         await websocket.send_text(json.dumps({
