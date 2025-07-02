@@ -67,3 +67,4 @@ Thumbs.db
 # Development Rules (keep local for now)
 .cursorrules
 docs/development-rules.md
+.claude/settings.local.json
