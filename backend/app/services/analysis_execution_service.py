@@ -107,6 +107,112 @@ class AnalysisExecutionService:
         error_str = str(error).lower()
         return any(transient_error.lower() in error_str for transient_error in transient_errors)
     
+    def _validate_constraint_compliance(
+        self, 
+        project: Project, 
+        analysis_result: Dict[str, Any], 
+        existing_analysis: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Validate that the analysis respects original project constraints.
+        
+        Args:
+            project: Original project with constraints
+            analysis_result: New analysis result to validate
+            existing_analysis: Previous analysis for comparison in update mode
+            
+        Returns:
+            Dict with validation results and any violations found
+        """
+        validation_result = {
+            "is_valid": True,
+            "violations": [],
+            "warnings": [],
+            "constraint_compliance": {
+                "deadline_preserved": True,
+                "budget_respected": True,
+                "team_size_maintained": True,
+                "goals_preserved": True
+            }
+        }
+        
+        try:
+            project_plan = analysis_result.get('project_plan', {})
+            
+            # Check deadline compliance
+            if project.deadline:
+                analysis_timeline = project_plan.get('timeline', '')
+                estimated_cost = project_plan.get('estimated_cost', 0)
+                
+                # For updates, check if timeline was extended beyond original deadline
+                if existing_analysis and 'project_plan' in existing_analysis:
+                    existing_timeline = existing_analysis['project_plan'].get('timeline', '')
+                    # Simple check - if timeline mentions extending beyond original deadline
+                    if 'extend' in analysis_timeline.lower() or 'longer' in analysis_timeline.lower():
+                        validation_result["constraint_compliance"]["deadline_preserved"] = False
+                        validation_result["violations"].append(
+                            f"Timeline appears to extend beyond original deadline: {project.deadline}"
+                        )
+            
+            # Check budget compliance
+            if project.budget:
+                estimated_cost = project_plan.get('estimated_cost', 0)
+                if isinstance(estimated_cost, (int, float)) and estimated_cost > 0:
+                    # Simple budget check - if budget is specified as a number, compare
+                    if project.budget.isdigit() and int(project.budget) < estimated_cost:
+                        validation_result["constraint_compliance"]["budget_respected"] = False
+                        validation_result["violations"].append(
+                            f"Estimated cost ${estimated_cost} exceeds budget ${project.budget}"
+                        )
+            
+            # Check team size compliance
+            if project.team_size:
+                resource_reqs = project_plan.get('resource_requirements', {})
+                total_team_members = sum([
+                    resource_reqs.get('developers', 0),
+                    resource_reqs.get('designers', 0), 
+                    resource_reqs.get('qa', 0),
+                    resource_reqs.get('devops', 0),
+                    resource_reqs.get('pm', 0)
+                ])
+                
+                if total_team_members > project.team_size:
+                    validation_result["constraint_compliance"]["team_size_maintained"] = False
+                    validation_result["violations"].append(
+                        f"Required team size {total_team_members} exceeds constraint {project.team_size}"
+                    )
+            
+            # Check for timeline preservation in update mode
+            if existing_analysis and 'project_plan' in existing_analysis:
+                existing_phases = existing_analysis['project_plan'].get('phases', [])
+                new_phases = project_plan.get('phases', [])
+                
+                # Check if major phases were removed or completely restructured
+                if len(existing_phases) > 0 and len(new_phases) == 0:
+                    validation_result["warnings"].append(
+                        "All existing phases were removed - this may not preserve timeline structure"
+                    )
+                elif len(existing_phases) > len(new_phases):
+                    validation_result["warnings"].append(
+                        f"Phase count reduced from {len(existing_phases)} to {len(new_phases)} - verify timeline preservation"
+                    )
+            
+            # Set overall validity
+            validation_result["is_valid"] = len(validation_result["violations"]) == 0
+            
+            # Log validation results
+            if not validation_result["is_valid"]:
+                logger.warning(f"Constraint violations found: {validation_result['violations']}")
+            if validation_result["warnings"]:
+                logger.info(f"Constraint warnings: {validation_result['warnings']}")
+            
+        except Exception as e:
+            logger.error(f"Error validating constraints: {e}")
+            validation_result["is_valid"] = False
+            validation_result["violations"].append(f"Validation error: {str(e)}")
+        
+        return validation_result
+    
     async def execute_analysis(
         self, 
         analysis_id: str, 
@@ -275,8 +381,18 @@ class AnalysisExecutionService:
                 print(f"🔍 FORCING DOCUMENT SEARCH BEFORE AGENT EXECUTION")
                 forced_search_results = await self._force_document_search(project_id)
                 
-                # Build task description with document information AND forced search results
-                task_description = self._build_task_description(project, additional_context, document_status, document_preview, forced_search_results)
+                # Get existing analysis context for updates
+                existing_analysis_context = self._get_existing_analysis_context(db, project_id)
+                
+                # Build task description with document information, forced search results, and existing analysis context
+                task_description = self._build_task_description(
+                    project, 
+                    additional_context, 
+                    document_status, 
+                    document_preview, 
+                    forced_search_results,
+                    existing_analysis_context
+                )
                 
                 # Create analysis task
                 task = Task(
@@ -333,6 +449,37 @@ class AnalysisExecutionService:
                 structured_analysis = self.analysis_data_service.parse_agent_output_to_pydantic(
                     crew_output, analysis_id, project_id
                 )
+                
+                # Validate constraint compliance
+                validation_result = None
+                if structured_analysis:
+                    try:
+                        analysis_dict = structured_analysis.dict()
+                        validation_result = self._validate_constraint_compliance(
+                            project, analysis_dict, existing_analysis_context
+                        )
+                        
+                        if not validation_result["is_valid"]:
+                            logger.warning(f"Analysis violates constraints: {validation_result['violations']}")
+                            # Send constraint violation warning via WebSocket
+                            if ws_manager:
+                                await ws_manager.broadcast(
+                                    project_id,
+                                    {
+                                        "type": "constraint_violation",
+                                        "analysis_id": analysis_id,
+                                        "violations": validation_result["violations"],
+                                        "warnings": validation_result["warnings"],
+                                        "message": "⚠️ Analysis may violate project constraints. Review recommended.",
+                                        "timestamp": datetime.now().isoformat()
+                                    }
+                                )
+                        else:
+                            logger.info(f"Analysis passes constraint validation")
+                            
+                    except Exception as validation_error:
+                        logger.error(f"Error during constraint validation: {validation_error}")
+                        validation_result = {"is_valid": False, "error": str(validation_error)}
                 
                 # Debug logging before broadcasts
                 logger.info(f"About to broadcast analysis completion for project_id: {project_id} (type: {type(project_id)})")
@@ -826,7 +973,24 @@ class AnalysisExecutionService:
             logger.warning(f"Error getting document preview: {e}")
             return "Document preview unavailable"
     
-    def _build_task_description(self, project: Project, additional_context: str = "", document_status: Dict[str, Any] = None, document_preview: str = "", forced_search_results: str = "") -> str:
+    def _get_existing_analysis_context(self, db, project_id: str) -> Optional[Dict[str, Any]]:
+        """Get existing analysis data for update context"""
+        try:
+            from app.db.models import Analysis
+            existing_analysis = db.query(Analysis).filter(
+                Analysis.project_id == project_id
+            ).order_by(Analysis.created_at.desc()).first()
+            
+            if existing_analysis:
+                import json
+                result = json.loads(existing_analysis.result) if isinstance(existing_analysis.result, str) else existing_analysis.result
+                return result
+            return None
+        except Exception as e:
+            logger.warning(f"Could not retrieve existing analysis for context: {e}")
+            return None
+
+    def _build_task_description(self, project: Project, additional_context: str = "", document_status: Dict[str, Any] = None, document_preview: str = "", forced_search_results: str = "", existing_analysis: Optional[Dict[str, Any]] = None) -> str:
         """Build task description for analysis with document search instructions"""
         
         # Prepare document status information
@@ -849,19 +1013,66 @@ class AnalysisExecutionService:
         - You should recommend that the team upload project requirements, specifications, or design documents
         """
         
-        # Build context section
-        context_section = ""
+        # Determine analysis mode and build context sections
+        analysis_mode = "update" if existing_analysis else "initial"
+        
+        # Build constraint preservation section
+        constraint_section = f"""
+        
+        🔒 PROJECT CONSTRAINTS (MUST BE PRESERVED):
+        - Project Deadline: {getattr(project, 'deadline', 'Not specified')}
+        - Budget Constraint: {getattr(project, 'budget', 'Not specified')}
+        - Team Size Limit: {getattr(project, 'team_size', 'Not specified')}
+        - Project Goal: {getattr(project, 'goal', 'Not specified')}
+        
+        ⚠️ CRITICAL: These constraints MUST be respected in your analysis. Do not violate these limits.
+        """
+        
+        # Build existing analysis context section
+        existing_context_section = ""
+        if existing_analysis:
+            existing_timeline = existing_analysis.get('project_plan', {}).get('timeline', 'Not found')
+            existing_phases = existing_analysis.get('project_plan', {}).get('phases', [])
+            existing_milestones = existing_analysis.get('project_plan', {}).get('milestones', [])
+            
+            existing_context_section = f"""
+        
+        📋 EXISTING ANALYSIS CONTEXT (UPDATE MODE):
+        - Current Timeline: {existing_timeline}
+        - Existing Phases: {len(existing_phases)} phases defined
+        - Existing Milestones: {len(existing_milestones)} milestones
+        - Analysis Mode: UPDATE (preserve existing structure)
+        
+        🔄 UPDATE INSTRUCTIONS:
+        - PRESERVE the existing timeline structure and major milestones
+        - ADD new requirements as additional milestones within existing phases
+        - DO NOT replace the entire timeline - only augment it
+        - Explain how new requirements fit within the existing framework
+        - If conflicts arise with original constraints, flag them clearly
+        """
+        else:
+            existing_context_section = f"""
+        
+        📋 ANALYSIS MODE: INITIAL
+        - This is a new analysis - create comprehensive structure
+        - Respect all project constraints listed above
+        """
+        
+        # Build user requirements context section
+        user_context_section = ""
         if additional_context:
-            context_section = f"""
+            user_context_section = f"""
         
         🔥 CRITICAL USER REQUIREMENTS - MUST ADDRESS IN ANALYSIS:
         {additional_context}
         
-        ⚠️ IMPORTANT: The above requirements MUST be prominently reflected in your analysis output, especially in timelines, recommendations, and risk assessments.
+        ⚠️ IMPORTANT: The above requirements MUST be prominently reflected in your analysis output.
+        For UPDATE mode: Incorporate these as new milestones within existing timeline.
+        For INITIAL mode: Build comprehensive analysis including these requirements.
         """
         
         base_description = f"""
-        Analyze the project '{project.name}' and provide a comprehensive technical analysis based on the uploaded project documents.{context_section}
+        Analyze the project '{project.name}' and provide a comprehensive technical analysis based on the uploaded project documents.{constraint_section}{existing_context_section}{user_context_section}
         
         Project Details:
         - Name: {project.name}
@@ -869,7 +1080,8 @@ class AnalysisExecutionService:
         - Industry: {getattr(project, 'industry', 'Not specified')}
         - Team Size: {getattr(project, 'team_size', 'Not specified')}
         - Budget: {getattr(project, 'budget', 'Not specified')}
-        - Deadline: {getattr(project, 'deadline', 'Not specified')}{doc_info}
+        - Deadline: {getattr(project, 'deadline', 'Not specified')}
+        - Analysis Mode: {analysis_mode.upper()}{doc_info}
         
         EXECUTION PROCESS - FOLLOW THIS ORDER:
         

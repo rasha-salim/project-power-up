@@ -323,12 +323,12 @@
 <body>
     <div class="header">
         <h1>🚀 Project Power-Up</h1>
-        <p>Database Migration & Codebase Improvements Kanban Board</p>
+        <p>AI Agent Improvements & Database Migration Kanban Board</p>
     </div>
 
     <div class="progress-bar">
-        <div class="progress-fill" style="width: 40%"></div>
-        <div class="progress-text">Overall Progress: 40% Complete</div>
+        <div class="progress-fill" style="width: 65%"></div>
+        <div class="progress-text">Overall Progress: 65% Complete</div>
     </div>
 
     <div class="kanban-container">
@@ -336,7 +336,7 @@
         <div class="column backlog" data-status="backlog">
             <div class="column-header">
                 <div class="column-title">BACKLOG</div>
-                <div class="column-count">8</div>
+                <div class="column-count">10</div>
             </div>
             
             <div class="card" draggable="true" data-id="task-1">
@@ -410,6 +410,24 @@
                     <span class="card-assignee">Documentation</span>
                 </div>
             </div>
+
+            <div class="card" draggable="true" data-id="task-21">
+                <div class="card-title">Enhanced Constraint Validation Testing</div>
+                <div class="card-description">Create comprehensive test suite for constraint validation and timeline preservation logic</div>
+                <div class="card-meta">
+                    <span class="card-priority priority-medium">Medium</span>
+                    <span class="card-assignee">Testing</span>
+                </div>
+            </div>
+
+            <div class="card" draggable="true" data-id="task-22">
+                <div class="card-title">User Approval Workflow for Constraint Changes</div>
+                <div class="card-description">Implement workflow to request user approval when new requirements conflict with original constraints</div>
+                <div class="card-meta">
+                    <span class="card-priority priority-medium">Medium</span>
+                    <span class="card-assignee">Feature</span>
+                </div>
+            </div>
             
             <div class="add-card-btn" onclick="openAddCardModal('backlog')">
                 + Add New Card
@@ -420,7 +438,7 @@
         <div class="column todo" data-status="todo">
             <div class="column-header">
                 <div class="column-title">TODO</div>
-                <div class="column-count">3</div>
+                <div class="column-count">1</div>
             </div>
 
             <div class="card" draggable="true" data-id="task-9">
@@ -429,24 +447,6 @@
                 <div class="card-meta">
                     <span class="card-priority priority-high">High</span>
                     <span class="card-assignee">Phase 1</span>
-                </div>
-            </div>
-
-            <div class="card" draggable="true" data-id="task-10">
-                <div class="card-title">Update Import Statements</div>
-                <div class="card-description">Optionally update imports to use compatibility layer for better consistency</div>
-                <div class="card-meta">
-                    <span class="card-priority priority-medium">Medium</span>
-                    <span class="card-assignee">Phase 1</span>
-                </div>
-            </div>
-
-            <div class="card" draggable="true" data-id="task-11">
-                <div class="card-title">Create Migration Tests</div>
-                <div class="card-description">Develop tests specifically for database migration process and compatibility</div>
-                <div class="card-meta">
-                    <span class="card-priority priority-high">High</span>
-                    <span class="card-assignee">Testing</span>
                 </div>
             </div>
             
@@ -485,7 +485,7 @@
         <div class="column done" data-status="done">
             <div class="column-header">
                 <div class="column-title">DONE</div>
-                <div class="column-count">7</div>
+                <div class="column-count">14</div>
             </div>
 
             <div class="card" draggable="true" data-id="task-12">
@@ -545,6 +545,69 @@
             <div class="card" draggable="true" data-id="task-18">
                 <div class="card-title">Project Kanban Board</div>
                 <div class="card-description">Created interactive HTML Kanban board for project tracking</div>
+                <div class="card-meta">
+                    <span class="card-priority priority-medium">Medium</span>
+                    <span class="card-assignee">✅ Complete</span>
+                </div>
+            </div>
+
+            <div class="card" draggable="true" data-id="task-19">
+                <div class="card-title">ProjectInsights Real Data Integration</div>
+                <div class="card-description">Fixed ProjectInsights.tsx to display real analysis data instead of mock data, resolved API routing issues</div>
+                <div class="card-meta">
+                    <span class="card-priority priority-high">High</span>
+                    <span class="card-assignee">✅ Complete</span>
+                </div>
+            </div>
+
+            <div class="card" draggable="true" data-id="task-20">
+                <div class="card-title">Agent Constraint Preservation System</div>
+                <div class="card-description">Enhanced agents.yaml and AnalysisExecutionService to preserve project constraints during analysis updates</div>
+                <div class="card-meta">
+                    <span class="card-priority priority-high">High</span>
+                    <span class="card-assignee">✅ Complete</span>
+                </div>
+            </div>
+
+            <div class="card" draggable="true" data-id="task-23">
+                <div class="card-title">Update Import Statements</div>
+                <div class="card-description">Updated imports to use compatibility layer for better consistency across the codebase</div>
+                <div class="card-meta">
+                    <span class="card-priority priority-medium">Medium</span>
+                    <span class="card-assignee">✅ Complete</span>
+                </div>
+            </div>
+
+            <div class="card" draggable="true" data-id="task-24">
+                <div class="card-title">Create Migration Tests</div>
+                <div class="card-description">Developed tests specifically for database migration process and compatibility layer validation</div>
+                <div class="card-meta">
+                    <span class="card-priority priority-high">High</span>
+                    <span class="card-assignee">✅ Complete</span>
+                </div>
+            </div>
+
+            <div class="card" draggable="true" data-id="task-25">
+                <div class="card-title">Agent Configuration Enhancement</div>
+                <div class="card-description">Enhanced agent backstories and task descriptions with constraint preservation principles</div>
+                <div class="card-meta">
+                    <span class="card-priority priority-high">High</span>
+                    <span class="card-assignee">✅ Complete</span>
+                </div>
+            </div>
+
+            <div class="card" draggable="true" data-id="task-26">
+                <div class="card-title">Context Retrieval Implementation</div>
+                <div class="card-description">Implemented existing analysis context retrieval and project constraint passing to agents</div>
+                <div class="card-meta">
+                    <span class="card-priority priority-medium">Medium</span>
+                    <span class="card-assignee">✅ Complete</span>
+                </div>
+            </div>
+
+            <div class="card" draggable="true" data-id="task-27">
+                <div class="card-title">Constraint Validation System</div>
+                <div class="card-description">Added real-time constraint compliance validation with WebSocket notifications for violations</div>
                 <div class="card-meta">
                     <span class="card-priority priority-medium">Medium</span>
                     <span class="card-assignee">✅ Complete</span>
@@ -666,7 +729,7 @@
 
         // Modal functionality
         let currentTargetColumn = null;
-        let cardCounter = 19; // Start from 19 since we have 18 existing cards
+        let cardCounter = 28; // Updated to reflect current card count
 
         function openAddCardModal(columnStatus) {
             currentTargetColumn = columnStatus;

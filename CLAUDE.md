@@ -109,12 +109,13 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 
 ## Agent Configuration System
 
-The system uses YAML configuration for defining AI agents and tasks. Key configuration concepts:
+The system uses YAML configuration for defining AI agents and tasks with advanced constraint preservation capabilities:
 
-- **Agents**: Role, goal, backstory, LLM settings, tools
-- **Tasks**: Description, expected output, dependencies, context requirements  
+- **Agents**: Role, goal, backstory, LLM settings, tools, constraint preservation rules
+- **Tasks**: Description, expected output, dependencies, context requirements, analysis mode handling
 - **Crews**: Agent orchestration, process flow, memory management
 - **Environment Variables**: Dynamic configuration via `${VARIABLE_NAME}` syntax
+- **Constraint Preservation**: Automatic project constraint respect during analysis updates
 
 ## Database Schema
 
@@ -139,6 +140,8 @@ WebSocket implementation for:
 - Document processing progress updates  
 - Multi-agent collaboration visualization
 - Human-in-the-loop interactions
+- Constraint violation notifications
+- Analysis validation alerts
 
 ## Testing & Quality
 
@@ -187,9 +190,32 @@ WebSocket implementation for:
 - **Mock External**: Mock external API calls in tests
 - **Use pytest**: For backend testing
 
+## Recent Major Updates
+
+### AI Agent Constraint Preservation System (Latest - Dec 2024)
+- **Issue Resolved**: Agents were replacing entire project timelines during updates instead of preserving constraints
+- **Solution**: Comprehensive constraint preservation system with validation and real-time notifications
+- **Files Updated**: 
+  - `backend/app/config/agents.yaml` - Enhanced agent configurations with constraint preservation rules
+  - `backend/app/services/analysis_execution_service.py` - Added context retrieval and validation systems
+- **Features Added**:
+  - Existing analysis context retrieval for updates (`_get_existing_analysis_context()`)
+  - Real-time constraint compliance validation (`_validate_constraint_compliance()`)
+  - WebSocket notifications for constraint violations
+  - Timeline preservation logic with milestone augmentation
+  - Analysis mode distinction (initial vs update)
+- **Impact**: Agents now preserve original deadlines, budgets, team sizes while intelligently incorporating new requirements as milestones
+
+### ProjectInsights Real Data Integration  
+- **Issue Resolved**: Insights dashboard showing mock data instead of real analysis results
+- **Solution**: Fixed data transformation and API routing in ProjectInsights.tsx
+- **Files Updated**: `frontend/components/project/ProjectInsights.tsx`, Next.js API routes
+- **Impact**: Dashboard now displays actual analysis data with comprehensive visualizations
+
 ## Common Debugging
 
 - **Database Issues**: Check connection settings and run validation scripts
-- **Agent Failures**: Review agent configuration and API key settings
+- **Agent Failures**: Review agent configuration and API key settings, check constraint preservation logs
 - **WebSocket Problems**: Verify CORS configuration and connection handling
 - **File Upload Issues**: Check upload directory permissions and size limits
+- **Constraint Violations**: Check analysis execution logs for validation errors and constraint compliance
