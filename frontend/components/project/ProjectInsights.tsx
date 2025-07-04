@@ -390,9 +390,11 @@ export default function ProjectInsights({ projectId, projectStatus, projectInsig
                   <div>
                     <p className="text-sm text-purple-600 font-medium">Estimated Cost</p>
                     <p className="text-2xl font-bold text-purple-900">
-                      ${insights.project_plan?.estimated_cost 
-                        ? (insights.project_plan.estimated_cost / 1000).toFixed(0) 
-                        : '0'}k
+                      {insights.project_plan?.estimated_cost 
+                        ? insights.project_plan.estimated_cost >= 1000
+                          ? `$${(insights.project_plan.estimated_cost / 1000).toFixed(1)}k`
+                          : `$${insights.project_plan.estimated_cost}`
+                        : '$0'}
                     </p>
                   </div>
                   <CurrencyDollarIcon className="w-8 h-8 text-purple-400" />
@@ -765,18 +767,43 @@ export default function ProjectInsights({ projectId, projectStatus, projectInsig
               )}
             </div>
 
-            {/* Cost Information */}
-            {insights.project_plan?.estimated_cost && (
-              <div className="bg-white border rounded-lg p-6">
-                <h4 className="text-lg font-medium text-gray-900 mb-4">Cost Estimation</h4>
-                <div className="text-center">
-                  <div className="text-4xl font-bold text-green-600 mb-2">
-                    ${insights.project_plan.estimated_cost.toLocaleString()}
+            {/* Cost Information - Debug Version */}
+            {(() => {
+              console.log('💰 Cost Debug Info:');
+              console.log('insights.project_plan:', insights.project_plan);
+              console.log('estimated_cost value:', insights.project_plan?.estimated_cost);
+              console.log('estimated_cost type:', typeof insights.project_plan?.estimated_cost);
+              console.log('estimated_cost != null:', insights.project_plan?.estimated_cost != null);
+              console.log('estimated_cost !== "":', insights.project_plan?.estimated_cost !== '');
+              
+              const shouldShow = insights.project_plan?.estimated_cost != null && insights.project_plan.estimated_cost !== '';
+              console.log('Should show cost section:', shouldShow);
+              
+              return shouldShow ? (
+                <div className="bg-white border rounded-lg p-6">
+                  <h4 className="text-lg font-medium text-gray-900 mb-4">Cost Estimation</h4>
+                  <div className="text-center">
+                    <div className="text-4xl font-bold text-green-600 mb-2">
+                      ${typeof insights.project_plan.estimated_cost === 'string' 
+                        ? insights.project_plan.estimated_cost.replace(/\$|,/g, '').replace(/[^\d]/g, '') 
+                          ? Number(insights.project_plan.estimated_cost.replace(/\$|,/g, '').replace(/[^\d]/g, '')).toLocaleString()
+                          : insights.project_plan.estimated_cost
+                        : insights.project_plan.estimated_cost.toLocaleString()}
+                    </div>
+                    <p className="text-gray-500">Total Estimated Cost</p>
                   </div>
-                  <p className="text-gray-500">Total Estimated Cost</p>
                 </div>
-              </div>
-            )}
+              ) : (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-6">
+                  <h4 className="text-lg font-medium text-red-900 mb-4">Cost Debug Info</h4>
+                  <div className="text-sm text-red-700">
+                    <p>Cost value: {JSON.stringify(insights.project_plan?.estimated_cost)}</p>
+                    <p>Type: {typeof insights.project_plan?.estimated_cost}</p>
+                    <p>Project plan exists: {JSON.stringify(!!insights.project_plan)}</p>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         )}
 

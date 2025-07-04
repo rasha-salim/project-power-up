@@ -221,8 +221,19 @@ class ProjectService:
         if project_update.insights is not None:
             project.insights = project_update.insights
             
+        if project_update.planning_status is not None:
+            project.planning_status = project_update.planning_status
+            
+        if project_update.brief_sections is not None:
+            project.brief_sections = project_update.brief_sections
+            logger.info(f"Updated brief_sections for project {project_id}: {len(project_update.brief_sections)} sections")
+            
+        if project_update.generated_documents is not None:
+            project.generated_documents = project_update.generated_documents
+            
         await db.commit()
         await db.refresh(project)
+        logger.info(f"Successfully committed project updates to database for project {project_id}")
         
         return project
     
