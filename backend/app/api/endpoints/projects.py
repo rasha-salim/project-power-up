@@ -32,6 +32,9 @@ async def create_project(
             goal=project.goal,
             industry=project.industry,
             budget=project.budget,
+            planning_status=project.planning_status,
+            brief_sections=project.brief_sections,
+            generated_documents=project.generated_documents,
             created_at=project.created_at,
             updated_at=project.updated_at,
             message="Project created successfully"
@@ -67,6 +70,9 @@ async def get_project(
             industry=project.industry,
             budget=project.budget,
             insights=project.insights,
+            planning_status=project.planning_status,
+            brief_sections=project.brief_sections,
+            generated_documents=project.generated_documents,
             created_at=project.created_at,
             updated_at=project.updated_at,
             message="Project retrieved successfully"
@@ -101,6 +107,9 @@ async def list_projects(
                 industry=project.industry,
                 budget=project.budget,
                 insights=project.insights,
+                planning_status=project.planning_status,
+                brief_sections=project.brief_sections,
+                generated_documents=project.generated_documents,
                 created_at=project.created_at,
                 updated_at=project.updated_at,
                 message="Project retrieved successfully"
@@ -139,6 +148,10 @@ async def update_project(
             goal=updated_project.goal,
             industry=updated_project.industry,
             budget=updated_project.budget,
+            insights=updated_project.insights,
+            planning_status=updated_project.planning_status,
+            brief_sections=updated_project.brief_sections,
+            generated_documents=updated_project.generated_documents,
             created_at=updated_project.created_at,
             updated_at=updated_project.updated_at,
             message="Project updated successfully"
@@ -213,6 +226,10 @@ async def analyze_project(
             goal=updated_project.goal,
             industry=updated_project.industry,
             budget=updated_project.budget,
+            insights=updated_project.insights,
+            planning_status=updated_project.planning_status,
+            brief_sections=updated_project.brief_sections,
+            generated_documents=updated_project.generated_documents,
             created_at=updated_project.created_at,
             updated_at=updated_project.updated_at,
             message="Project analysis started"
