@@ -39,14 +39,11 @@ class DocumentSearchTool(BaseTool):
         
         # Log tool initialization
         logger.info(f"DocumentSearchTool initialized for project {project_id}")
-        print(f"🔧 TOOL INIT: DocumentSearchTool for project {project_id}")
+        print(f"TOOL INIT: DocumentSearchTool for project {project_id}")
         
-        # Test if tool is callable
-        try:
-            test_result = self._run("test", 1)
-            print(f"🔧 TOOL TEST: Tool is callable, test result length: {len(test_result)}")
-        except Exception as e:
-            print(f"🔧 TOOL TEST ERROR: {e}")
+        # Skip test run during initialization to avoid CrewAI conflicts
+        # The tool will be tested when actually used by agents
+        print(f"TOOL INIT: DocumentSearchTool ready for project {project_id}")
     
     def _get_documents_from_db(self) -> List[Dict]:
         """
@@ -173,9 +170,9 @@ class DocumentSearchTool(BaseTool):
         Returns:
             String with search results
         """
-        logger.info(f"🔍 DOCUMENT SEARCH TOOL CALLED - Project: {self.project_id}, Query: '{query}', Limit: {limit}")
-        print(f"🔍 DOCUMENT SEARCH TOOL CALLED - Project: {self.project_id}, Query: '{query}'")  # Console output for visibility
-        print(f"🔍 TOOL EXECUTION START: {self.__class__.__name__} at {__import__('datetime').datetime.now()}")  # Timestamp for tracking
+        logger.info(f"DOCUMENT SEARCH TOOL CALLED - Project: {self.project_id}, Query: '{query}', Limit: {limit}")
+        print(f"DOCUMENT SEARCH TOOL CALLED - Project: {self.project_id}, Query: '{query}'")  # Console output for visibility
+        print(f"TOOL EXECUTION START: {self.__class__.__name__} at {__import__('datetime').datetime.now()}")  # Timestamp for tracking
         
         try:
             # First try with ChromaDB
@@ -272,7 +269,7 @@ class DocumentSearchTool(BaseTool):
                     )
                 
                 result = "\n\n".join(formatted_results)
-                print(f"🔍 DATABASE FALLBACK COMPLETE: Found {len(formatted_results)} results, total length: {len(result)} characters")
+                print(f"DATABASE FALLBACK COMPLETE: Found {len(formatted_results)} results, total length: {len(result)} characters")
                 return result
             
             # Format results from ChromaDB (if we have them)
@@ -294,10 +291,10 @@ class DocumentSearchTool(BaseTool):
                 )
             
             result = "\n\n".join(formatted_results)
-            print(f"🔍 TOOL EXECUTION COMPLETE: Found {len(formatted_results)} results, total length: {len(result)} characters")
+            print(f"TOOL EXECUTION COMPLETE: Found {len(formatted_results)} results, total length: {len(result)} characters")
             return result
         
         except Exception as e:
             logger.error(f"Error searching documents: {e}")
-            print(f"🔍 TOOL EXECUTION ERROR: {str(e)}")
+            print(f"TOOL EXECUTION ERROR: {str(e)}")
             return f"Error searching documents: {str(e)}"

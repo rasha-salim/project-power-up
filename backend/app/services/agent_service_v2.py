@@ -341,6 +341,20 @@ class AgentServiceV2:
                     db, project_id, result["message"], result.get("existing_analysis_id"), ws_manager
                 )
                 
+            elif result.get("type") == "security_question" and result.get("requires_security_response"):
+                # Handle security questions directed to security agent
+                logger.info(f"Handling security question for project {project_id}")
+                return await self.communication_service.chat_with_security_agent(
+                    db, project_id, result["message"], result.get("existing_analysis_id"), ws_manager
+                )
+                
+            elif result.get("type") == "project_planning" and result.get("requires_planning_response"):
+                # Handle project planning questions directed to project planner agent
+                logger.info(f"Handling project planning question for project {project_id}")
+                return await self.communication_service.chat_with_project_planner(
+                    db, project_id, result["message"], ws_manager
+                )
+                
             elif result.get("type") == "chat" and result.get("requires_chat_service"):
                 # Route to communication service for general chat with project context
                 has_context = result.get("has_project_context", False)

@@ -15,6 +15,8 @@ class AgentCapability(Enum):
     DOCUMENTATION = "documentation"
     TESTING = "testing"
     GENERAL_ASSISTANCE = "general_assistance"
+    PROJECT_PLANNING = "project_planning"
+    DOCUMENT_CREATION = "document_creation"
 
 @dataclass
 class AgentInfo:
@@ -58,7 +60,7 @@ class AgentRegistry:
                 "@technical review the code structure",
                 "@technical suggest improvements to the architecture"
             ],
-            avatar="🔍",
+            avatar="[TECH]",
             color="#3B82F6"  # Blue
         )
         self.register_agent(technical_agent)
@@ -80,27 +82,29 @@ class AgentRegistry:
                 "@assistant summarize the project",
                 "Which agent should I ask about security?"
             ],
-            avatar="🤖",
+            avatar="[ASSIST]",
             color="#10B981"  # Green
         )
         self.register_agent(assistant_agent)
         
-        # Future agents (not yet implemented, but visible in catalog)
+        # Security Analyst Agent (Fully Implemented)
         security_agent = AgentInfo(
             id="security_analyst",
             name="Security Analyst",
             mention_id="security",
             role="Security Expert",
-            description="[Coming Soon] Analyzes code for security vulnerabilities, suggests security best practices, and reviews authentication/authorization implementations.",
+            description="Analyzes projects for security vulnerabilities, suggests security best practices, reviews authentication/authorization implementations, and provides comprehensive security assessments based on project context and analysis data.",
             capabilities=[
                 AgentCapability.SECURITY_ANALYSIS
             ],
             example_prompts=[
-                "@security check for vulnerabilities",
-                "@security review authentication flow",
-                "@security analyze data protection"
+                "@security analyze the project security architecture",
+                "@security check for vulnerabilities in the tech stack",
+                "@security review authentication and authorization systems",
+                "@security assess data protection and privacy compliance",
+                "@security evaluate API security measures"
             ],
-            avatar="🔒",
+            avatar="[LOCK]",
             color="#EF4444"  # Red
         )
         self.register_agent(security_agent)
@@ -119,10 +123,34 @@ class AgentRegistry:
                 "@performance suggest optimizations",
                 "@performance review database queries"
             ],
-            avatar="⚡",
+            avatar="[PERF]",
             color="#F59E0B"  # Amber
         )
         self.register_agent(performance_agent)
+        
+        # Project Planner Agent
+        project_planner_agent = AgentInfo(
+            id="project_planner",
+            name="Project Planner",
+            mention_id="planner",
+            role="Project Planning Expert",
+            description="Helps users create comprehensive project briefs and documentation when they don't have existing documents. Guides users through structured planning sessions to build proper project specifications, requirements, and planning documents.",
+            capabilities=[
+                AgentCapability.PROJECT_PLANNING,
+                AgentCapability.DOCUMENT_CREATION,
+                AgentCapability.GENERAL_ASSISTANCE
+            ],
+            example_prompts=[
+                "@planner help me create a project brief",
+                "@planner I need to plan my project requirements",
+                "@planner guide me through project documentation",
+                "@planner what should I include in my project scope?",
+                "@planner help me define project goals and objectives"
+            ],
+            avatar="📋",
+            color="#8B5CF6"  # Purple
+        )
+        self.register_agent(project_planner_agent)
     
     def register_agent(self, agent: AgentInfo):
         """Register a new agent"""

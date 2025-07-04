@@ -57,35 +57,53 @@ class AnalysisDataHelper:
     
     @staticmethod
     def format_analysis_summary(analysis: ProjectAnalysis) -> str:
-        """Format analysis into a readable summary string"""
+        """Format analysis into a readable summary string with improved spacing"""
         tech_summary = AnalysisDataHelper.get_tech_stack_summary(analysis)
         risk_summary = AnalysisDataHelper.get_risk_summary(analysis)
         timeline_summary = AnalysisDataHelper.get_project_timeline_summary(analysis)
         
-        return f"""
+        return f"""# Project Analysis Summary
+
 ## Technical Analysis
+
 **Architecture**: {analysis.technical_analysis.architecture}
 
-**Tech Stack**:
-- Frontend: {', '.join(tech_summary['frontend']) if tech_summary['frontend'] else 'Not specified'}
-- Backend: {', '.join(tech_summary['backend']) if tech_summary['backend'] else 'Not specified'}
-- Infrastructure: {', '.join(tech_summary['infrastructure']) if tech_summary['infrastructure'] else 'Not specified'}
+**Technology Stack**:
 
-**Scores**:
-- Complexity: {analysis.technical_analysis.complexity_score}/10
-- Maintainability: {analysis.technical_analysis.maintainability_score}/10
-- Scalability: {analysis.technical_analysis.scalability_score}/10
+- **Frontend**: {', '.join(tech_summary['frontend']) if tech_summary['frontend'] else 'Not specified'}
+- **Backend**: {', '.join(tech_summary['backend']) if tech_summary['backend'] else 'Not specified'}  
+- **Infrastructure**: {', '.join(tech_summary['infrastructure']) if tech_summary['infrastructure'] else 'Not specified'}
+
+**Quality Scores**:
+
+- **Complexity**: {analysis.technical_analysis.complexity_score}/10
+- **Maintainability**: {analysis.technical_analysis.maintainability_score}/10
+- **Scalability**: {analysis.technical_analysis.scalability_score}/10
+
 
 ## Risk Assessment
-- Overall Risk Score: {risk_summary['overall_score']}/10
-- Key Risks: {', '.join([risk['name'] for risk in risk_summary['key_risks']])}
+
+**Overall Risk Score**: {risk_summary['overall_score']}/10
+
+**Key Identified Risks**:
+
+{chr(10).join(['- ' + risk['name'] for risk in risk_summary['key_risks']]) if risk_summary['key_risks'] else '- No major risks identified'}
+
 
 ## Project Plan
+
 **Timeline**: {timeline_summary['timeline']}
+
 **Estimated Cost**: ${timeline_summary['estimated_cost']:,.2f}
 
-## Recommendations
-{chr(10).join(['- ' + rec for rec in analysis.recommendations[:5]])}
+
+## Key Recommendations
+
+{chr(10).join(['- ' + rec for rec in analysis.recommendations[:5]]) if analysis.recommendations else '- No specific recommendations available'}
+
+---
+
+*Analysis completed successfully*
         """.strip()
     
     @staticmethod

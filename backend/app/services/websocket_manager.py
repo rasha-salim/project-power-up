@@ -16,6 +16,8 @@ class WebSocketManager:
         self.active_connections: Dict[str, List[WebSocket]] = {}
         # Track WebSocket IDs to prevent duplicate connections
         self.connection_ids: Dict[int, str] = {}
+        # Map of project_id to active agent context for sticky agent conversations
+        self.agent_contexts: Dict[str, str] = {}
     
     async def connect(self, websocket: WebSocket, project_id: str) -> None:
         """
@@ -141,3 +143,60 @@ class WebSocketManager:
             return 0
         
         return len(self.active_connections[project_id])
+    
+    def set_active_agent(self, project_id: str, agent_id: str) -> None:
+        """
+        Set the active agent for a project's conversation context
+        
+        Args:
+            project_id: ID of the project
+            agent_id: ID of the agent to set as active
+        """
+        logger.info(f"Setting active agent for project {project_id}: {agent_id}")
+        self.agent_contexts[project_id] = agent_id
+    
+    def get_active_agent(self, project_id: str) -> str | None:
+        """
+        Get the active agent for a project's conversation context
+        
+        Args:
+            project_id: ID of the project
+            
+        Returns:
+            str | None: Active agent ID or None if no agent is active
+        """
+        return self.agent_contexts.get(project_id)
+    
+    def clear_active_agent(self, project_id: str) -> None:
+        """
+        Clear the active agent for a project's conversation context
+        
+        Args:
+            project_id: ID of the project
+        """
+        if project_id in self.agent_contexts:
+            logger.info(f"Clearing active agent for project {project_id}: {self.agent_contexts[project_id]}")
+            del self.agent_contexts[project_id]
+        else:
+            logger.debug(f"No active agent to clear for project {project_id}")
+    
+    async def notify_agent_context_change(self, project_id: str, agent_id: str | None, agent_name: str | None = None) -> None:
+        """
+        Notify clients about agent context changes
+        
+        Args:
+            project_id: ID of the project
+            agent_id: ID of the new active agent (None if cleared)
+            agent_name: Human-readable name of the agent
+        """
+        if project_id not in self.active_connections:
+            return
+        
+        message = {
+            "type": "agent_context_changed",
+            "active_agent": agent_id,
+            "active_agent_name": agent_name,
+            "message": f"Now chatting with {agent_name}" if agent_id else "Agent context cleared - back to general assistant"
+        }
+        
+        await self.broadcast(project_id, message)

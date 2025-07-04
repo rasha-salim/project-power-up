@@ -152,8 +152,39 @@ class UserInteractionService:
         try:
             logger.info(f"Handling user message for project {project_id}: {message}")
             
-            # Parse @mentions
+            # Parse @mentions and handle agent context clearing
             agent_id, cleaned_message = self.parse_agent_mention(message)
+            
+            # Check for agent context clearing commands
+            if self._is_agent_clear_command(message):
+                if ws_manager:
+                    ws_manager.clear_active_agent(project_id)
+                    await ws_manager.notify_agent_context_change(project_id, None)
+                return {
+                    "type": "chat",
+                    "message": "Agent context cleared. You're now chatting with the general project assistant.",
+                    "agent_id": None,
+                    "requires_chat_service": True,
+                    "context_cleared": True
+                }
+            
+            # Get active agent context if no new agent mentioned
+            active_agent_id = None
+            if ws_manager:
+                active_agent_id = ws_manager.get_active_agent(project_id)
+            
+            # Use mentioned agent or fall back to active agent context
+            effective_agent_id = agent_id if agent_id else active_agent_id
+            
+            # If new agent mentioned, update context
+            if agent_id and ws_manager:
+                ws_manager.set_active_agent(project_id, agent_id)
+                # Get agent info for notification
+                from app.core.agent_registry import agent_registry
+                agent_info = agent_registry.get_agent(agent_id)
+                agent_name = agent_info.name if agent_info else agent_id
+                await ws_manager.notify_agent_context_change(project_id, agent_id, agent_name)
+                logger.info(f"Set active agent context: {agent_id} for project {project_id}")
             
             # Detect feedback patterns
             is_feedback, feedback_type = self.detect_feedback_patterns(cleaned_message)
@@ -165,11 +196,11 @@ class UserInteractionService:
             existing_analysis_id = await self._get_latest_analysis_id(db, project_id)
             
             # Route based on message type (prioritize agent mentions over analysis detection)
-            if agent_id:
-                # Agent mentioned - route to specific agent for chat, not analysis
-                logger.info(f"Agent mentioned ({agent_id}) - routing to agent chat instead of analysis")
+            if effective_agent_id:
+                # Agent active or mentioned - route to specific agent for chat, not analysis
+                logger.info(f"Using agent context ({effective_agent_id}) - routing to agent chat")
                 return await self._handle_general_chat(
-                    db, project_id, cleaned_message, agent_id, existing_analysis_id, ws_manager
+                    db, project_id, cleaned_message, effective_agent_id, existing_analysis_id, ws_manager
                 )
             elif is_analysis_request:
                 # Route to analysis execution with enhanced context
@@ -417,6 +448,33 @@ class UserInteractionService:
             
         return None, message
     
+    def _is_agent_clear_command(self, message: str) -> bool:
+        """
+        Check if message is a command to clear agent context
+        
+        Args:
+            message: User message to check
+            
+        Returns:
+            bool: True if this is an agent clear command
+        """
+        clear_patterns = [
+            r'@clear\b',
+            r'@none\b',
+            r'@stop\b',
+            r'@end\b',
+            r'@general\b',
+            r'clear agent',
+            r'stop agent',
+            r'end conversation'
+        ]
+        
+        message_lower = message.lower().strip()
+        for pattern in clear_patterns:
+            if re.search(pattern, message_lower):
+                return True
+        return False
+    
     def detect_feedback_patterns(self, message: str) -> Tuple[bool, Optional[str]]:
         """
         Detect if message contains feedback patterns
@@ -525,6 +583,24 @@ class UserInteractionService:
                 "agent_id": agent_id,
                 "existing_analysis_id": existing_analysis_id,
                 "requires_technical_response": True
+            }
+        elif agent_id == "security_analyst":
+            # User specifically mentioned security agent for a question
+            return {
+                "type": "security_question",
+                "message": message,
+                "agent_id": agent_id,
+                "existing_analysis_id": existing_analysis_id,
+                "requires_security_response": True
+            }
+        elif agent_id == "project_planner":
+            # User specifically mentioned project planner for help with project brief
+            return {
+                "type": "project_planning",
+                "message": message,
+                "agent_id": agent_id,
+                "existing_analysis_id": existing_analysis_id,
+                "requires_planning_response": True
             }
         else:
             # General chat - use project assistant with enhanced context

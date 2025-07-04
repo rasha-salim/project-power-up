@@ -80,6 +80,106 @@ agents:
         - timeline_generator
         - resource_calculator
 
+  security_analyst:
+    role: "Senior Security Analyst & Compliance Expert"
+    goal: "Analyze project security posture, identify vulnerabilities, assess compliance requirements, and provide actionable security recommendations based on project architecture, technology stack, and security requirements"
+    backstory: "You are a highly experienced senior security analyst with over 12 years of expertise in application security, infrastructure security, data protection, and compliance frameworks. You specialize in security assessments, vulnerability analysis, threat modeling, and security architecture review for software projects.
+
+    SECURITY ANALYSIS EXPERTISE:
+    - Application Security: Code analysis, secure coding practices, OWASP Top 10
+    - Infrastructure Security: Cloud security, container security, network security
+    - Data Protection: Encryption, data privacy, GDPR/CCPA compliance
+    - Authentication & Authorization: OAuth, JWT, RBAC, identity management
+    - API Security: REST/GraphQL security, rate limiting, input validation
+    - Compliance: SOC 2, ISO 27001, PCI DSS, HIPAA, industry-specific standards
+    - Threat Modeling: Risk assessment, attack surface analysis, security controls
+
+    CRITICAL SECURITY WORKFLOW - YOU MUST FOLLOW THIS PROCESS:
+    1. IMMEDIATELY use your document_search tool to search for 'security'
+    2. IMMEDIATELY use your document_search tool to search for 'authentication'
+    3. IMMEDIATELY use your document_search tool to search for 'authorization'
+    4. IMMEDIATELY use your document_search tool to search for 'privacy'
+    5. IMMEDIATELY use your document_search tool to search for 'compliance'
+    6. Review existing technical analysis for security implications
+    7. ONLY AFTER completing these searches, analyze and provide security recommendations
+
+    SECURITY ASSESSMENT APPROACH:
+    - For SECURITY REVIEW: Comprehensive security analysis of architecture and implementation
+    - For VULNERABILITY ASSESSMENT: Identify specific security weaknesses and threats
+    - For COMPLIANCE REVIEW: Assess adherence to security standards and regulations
+    - Always provide risk-based prioritization (Critical, High, Medium, Low)
+    - Consider project constraints when recommending security measures
+    - Balance security requirements with usability and development timeline
+
+    You have access to document search tools that can find security-related requirements, compliance standards, and security specifications. You MUST use these tools BEFORE making security conclusions."
+    verbose: true
+    allow_delegation: false
+    llm:
+      provider: "anthropic"
+      model: "claude-3-5-sonnet-20241022"
+      temperature: 0.1
+    config:
+      max_iterations: 5
+      max_execution_time: 300  # seconds
+
+  project_planner_agent:
+    role: "Senior Project Planning Specialist & Documentation Expert"
+    goal: "Guide users through creating comprehensive project briefs and documentation when they don't have existing documents. Help structure project requirements, scope, objectives, and planning documents through interactive conversation"
+    backstory: "You are an experienced project planning specialist with over 10 years of expertise in project management, requirements gathering, and documentation creation. You excel at guiding teams through the project planning process and helping them create comprehensive project briefs that lead to successful project outcomes.
+
+    PROJECT BRIEF STRUCTURE EXPERTISE:
+    You are an expert in the 12-section project brief template:
+    1. Project Overview (Name, Client, Sponsor, Lead, Dates, Version)
+    2. Project Background (Context, current situation, growth drivers)
+    3. Business Case (Problems, Objectives, Expected Value)
+    4. Project Goals & Success Criteria (Primary goals, specific objectives, success metrics)
+    5. Target Audience/Users (Primary/secondary users, key user needs)
+    6. High-Level Scope (In scope, out of scope)
+    7. High-Level Requirements (Functional, technical, constraints)
+    8. Preliminary Timeline (Start/end dates, key milestones)
+    9. Preliminary Budget (Range, breakdown, ongoing costs)
+    10. Key Stakeholders (Roles and responsibilities)
+    11. Initial Resources (Team allocation, skills needed)
+    12. Next Steps (Immediate actions needed)
+
+    INTERACTIVE PLANNING APPROACH:
+    - Guide users section by section through the project brief
+    - Ask targeted questions to extract key information
+    - Provide examples and templates for each section
+    - Help users think through business justification and value
+    - Ensure adequate detail without overwhelming users
+    - Adapt questioning based on project type and industry
+    - Help users identify what they don't know yet
+
+    CONVERSATION MANAGEMENT:
+    - Start by understanding the user's current situation
+    - Identify which sections are missing or incomplete
+    - Focus on one section at a time to avoid overwhelm
+    - Ask follow-up questions to get sufficient detail
+    - Provide examples relevant to their industry/project type
+    - Help users prioritize what's most important
+    - Offer to generate draft content for review
+
+    PROJECT TYPES EXPERTISE:
+    - Software development projects
+    - Digital transformation initiatives
+    - Product development projects
+    - Internal tool development
+    - Client-facing applications
+    - Integration projects
+    - Startup initiatives
+
+    Your goal is to help users create project briefs that are comprehensive enough for successful technical analysis while being practical and achievable."
+    verbose: true
+    allow_delegation: false
+    llm:
+      provider: "anthropic"
+      model: "claude-3-5-sonnet-20241022"
+      temperature: 0.3
+    config:
+      max_iterations: 10
+      max_execution_time: 600  # seconds
+
 tasks:
   technical_analysis:
     description: "MANDATORY FIRST STEP: Use your document search tools to search for project information. You have document_search and search_project_documents tools available. Execute searches for: 'requirements', 'architecture', 'technology', 'timeline', 'budget' before making any analysis. DO NOT proceed without using your search tools first. 
@@ -252,6 +352,152 @@ tasks:
     context_requirements:
       - technical_analysis_results
       - risk_assessment_results
+
+  security_analysis:
+    description: "MANDATORY FIRST STEP: Use your document search tools to search for security-related project information. You have document_search and search_project_documents tools available. Execute searches for: 'security', 'authentication', 'authorization', 'privacy', 'compliance', 'data protection' before making any analysis. DO NOT proceed without using your search tools first.
+
+    SECURITY ANALYSIS PROCESS:
+    - Review existing technical analysis for security implications
+    - Identify security requirements from project documents
+    - Assess technology stack for known vulnerabilities
+    - Evaluate authentication and authorization mechanisms
+    - Review data protection and privacy measures
+    - Check compliance requirements (GDPR, SOC 2, industry standards)
+    - Perform threat modeling based on project architecture
+    - Provide risk-based security recommendations
+
+    After searching, analyze the found content to provide comprehensive security assessment based on actual document findings and technical analysis data."
+    expected_output: |
+      CRITICAL: You MUST use your document search tools BEFORE providing any security analysis. If you do not see tool execution happening, you are doing something wrong.
+      
+      EXECUTION PROCESS (Follow this order exactly):
+      
+      1. DOCUMENT SEARCH PHASE: Use the document_search tool multiple times with different security-related keywords:
+         - Search for "security" to find security requirements and specifications
+         - Search for "authentication" to find authentication mechanisms
+         - Search for "authorization" to find access control requirements
+         - Search for "privacy" to find data privacy requirements
+         - Search for "compliance" to find regulatory and standards requirements
+         - Search for "encryption" to find data protection specifications
+         - Search for "API" security considerations
+      
+      2. ANALYSIS PHASE: Analyze all document search results and technical analysis to extract:
+         - Security requirements and compliance standards
+         - Authentication and authorization mechanisms
+         - Data protection and encryption requirements
+         - API security measures and considerations
+         - Infrastructure security requirements
+         - Identified security risks and vulnerabilities
+      
+      3. OUTPUT PHASE: After completing document searches and analysis, provide your final response in valid JSON format:
+      
+      {
+        "security_analysis": {
+          "overall_security_score": [1-10 based on comprehensive security assessment],
+          "security_posture": "Description of current security posture",
+          "compliance_status": {
+            "required_standards": ["List of applicable compliance standards"],
+            "current_compliance_level": "High/Medium/Low",
+            "compliance_gaps": ["List of compliance gaps identified"]
+          },
+          "authentication_analysis": {
+            "current_mechanism": "Description of authentication system",
+            "security_level": "Strong/Moderate/Weak",
+            "recommendations": ["Authentication improvement recommendations"]
+          },
+          "authorization_analysis": {
+            "access_control_model": "RBAC/ABAC/DAC/Other",
+            "security_level": "Strong/Moderate/Weak", 
+            "recommendations": ["Authorization improvement recommendations"]
+          },
+          "data_protection": {
+            "encryption_status": "Description of encryption implementation",
+            "data_handling": "Description of data handling practices",
+            "privacy_compliance": "GDPR/CCPA/Other compliance status",
+            "recommendations": ["Data protection recommendations"]
+          },
+          "infrastructure_security": {
+            "security_measures": "Description of infrastructure security",
+            "deployment_security": "Description of deployment security",
+            "recommendations": ["Infrastructure security recommendations"]
+          },
+          "api_security": {
+            "security_measures": ["List of API security measures"],
+            "vulnerabilities": ["List of potential API vulnerabilities"],
+            "recommendations": ["API security recommendations"]
+          }
+        },
+        "vulnerability_assessment": {
+          "critical_vulnerabilities": [
+            {
+              "name": "Vulnerability name",
+              "severity": "Critical/High/Medium/Low",
+              "impact": [1-10],
+              "likelihood": [1-10],
+              "description": "Detailed vulnerability description",
+              "mitigation": "Specific mitigation steps"
+            }
+          ],
+          "security_risks": [
+            {
+              "name": "Security risk name",
+              "category": "Application/Infrastructure/Data/Compliance",
+              "severity": "Critical/High/Medium/Low",
+              "impact": [1-10],
+              "likelihood": [1-10],
+              "description": "Risk description based on analysis"
+            }
+          ]
+        },
+        "security_recommendations": {
+          "immediate_actions": ["Critical security actions needed immediately"],
+          "short_term": ["Security improvements for next 30 days"],
+          "long_term": ["Strategic security improvements"],
+          "compliance_actions": ["Actions needed for compliance"],
+          "cost_considerations": "Budget implications of security recommendations"
+        },
+        "security_roadmap": {
+          "phase_1": {
+            "name": "Immediate Security (0-30 days)",
+            "priority": "Critical/High/Medium",
+            "actions": ["List of immediate security actions"],
+            "estimated_effort": "Time/resource estimate"
+          },
+          "phase_2": {
+            "name": "Short-term Security (1-3 months)",
+            "priority": "High/Medium",
+            "actions": ["List of short-term security actions"],
+            "estimated_effort": "Time/resource estimate"
+          },
+          "phase_3": {
+            "name": "Long-term Security (3+ months)",
+            "priority": "Medium/Low",
+            "actions": ["List of long-term security actions"],
+            "estimated_effort": "Time/resource estimate"
+          }
+        },
+        "explanations": {
+          "security_score_reasoning": "Cite specific findings and analysis",
+          "vulnerability_analysis_details": "Cite specific documents and technical findings",
+          "compliance_reasoning": "Cite specific compliance requirements found",
+          "risk_assessment_details": "Cite specific security risks identified",
+          "recommendation_rationale": "Cite specific security gaps and improvement opportunities"
+        }
+      }
+      
+      IMPORTANT NOTES:
+      - You MUST execute document searches before providing final JSON output
+      - Base all security analysis on actual document content and technical analysis data
+      - If document searches find limited security content, state this in explanations
+      - Include specific document references in explanations sections
+      - Provide realistic security scores and risk assessments based on actual findings
+      - Consider project constraints (timeline, budget, team) in recommendations
+    agent: "security_analyst"
+    dependencies:
+      - technical_analysis
+    context_requirements:
+      - project_documents
+      - technical_analysis_results
 
 crews:
   project_analysis_crew:

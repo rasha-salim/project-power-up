@@ -54,6 +54,7 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
     recoverable: boolean;
     analysisId?: string;
   } | null>(null);
+  const [activeAgent, setActiveAgent] = useState<AgentInfo | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -109,6 +110,26 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
       showButton: analysisComplete && !analysisSaved
     });
   }, [analysisComplete, analysisSaved, currentAnalysisId, isConnected]);
+
+  // Timeout recovery for agent responses
+  useEffect(() => {
+    if (isAgentThinking) {
+      const timeout = setTimeout(() => {
+        console.log('Agent response timeout - resetting thinking state');
+        setIsAgentThinking(false);
+        setMessages(prev => [...prev, {
+          id: generateMessageId(),
+          type: 'error',
+          sender: 'system',
+          senderName: 'System',
+          message: '⏰ Response timeout - the agent may have encountered an issue. Please try your message again.',
+          timestamp: new Date().toISOString()
+        }]);
+      }, 30000); // 30 second timeout
+
+      return () => clearTimeout(timeout);
+    }
+  }, [isAgentThinking]);
 
   const connectWebSocket = () => {
     // If there's already a connection that's open or connecting, don't create a new one
@@ -185,8 +206,10 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
             
             // Filter out preliminary agent messages since we have typing indicator
             // BUT don't filter if this is an analysis content message (has analysis_id)
+            // OR if this is from project_planner (never filter project planner responses)
             if (data.type === 'agent_message' && 
                 !data.analysis_id &&  // Only filter if NOT an analysis message
+                data.sender !== 'project_planner' &&  // Never filter project planner responses
                 (data.message.includes('Let me analyze') || 
                  data.message.includes('thinking') ||
                  data.message.includes('Processing') ||
@@ -196,13 +219,25 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
               return; // Skip these messages
             }
             
-            // Log analysis messages to debug
-            if (data.type === 'agent_message' && data.analysis_id) {
-              console.log('Received analysis content message:', {
-                analysis_id: data.analysis_id,
+            // Enhanced logging for debugging
+            if (data.type === 'agent_message') {
+              console.log('Received agent message:', {
+                sender: data.sender,
+                sender_name: data.sender_name,
                 message_length: data.message?.length,
-                sender: data.sender
+                is_thinking: data.is_thinking,
+                analysis_id: data.analysis_id,
+                message_preview: data.message?.substring(0, 100)
               });
+              
+              // Special logging for project planner
+              if (data.sender === 'project_planner') {
+                console.log('Project Planner message received:', {
+                  is_thinking: data.is_thinking,
+                  planning_context: data.planning_context,
+                  will_stop_thinking: !data.is_thinking
+                });
+              }
             }
             
             // If this is an agent message, set isAgentThinking to false
@@ -439,6 +474,46 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
               type: 'system',
               sender: 'system',
               message: data.message || '🛑 Conversation stopped',
+              timestamp: new Date().toISOString()
+            }]);
+            break;
+
+          case 'agent_context_changed':
+            console.log('Agent context changed:', data);
+            
+            // Update active agent state
+            if (data.active_agent) {
+              // Find the agent info by ID
+              const agentInfo = agents.find(agent => agent.id === data.active_agent);
+              if (agentInfo) {
+                setActiveAgent(agentInfo);
+                console.log('Active agent set to:', agentInfo.name);
+              } else {
+                // If agent not found in local list, create a basic info object
+                const basicAgentInfo: AgentInfo = {
+                  id: data.active_agent,
+                  name: data.active_agent_name || data.active_agent,
+                  mention_id: data.active_agent,
+                  role: 'Agent',
+                  description: '',
+                  capabilities: [],
+                  example_prompts: [],
+                  is_available: true
+                };
+                setActiveAgent(basicAgentInfo);
+              }
+            } else {
+              setActiveAgent(null);
+              console.log('Active agent cleared');
+            }
+            
+            // Add system message about the context change
+            setMessages(prev => [...prev, {
+              id: generateMessageId(),
+              type: 'system',
+              sender: 'system',
+              senderName: 'System',
+              message: data.message || 'Agent context changed',
               timestamp: new Date().toISOString()
             }]);
             break;
@@ -751,7 +826,30 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
       <div className="bg-white border-b px-6 py-4">
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="text-lg font-medium text-gray-900">AI Agent Conversation</h3>
+            <div className="flex items-center gap-3">
+              <h3 className="text-lg font-medium text-gray-900">AI Agent Conversation</h3>
+              {activeAgent && (
+                <div className="flex items-center gap-2 px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-medium">
+                  <span className="w-2 h-2 bg-blue-500 rounded-full"></span>
+                  Chatting with {activeAgent.name}
+                  <button
+                    onClick={() => {
+                      // Send clear command to backend
+                      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                        wsRef.current.send(JSON.stringify({
+                          type: 'user_message',
+                          message: '@clear'
+                        }));
+                      }
+                    }}
+                    className="ml-2 text-blue-600 hover:text-blue-800"
+                    title="Clear agent context"
+                  >
+                    <XMarkIcon className="h-4 w-4" />
+                  </button>
+                </div>
+              )}
+            </div>
             <p className="text-sm text-gray-500">
               {isConnected ? 'Connected' : 'Connecting...'} • 
               {isAnalyzing ? ' Analysis in progress' : 
@@ -934,18 +1032,27 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
               <div className="whitespace-pre-wrap flex items-center gap-2">
                 {message.type === 'agent' ? (
                   <ReactMarkdown 
-                    className="prose prose-sm max-w-none"
+                    className="prose prose-sm max-w-none text-gray-700 leading-relaxed"
                     components={{
-                      h2: ({node, ...props}) => <h2 className="text-lg font-bold mt-2 mb-1" {...props} />,
-                      h3: ({node, ...props}) => <h3 className="text-base font-semibold mt-1 mb-1" {...props} />,
+                      h1: ({node, ...props}) => <h1 className="text-xl font-bold mt-4 mb-3 text-gray-900 border-b border-gray-200 pb-1" {...props} />,
+                      h2: ({node, ...props}) => <h2 className="text-lg font-bold mt-4 mb-2 text-gray-900" {...props} />,
+                      h3: ({node, ...props}) => <h3 className="text-base font-semibold mt-3 mb-2 text-gray-800" {...props} />,
+                      h4: ({node, ...props}) => <h4 className="text-sm font-semibold mt-2 mb-1 text-gray-800" {...props} />,
                       ul: ({node, ordered, ...props}) => 
                         ordered ? 
-                          <ol className="list-decimal list-inside ml-2" {...props} /> : 
-                          <ul className="list-disc list-inside ml-2" {...props} />,
-                      ol: ({node, ...props}) => <ol className="list-decimal list-inside ml-2" {...props} />,
-                      li: ({node, ...props}) => <li className="mb-1" {...props} />,
-                      p: ({node, ...props}) => <p className="mb-2" {...props} />,
-                      strong: ({node, ...props}) => <strong className="font-semibold" {...props} />
+                          <ol className="list-decimal list-outside ml-4 mb-3 space-y-1" {...props} /> : 
+                          <ul className="list-disc list-outside ml-4 mb-3 space-y-1" {...props} />,
+                      ol: ({node, ...props}) => <ol className="list-decimal list-outside ml-4 mb-3 space-y-1" {...props} />,
+                      li: ({node, ...props}) => <li className="mb-1 leading-relaxed" {...props} />,
+                      p: ({node, ...props}) => <p className="mb-3 leading-relaxed" {...props} />,
+                      strong: ({node, ...props}) => <strong className="font-semibold text-gray-900" {...props} />,
+                      em: ({node, ...props}) => <em className="italic text-gray-600" {...props} />,
+                      code: ({node, ...props}) => <code className="bg-gray-100 px-1 py-0.5 rounded text-sm font-mono text-gray-800" {...props} />,
+                      blockquote: ({node, ...props}) => <blockquote className="border-l-4 border-blue-200 pl-4 py-2 mb-3 bg-blue-50 rounded-r" {...props} />,
+                      hr: ({node, ...props}) => <hr className="my-4 border-gray-300" {...props} />,
+                      table: ({node, ...props}) => <table className="w-full border-collapse border border-gray-300 mb-3" {...props} />,
+                      th: ({node, ...props}) => <th className="border border-gray-300 px-2 py-1 bg-gray-100 font-semibold text-left" {...props} />,
+                      td: ({node, ...props}) => <td className="border border-gray-300 px-2 py-1" {...props} />
                     }}
                   >
                     {message.message}
@@ -1132,9 +1239,11 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
               value={inputMessage}
               onChange={handleInputChange}
               placeholder={
-                currentAnalysisId 
-                  ? "Ask a question about the analysis or type '@' to mention an agent..." 
-                  : "Type a message or '@' to mention an agent..."
+                activeAgent
+                  ? `Ask ${activeAgent.name} anything... (or type '@clear' to change agents)`
+                  : currentAnalysisId 
+                    ? "Ask a question about the analysis or type '@' to mention an agent..." 
+                    : "Type a message or '@' to mention an agent..."
               }
               className="flex-1 px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               disabled={!isConnected || isAgentThinking}

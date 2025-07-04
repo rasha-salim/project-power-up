@@ -23,6 +23,7 @@ export default function NewProjectPage() {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [skipDocuments, setSkipDocuments] = useState(false);
 
   // Handle form input changes
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
@@ -73,7 +74,8 @@ export default function NewProjectPage() {
         deadline: formData.deadline,
         team_size: parseInt(formData.teamSize) || null,
         industry: formData.industry,
-        budget: formData.budget
+        budget: formData.budget,
+        planning_status: skipDocuments ? 'not_started' : 'not_started'
       };
 
       const projectResponse = await fetch('/api/v1/projects', {
@@ -92,13 +94,18 @@ export default function NewProjectPage() {
       const project = await projectResponse.json();
       const projectId = project.id;
 
-      // Upload documents if there are any
-      if (documents.length > 0) {
+      // Upload documents if there are any and user didn't skip
+      if (documents.length > 0 && !skipDocuments) {
         await uploadDocuments(projectId);
       }
 
       // Redirect to the new project page
-      router.push(`/projects/${projectId}`);
+      if (skipDocuments) {
+        // Add a query parameter to indicate planning mode
+        router.push(`/projects/${projectId}?planning=true`);
+      } else {
+        router.push(`/projects/${projectId}`);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An unexpected error occurred');
       setLoading(false);
@@ -399,12 +406,28 @@ export default function NewProjectPage() {
                     Our AI agents will analyze these documents to help create your project plan.
                   </p>
                   
-                  <div
-                    {...getRootProps()}
-                    className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${
-                      isDragActive ? 'border-primary-500 bg-primary-50' : 'border-gray-300 hover:border-primary-400'
-                    }`}
-                  >
+                  <div className="bg-blue-50 border-l-4 border-blue-400 p-4">
+                    <div className="flex">
+                      <div className="flex-shrink-0">
+                        <svg className="h-5 w-5 text-blue-400" viewBox="0 0 20 20" fill="currentColor">
+                          <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                        </svg>
+                      </div>
+                      <div className="ml-3">
+                        <p className="text-sm text-blue-700">
+                          <strong>Don't have project documents yet?</strong> No problem! You can skip this step and use our Project Planner agent to help you create comprehensive project documentation through guided conversations.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {!skipDocuments && (
+                    <div
+                      {...getRootProps()}
+                      className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${
+                        isDragActive ? 'border-primary-500 bg-primary-50' : 'border-gray-300 hover:border-primary-400'
+                      }`}
+                    >
                     <input {...getInputProps()} />
                     <ArrowUpTrayIcon className="w-8 h-8 mx-auto text-gray-400 mb-2" />
                     {isDragActive ? (
@@ -416,9 +439,10 @@ export default function NewProjectPage() {
                       </div>
                     )}
                   </div>
+                  )}
                   
                   {/* Document list */}
-                  {documents.length > 0 && (
+                  {documents.length > 0 && !skipDocuments && (
                     <div className="mt-4">
                       <h3 className="text-sm font-medium text-gray-700 mb-2">Uploaded Documents</h3>
                       <ul className="border rounded-lg divide-y divide-gray-200">
@@ -447,12 +471,42 @@ export default function NewProjectPage() {
                     </div>
                   )}
                   
-                  <div className="bg-blue-50 p-4 rounded-lg">
-                    <p className="text-sm text-blue-700">
-                      <strong>Tip:</strong> The more information you provide, the better our AI agents can analyze your project.
-                      Consider uploading requirements documents, meeting notes, and any existing project plans.
-                    </p>
+                  <div className="flex justify-between items-center p-4 bg-gray-50 rounded-lg">
+                    <div className="flex items-center">
+                      <input
+                        type="checkbox"
+                        id="skipDocuments"
+                        checked={skipDocuments}
+                        onChange={(e) => setSkipDocuments(e.target.checked)}
+                        className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                      />
+                      <label htmlFor="skipDocuments" className="ml-2 text-sm text-gray-700">
+                        Skip documents and use Project Planner to create documentation
+                      </label>
+                    </div>
+                    {skipDocuments && (
+                      <span className="text-xs text-green-600 font-medium">📋 Planning Mode</span>
+                    )}
                   </div>
+                  
+                  {!skipDocuments && (
+                    <>
+                      <div className="bg-blue-50 p-4 rounded-lg">
+                        <p className="text-sm text-blue-700">
+                          <strong>Tip:</strong> The more information you provide, the better our AI agents can analyze your project.
+                          Consider uploading requirements documents, meeting notes, and any existing project plans.
+                        </p>
+                      </div>
+                    </>
+                  )}
+                  
+                  {skipDocuments && (
+                    <div className="bg-purple-50 p-4 rounded-lg">
+                      <p className="text-sm text-purple-700">
+                        <strong>Planning Mode Enabled:</strong> After creating your project, you'll be guided through building comprehensive project documentation with our Project Planner agent (@planner). This interactive process will help you create a detailed project brief that our technical analysts can then analyze.
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -501,7 +555,12 @@ export default function NewProjectPage() {
                   
                   <div className="bg-gray-50 p-4 rounded-lg">
                     <h3 className="text-md font-medium text-gray-900 mb-3">Documents</h3>
-                    {documents.length > 0 ? (
+                    {skipDocuments ? (
+                      <div className="flex items-center text-sm text-purple-700">
+                        <span className="mr-2">📋</span>
+                        <span><strong>Planning Mode:</strong> Will use Project Planner agent to create documentation</span>
+                      </div>
+                    ) : documents.length > 0 ? (
                       <ul className="space-y-1">
                         {documents.map((file, index) => (
                           <li key={index} className="text-sm text-gray-900 flex items-center">
@@ -515,13 +574,21 @@ export default function NewProjectPage() {
                     )}
                   </div>
                   
-                  <div className="bg-blue-50 p-4 rounded-lg">
-                    <p className="text-sm text-blue-700">
-                      <strong>What happens next?</strong> After creating your project, our AI agents will analyze your 
-                      project details and documents. You'll be able to interact with the agents to refine the project plan 
-                      and get insights into technical requirements, risks, and timelines.
-                    </p>
-                  </div>
+                  {skipDocuments ? (
+                    <div className="bg-purple-50 p-4 rounded-lg">
+                      <p className="text-sm text-purple-700">
+                        <strong>What happens next?</strong> You'll be taken to your project where you can chat with the Project Planner agent (@planner). The agent will guide you through creating a comprehensive project brief by asking targeted questions about your project's scope, goals, requirements, and timeline. Once complete, you can proceed with technical analysis.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="bg-blue-50 p-4 rounded-lg">
+                      <p className="text-sm text-blue-700">
+                        <strong>What happens next?</strong> After creating your project, our AI agents will analyze your 
+                        project details and documents. You'll be able to interact with the agents to refine the project plan 
+                        and get insights into technical requirements, risks, and timelines.
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
