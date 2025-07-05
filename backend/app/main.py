@@ -4,6 +4,7 @@ from fastapi.responses import JSONResponse
 import uvicorn
 import logging
 import sys
+import os
 from app.core.config import settings, validation_success
 from app.api.routes import api_router
 from app.db.init_db_simple import init_db
@@ -50,10 +51,57 @@ async def startup_event():
     """Initialize database connections and other startup tasks"""
     logger.info("Starting up application...")
     
-    # Validate configuration
+    # Check if we're in Railway environment
+    railway_env = os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_PROJECT_ID") or os.getenv("RAILWAY_SERVICE_ID")
+    database_url = os.getenv("DATABASE_URL")
+    
+    if railway_env:
+        logger.info(f"🚂 Railway environment detected: {railway_env}")
+        logger.info(f"Railway DATABASE_URL present: {'✓' if database_url else '✗'}")
+    
+    # Validate configuration with Railway-specific handling
     if not validation_success:
         logger.error("Configuration validation failed")
-        sys.exit(1)
+        
+        # Get detailed validation info for debugging
+        validation_result = settings.validate_required_settings()
+        logger.error("Validation errors:")
+        for error in validation_result.get("errors", []):
+            logger.error(f"  - {error}")
+        
+        # In Railway environment, be more permissive if we have DATABASE_URL
+        if railway_env and database_url:
+            logger.warning("⚠️ Railway environment with DATABASE_URL detected - proceeding despite validation warnings")
+            logger.info("🚂 Railway database configuration will override local settings")
+            
+            # Test if we can actually connect to the database
+            try:
+                # Quick connection test using DATABASE_URL
+                logger.info("Testing Railway database connection...")
+                import asyncpg
+                # Parse DATABASE_URL for connection test
+                parsed_url = database_url
+                if parsed_url.startswith("postgres://"):
+                    parsed_url = parsed_url.replace("postgres://", "postgresql://")
+                
+                # Try a quick connection
+                import asyncio
+                conn = await asyncpg.connect(parsed_url)
+                await conn.close()
+                logger.info("✅ Railway database connection successful!")
+                
+            except Exception as db_error:
+                logger.error(f"❌ Railway database connection failed: {db_error}")
+                logger.error("This likely means the PostgreSQL service is not properly attached to Railway")
+                logger.error("Please check Railway dashboard and ensure PostgreSQL is connected")
+                sys.exit(1)
+        else:
+            logger.error("❌ Not a Railway environment or missing DATABASE_URL - configuration validation failed")
+            if not railway_env:
+                logger.error("💡 For local development, ensure all required environment variables are set")
+            else:
+                logger.error("💡 For Railway deployment, ensure PostgreSQL service is added and connected")
+            sys.exit(1)
     
     # Initialize database tables and schema
     await init_db()

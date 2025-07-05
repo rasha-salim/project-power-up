@@ -33,16 +33,25 @@ class Settings(BaseSettings):
     @validator("DATABASE_URI", pre=True)
     def assemble_db_connection(cls, v: Optional[str], values: dict) -> str:
         """Assemble database connection string with Railway support"""
+        # Debug logging for Railway troubleshooting
+        logger.info("=== DATABASE CONFIGURATION DEBUG ===")
+        
         # 1. Check if DATABASE_URI is explicitly provided
         if isinstance(v, str) and v:
-            logger.info("Using explicitly provided DATABASE_URI")
+            logger.info("✅ Using explicitly provided DATABASE_URI")
+            logger.info(f"DATABASE_URI starts with: {v[:20]}...")
             return v
         
-        # 2. Check for Railway's standard DATABASE_URL environment variable
+        # 2. Check for Railway's standard DATABASE_URL environment variable (PRIORITY)
         database_url = os.getenv("DATABASE_URL")
         if database_url:
-            logger.info("Using Railway's DATABASE_URL environment variable")
-            return database_url
+            logger.info("✅ Found Railway's DATABASE_URL environment variable")
+            logger.info(f"DATABASE_URL starts with: {database_url[:20]}...")
+            # Ensure it's a valid PostgreSQL URL
+            if database_url.startswith(("postgresql://", "postgres://")):
+                return database_url
+            else:
+                logger.warning(f"DATABASE_URL has unexpected format: {database_url[:20]}...")
         
         # 3. Check for Railway's individual PostgreSQL variables (PGHOST, etc.)
         pg_host = os.getenv("PGHOST")
@@ -51,16 +60,48 @@ class Settings(BaseSettings):
         pg_database = os.getenv("PGDATABASE")
         pg_port = os.getenv("PGPORT", "5432")
         
-        if all([pg_host, pg_user, pg_password, pg_database]):
-            logger.info("Using Railway's PG* environment variables")
-            return f"postgresql://{pg_user}:{pg_password}@{pg_host}:{pg_port}/{pg_database}"
+        logger.info(f"Railway PG variables - PGHOST: {'✓' if pg_host else '✗'}, PGUSER: {'✓' if pg_user else '✗'}, PGPASSWORD: {'✓' if pg_password else '✗'}, PGDATABASE: {'✓' if pg_database else '✗'}")
         
-        # 4. Fall back to our custom POSTGRES_* variables
+        if all([pg_host, pg_user, pg_password, pg_database]):
+            constructed_url = f"postgresql://{pg_user}:{pg_password}@{pg_host}:{pg_port}/{pg_database}"
+            logger.info("✅ Using Railway's PG* environment variables")
+            logger.info(f"Constructed URL starts with: postgresql://{pg_user}:***@{pg_host}:{pg_port}/{pg_database}")
+            return constructed_url
+        
+        # 4. Check if we're in a Railway environment but missing database config
+        railway_env = os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_PROJECT_ID") or os.getenv("RAILWAY_SERVICE_ID")
+        if railway_env:
+            logger.error("🚨 RAILWAY ENVIRONMENT DETECTED BUT NO DATABASE CONFIG FOUND!")
+            logger.error("This suggests Railway's PostgreSQL service is not properly attached or configured.")
+            logger.error("Please ensure you have:")
+            logger.error("1. Added a PostgreSQL database service to your Railway project")
+            logger.error("2. Connected the database service to your web service")
+            logger.error("3. Redeployed after adding the database")
+            
+            # In Railway, we should NOT fall back to localhost - this will always fail
+            raise ValueError("""
+Railway deployment detected but no database configuration found.
+
+Railway Configuration Required:
+1. Add PostgreSQL service to your Railway project
+2. Connect database to web service  
+3. Redeploy to auto-generate DATABASE_URL
+
+Current Railway environment variables:
+- RAILWAY_ENVIRONMENT: {railway_env}
+- DATABASE_URL: {'✓' if database_url else '✗'}
+- PGHOST: {'✓' if pg_host else '✗'}
+
+Visit Railway dashboard to add/connect PostgreSQL service.
+""")
+        
+        # 5. Fall back to local development configuration ONLY if not in Railway
         database_type = values.get("DATABASE_TYPE", "postgresql").lower()
+        logger.info(f"Falling back to local development config - DATABASE_TYPE: {database_type}")
         
         if database_type == "sqlite":
             sqlite_path = values.get("SQLITE_PATH", "./project_powerup.db")
-            logger.info(f"Using SQLite database: {sqlite_path}")
+            logger.info(f"✅ Using SQLite database: {sqlite_path}")
             return f"sqlite:///{sqlite_path}"
         
         elif database_type == "postgresql":
@@ -69,6 +110,14 @@ class Settings(BaseSettings):
             postgres_server = values.get("POSTGRES_SERVER")
             postgres_port = values.get("POSTGRES_PORT", "5432")
             postgres_db = values.get("POSTGRES_DB", "")
+            
+            logger.info(f"Local PostgreSQL config - Server: {postgres_server}, User: {postgres_user}, DB: {postgres_db}")
+            
+            # Only allow localhost connections for local development
+            if postgres_server and postgres_server not in ["localhost", "127.0.0.1"]:
+                logger.info(f"✅ Using external PostgreSQL server: {postgres_server}")
+            elif postgres_server in ["localhost", "127.0.0.1"]:
+                logger.warning("⚠️ Using localhost PostgreSQL - this will fail in production!")
             
             # Provide helpful error message with environment variable options
             if not all([postgres_user, postgres_password, postgres_server, postgres_db]):
@@ -81,22 +130,25 @@ class Settings(BaseSettings):
                 error_msg = f"""
 PostgreSQL configuration incomplete. Missing: {', '.join(missing_vars)}
 
-Railway Configuration Options:
-1. Railway should auto-provide DATABASE_URL (recommended)
-2. Railway should auto-provide: PGHOST, PGUSER, PGPASSWORD, PGDATABASE
-3. Or manually set: POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_SERVER, POSTGRES_DB
+For Railway deployment:
+1. Add PostgreSQL service in Railway dashboard
+2. Connect database to web service
+3. Redeploy (DATABASE_URL will be auto-provided)
 
-Current environment variables found:
+For local development:
+Set: POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_SERVER, POSTGRES_DB
+
+Current environment status:
 - DATABASE_URL: {'✓' if database_url else '✗'}
 - PGHOST: {'✓' if pg_host else '✗'}
 - POSTGRES_SERVER: {'✓' if postgres_server else '✗'}
-
-Please check your Railway database service and environment variables.
+- Railway Environment: {'✓' if railway_env else '✗'}
 """
                 raise ValueError(error_msg)
             
-            logger.info(f"Using custom POSTGRES_* variables for {postgres_server}")
-            return f"postgresql://{postgres_user}:{postgres_password}@{postgres_server}:{postgres_port}/{postgres_db}"
+            constructed_url = f"postgresql://{postgres_user}:{postgres_password}@{postgres_server}:{postgres_port}/{postgres_db}"
+            logger.info(f"✅ Using local POSTGRES_* variables: postgresql://{postgres_user}:***@{postgres_server}:{postgres_port}/{postgres_db}")
+            return constructed_url
         
         else:
             raise ValueError(f"Unsupported DATABASE_TYPE: {database_type}. Use 'postgresql' or 'sqlite'")
@@ -351,6 +403,19 @@ settings = Settings()
 def validate_configuration_on_startup():
     """Perform comprehensive configuration validation at startup"""
     try:
+        # Check Railway environment first
+        railway_env = os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_PROJECT_ID") or os.getenv("RAILWAY_SERVICE_ID")
+        database_url = os.getenv("DATABASE_URL")
+        
+        if railway_env:
+            logger.info("🚂 Railway environment detected during validation")
+            if database_url:
+                logger.info("✅ Railway DATABASE_URL found - skipping some local validation checks")
+                # In Railway with DATABASE_URL, we can be more permissive
+                return True
+            else:
+                logger.warning("⚠️ Railway environment but no DATABASE_URL - this may indicate missing PostgreSQL service")
+        
         validation_result = settings.validate_required_settings()
         
         if not validation_result["valid"]:
@@ -358,13 +423,26 @@ def validate_configuration_on_startup():
             for error in validation_result["errors"]:
                 logger.error(f"   • {error}")
             
-            print("🚨 CONFIGURATION ERROR")
-            print("=" * 50)
-            print("The application cannot start due to configuration errors:")
-            for error in validation_result["errors"]:
-                print(f"❌ {error}")
-            print("\n💡 Please check your .env file and ensure all required variables are set.")
-            print("📖 See .env.example for reference configuration.")
+            # More helpful error messages based on environment
+            if railway_env:
+                print("🚂 RAILWAY DEPLOYMENT ERROR")
+                print("=" * 50)
+                print("Railway environment detected but configuration is incomplete:")
+                for error in validation_result["errors"]:
+                    print(f"❌ {error}")
+                print("\n💡 For Railway deployment:")
+                print("1. Ensure PostgreSQL service is added to your Railway project")
+                print("2. Connect the database service to your web service")
+                print("3. Redeploy to auto-generate DATABASE_URL")
+                print("4. Set ANTHROPIC_API_KEY in Railway environment variables")
+            else:
+                print("🚨 CONFIGURATION ERROR")
+                print("=" * 50)
+                print("The application cannot start due to configuration errors:")
+                for error in validation_result["errors"]:
+                    print(f"❌ {error}")
+                print("\n💡 Please check your .env file and ensure all required variables are set.")
+                print("📖 See .env.example for reference configuration.")
             return False
         
         # Show warnings if any
