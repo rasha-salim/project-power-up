@@ -7,7 +7,7 @@ This guide provides comprehensive instructions for deploying the **Project Power
 ## 📋 Prerequisites
 
 ### Required Accounts (All Free Tier)
-1. **Vercel Account** (for frontend hosting)
+1. **Netlify Account** (for frontend hosting)
 2. **Railway/Render Account** (for backend hosting)
 3. **Anthropic Account** (for Claude API access)
 4. **PostgreSQL Database** (free tier from Railway/Render or Neon)
@@ -20,7 +20,7 @@ This guide provides comprehensive instructions for deploying the **Project Power
 ## 🏗️ Architecture Overview
 
 ```
-Frontend (Next.js 15) → Vercel
+Frontend (Next.js 15) → Netlify
      ↓
 Backend (FastAPI) → Railway/Render
      ↓
@@ -171,7 +171,7 @@ python-3.9.18
 5. **Set Environment Variables**:
    Same as Railway setup above
 
-## 🌐 Step 3: Frontend Deployment (Vercel)
+## 🌐 Step 3: Frontend Deployment (Netlify)
 
 ### 3.1 Prepare Frontend
 
@@ -193,32 +193,46 @@ python-3.9.18
    }
    ```
 
-### 3.2 Deploy to Vercel
+3. **Create netlify.toml** (in frontend directory):
+   ```toml
+   [build]
+     publish = ".next"
+     command = "npm run build"
 
-1. **Sign up for Vercel**: [vercel.com](https://vercel.com)
+   [build.environment]
+     NODE_VERSION = "18"
+
+   [[redirects]]
+     from = "/*"
+     to = "/index.html"
+     status = 200
+   ```
+
+### 3.2 Deploy to Netlify
+
+1. **Sign up for Netlify**: [netlify.com](https://netlify.com)
 
 2. **Import Project**:
-   - Click "New Project"
-   - Import from GitHub
+   - Click "New site from Git"
+   - Choose "GitHub"
    - Select Project Power-Up repository
 
-3. **Configure Project**:
-   - **Framework Preset**: Next.js
-   - **Root Directory**: frontend
-   - **Build Command**: `npm run build`
-   - **Output Directory**: `.next`
-   - **Install Command**: `npm install`
+3. **Configure Build Settings**:
+   - **Base directory**: `frontend`
+   - **Build command**: `npm run build`
+   - **Publish directory**: `frontend/.next`
+   - **Functions directory**: (leave empty)
 
 4. **Environment Variables**:
-   Add in Vercel dashboard:
+   Go to Site settings → Environment variables:
    ```
    NEXT_PUBLIC_API_URL=https://your-backend-url.railway.app
    ```
 
 5. **Deploy**:
-   - Click "Deploy"
-   - Wait for deployment
-   - Copy the generated Vercel URL
+   - Click "Deploy site"
+   - Wait for deployment (usually 2-3 minutes)
+   - Copy the generated Netlify URL (e.g., `amazing-name-123456.netlify.app`)
 
 ## 🗄️ Step 4: Database Setup
 
@@ -250,7 +264,7 @@ The backend is configured for production CORS. If you need to update allowed ori
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://your-vercel-app.vercel.app",
+        "https://your-netlify-app.netlify.app",
         "http://localhost:3000"  # For local development
     ],
     allow_credentials=True,
@@ -261,7 +275,7 @@ app.add_middleware(
 
 ### 5.2 Test the Complete Application
 
-1. **Open Frontend URL** (Vercel deployment URL)
+1. **Open Frontend URL** (Netlify deployment URL)
 2. **Create a New Project**:
    - Click "New Project"
    - Fill in project details
@@ -302,15 +316,15 @@ app.add_middleware(
    - Set up alerting
    - Check logs regularly
 
-2. **Vercel Analytics**:
-   - Enable Vercel Analytics
+2. **Netlify Analytics**:
+   - Enable Netlify Analytics (available on paid plans)
    - Monitor frontend performance
 
 ## 🔄 Step 7: Updates & Maintenance
 
 ### 7.1 Continuous Deployment
 
-Both Railway/Render and Vercel support automatic deployments:
+Both Railway/Render and Netlify support automatic deployments:
 - Push to `main` branch triggers automatic deployment
 - Monitor deployment status in dashboards
 
@@ -326,7 +340,7 @@ For schema changes:
 #### Free Tier Limits:
 - **Railway**: 500 hours/month, 1GB RAM, 1GB disk
 - **Render**: 750 hours/month, 512MB RAM, temporary disk
-- **Vercel**: 100GB bandwidth, 6000 function invocations
+- **Netlify**: 100GB bandwidth, 300 build minutes/month
 - **Anthropic**: Rate limits based on plan
 
 #### Scaling Options:
@@ -398,9 +412,9 @@ curl -X GET https://your-backend-url/api/v1/projects \
 - Error tracking
 - Uptime monitoring
 
-#### Vercel:
-- Function execution time
-- Error rate
+#### Netlify:
+- Build performance
+- Deploy logs
 - Traffic analytics
 - Core Web Vitals
 
@@ -425,7 +439,7 @@ async def metrics():
 
 #### Infrastructure:
 - **Railway**: Free (500 hours/month)
-- **Vercel**: Free (100GB bandwidth)
+- **Netlify**: Free (100GB bandwidth)
 - **PostgreSQL**: Free (Railway/Render included)
 
 #### AI Services:
@@ -454,7 +468,7 @@ async def metrics():
 - [ ] Health check successful
 
 ### Frontend Deployment:
-- [ ] Vercel account created
+- [ ] Netlify account created
 - [ ] Frontend deployed
 - [ ] API URL configured
 - [ ] Frontend connects to backend
@@ -478,12 +492,12 @@ async def metrics():
 - **FastAPI**: [fastapi.tiangolo.com](https://fastapi.tiangolo.com)
 - **Next.js**: [nextjs.org/docs](https://nextjs.org/docs)
 - **Railway**: [docs.railway.app](https://docs.railway.app)
-- **Vercel**: [vercel.com/docs](https://vercel.com/docs)
+- **Netlify**: [docs.netlify.com](https://docs.netlify.com)
 - **Anthropic**: [docs.anthropic.com](https://docs.anthropic.com)
 
 ### Community:
 - **Railway Discord**: [railway.app/discord](https://railway.app/discord)
-- **Vercel Discord**: [vercel.com/discord](https://vercel.com/discord)
+- **Netlify Community**: [community.netlify.com](https://community.netlify.com)
 - **FastAPI Discord**: [discord.gg/VQjSZaeJmf](https://discord.gg/VQjSZaeJmf)
 
 ### Emergency Contacts:
@@ -503,7 +517,7 @@ For experienced developers who want to deploy quickly:
 #    - Root dir: backend
 #    - Add PostgreSQL
 #    - Set environment variables
-# 3. Deploy frontend to Vercel:
+# 3. Deploy frontend to Netlify:
 #    - Root dir: frontend
 #    - Set NEXT_PUBLIC_API_URL
 # 4. Test the application
