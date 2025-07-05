@@ -27,36 +27,75 @@ class Settings(BaseSettings):
     # SQLite settings (used when DATABASE_TYPE=sqlite)
     SQLITE_PATH: str = os.getenv("SQLITE_PATH", "./project_powerup.db")
     
-    # Unified database URI
+    # Unified database URI - supports Railway's DATABASE_URL and individual variables
     DATABASE_URI: Optional[str] = None
     
     @validator("DATABASE_URI", pre=True)
     def assemble_db_connection(cls, v: Optional[str], values: dict) -> str:
-        """Assemble database connection string based on DATABASE_TYPE"""
+        """Assemble database connection string with Railway support"""
+        # 1. Check if DATABASE_URI is explicitly provided
         if isinstance(v, str) and v:
-            # If DATABASE_URI is explicitly provided, use it
+            logger.info("Using explicitly provided DATABASE_URI")
             return v
         
+        # 2. Check for Railway's standard DATABASE_URL environment variable
+        database_url = os.getenv("DATABASE_URL")
+        if database_url:
+            logger.info("Using Railway's DATABASE_URL environment variable")
+            return database_url
+        
+        # 3. Check for Railway's individual PostgreSQL variables (PGHOST, etc.)
+        pg_host = os.getenv("PGHOST")
+        pg_user = os.getenv("PGUSER") 
+        pg_password = os.getenv("PGPASSWORD")
+        pg_database = os.getenv("PGDATABASE")
+        pg_port = os.getenv("PGPORT", "5432")
+        
+        if all([pg_host, pg_user, pg_password, pg_database]):
+            logger.info("Using Railway's PG* environment variables")
+            return f"postgresql://{pg_user}:{pg_password}@{pg_host}:{pg_port}/{pg_database}"
+        
+        # 4. Fall back to our custom POSTGRES_* variables
         database_type = values.get("DATABASE_TYPE", "postgresql").lower()
         
         if database_type == "sqlite":
             sqlite_path = values.get("SQLITE_PATH", "./project_powerup.db")
+            logger.info(f"Using SQLite database: {sqlite_path}")
             return f"sqlite:///{sqlite_path}"
         
         elif database_type == "postgresql":
             postgres_user = values.get("POSTGRES_USER")
             postgres_password = values.get("POSTGRES_PASSWORD")
             postgres_server = values.get("POSTGRES_SERVER")
-            postgres_port = values.get("POSTGRES_PORT")
+            postgres_port = values.get("POSTGRES_PORT", "5432")
             postgres_db = values.get("POSTGRES_DB", "")
             
-            # Validate required PostgreSQL settings
+            # Provide helpful error message with environment variable options
             if not all([postgres_user, postgres_password, postgres_server, postgres_db]):
-                raise ValueError(
-                    "PostgreSQL configuration incomplete. Required: "
-                    "POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_SERVER, POSTGRES_DB"
-                )
+                missing_vars = []
+                if not postgres_user: missing_vars.append("POSTGRES_USER")
+                if not postgres_password: missing_vars.append("POSTGRES_PASSWORD") 
+                if not postgres_server: missing_vars.append("POSTGRES_SERVER")
+                if not postgres_db: missing_vars.append("POSTGRES_DB")
+                
+                error_msg = f"""
+PostgreSQL configuration incomplete. Missing: {', '.join(missing_vars)}
+
+Railway Configuration Options:
+1. Railway should auto-provide DATABASE_URL (recommended)
+2. Railway should auto-provide: PGHOST, PGUSER, PGPASSWORD, PGDATABASE
+3. Or manually set: POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_SERVER, POSTGRES_DB
+
+Current environment variables found:
+- DATABASE_URL: {'✓' if database_url else '✗'}
+- PGHOST: {'✓' if pg_host else '✗'}
+- POSTGRES_SERVER: {'✓' if postgres_server else '✗'}
+
+Please check your Railway database service and environment variables.
+"""
+                raise ValueError(error_msg)
             
+            logger.info(f"Using custom POSTGRES_* variables for {postgres_server}")
             return f"postgresql://{postgres_user}:{postgres_password}@{postgres_server}:{postgres_port}/{postgres_db}"
         
         else:
@@ -67,6 +106,9 @@ class Settings(BaseSettings):
         """Get async version of database URI for PostgreSQL"""
         if self.DATABASE_URI.startswith("postgresql://"):
             return self.DATABASE_URI.replace("postgresql://", "postgresql+asyncpg://")
+        elif self.DATABASE_URI.startswith("postgres://"):
+            # Railway sometimes provides postgres:// instead of postgresql://
+            return self.DATABASE_URI.replace("postgres://", "postgresql+asyncpg://")
         return self.DATABASE_URI
     
     @property
