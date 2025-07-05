@@ -42,18 +42,55 @@ class Settings(BaseSettings):
             logger.info(f"DATABASE_URI starts with: {v[:20]}...")
             return v
         
-        # 2. Check for Railway's standard DATABASE_URL environment variable (PRIORITY)
+        # 2. Check for Railway's standard DATABASE_URL environment variable
         database_url = os.getenv("DATABASE_URL")
         if database_url:
-            logger.info("✅ Found Railway's DATABASE_URL environment variable")
-            logger.info(f"DATABASE_URL starts with: {database_url[:20]}...")
-            # Ensure it's a valid PostgreSQL URL
-            if database_url.startswith(("postgresql://", "postgres://")):
-                return database_url
+            logger.info("🔍 Found Railway's DATABASE_URL environment variable")
+            logger.info(f"DATABASE_URL starts with: {database_url[:50]}...")
+            
+            # Check if DATABASE_URL contains template syntax (Railway issue)
+            if "${{" in database_url:
+                logger.warning("⚠️ DATABASE_URL contains template syntax - Railway variables not resolved!")
+                logger.warning(f"Template DATABASE_URL: {database_url}")
+                logger.info("🔄 Falling back to individual environment variables...")
             else:
-                logger.warning(f"DATABASE_URL has unexpected format: {database_url[:20]}...")
+                # DATABASE_URL is properly resolved
+                if database_url.startswith(("postgresql://", "postgres://")):
+                    logger.info("✅ Using resolved DATABASE_URL")
+                    return database_url
+                else:
+                    logger.warning(f"DATABASE_URL has unexpected format: {database_url[:20]}...")
         
-        # 3. Check for Railway's individual PostgreSQL variables (PGHOST, etc.)
+        # 3. Check for Railway's resolved PostgreSQL variables (POSTGRES_*, not PG*)
+        # Railway provides both templated (PG*) and resolved (POSTGRES_*) variables
+        postgres_user = os.getenv("POSTGRES_USER")  # Resolved value
+        postgres_password = os.getenv("POSTGRES_PASSWORD")  # Resolved value  
+        postgres_db = os.getenv("POSTGRES_DB")  # Resolved value
+        postgres_port = os.getenv("PGPORT", "5432")  # This one seems to be resolved
+        
+        # For host, check multiple Railway domain variables
+        postgres_host = (
+            os.getenv("RAILWAY_PRIVATE_DOMAIN") or  # Try Railway private domain first
+            os.getenv("PGHOST") or  # Fallback to PGHOST (might be templated)
+            os.getenv("RAILWAY_TCP_PROXY_DOMAIN")  # Public domain as last resort
+        )
+        
+        logger.info(f"Railway resolved variables - POSTGRES_USER: {'✓' if postgres_user else '✗'}, POSTGRES_PASSWORD: {'✓' if postgres_password else '✗'}, POSTGRES_DB: {'✓' if postgres_db else '✗'}")
+        logger.info(f"Railway host resolution - RAILWAY_PRIVATE_DOMAIN: {'✓' if os.getenv('RAILWAY_PRIVATE_DOMAIN') else '✗'}, PGHOST: {'✓' if os.getenv('PGHOST') else '✗'}")
+        
+        if all([postgres_host, postgres_user, postgres_password, postgres_db]):
+            # Check if host still contains template syntax
+            if "${{" in postgres_host:
+                logger.error(f"🚨 Host still contains template syntax: {postgres_host}")
+                logger.error("This indicates Railway environment variables are not properly resolved")
+                logger.error("Check Railway dashboard for database service connection status")
+            else:
+                constructed_url = f"postgresql://{postgres_user}:{postgres_password}@{postgres_host}:{postgres_port}/{postgres_db}"
+                logger.info("✅ Using Railway's resolved POSTGRES_* environment variables")
+                logger.info(f"Constructed URL: postgresql://{postgres_user}:***@{postgres_host}:{postgres_port}/{postgres_db}")
+                return constructed_url
+        
+        # 4. Try Railway's individual PostgreSQL variables (PGHOST, etc.) as fallback
         pg_host = os.getenv("PGHOST")
         pg_user = os.getenv("PGUSER") 
         pg_password = os.getenv("PGPASSWORD")
@@ -63,10 +100,16 @@ class Settings(BaseSettings):
         logger.info(f"Railway PG variables - PGHOST: {'✓' if pg_host else '✗'}, PGUSER: {'✓' if pg_user else '✗'}, PGPASSWORD: {'✓' if pg_password else '✗'}, PGDATABASE: {'✓' if pg_database else '✗'}")
         
         if all([pg_host, pg_user, pg_password, pg_database]):
-            constructed_url = f"postgresql://{pg_user}:{pg_password}@{pg_host}:{pg_port}/{pg_database}"
-            logger.info("✅ Using Railway's PG* environment variables")
-            logger.info(f"Constructed URL starts with: postgresql://{pg_user}:***@{pg_host}:{pg_port}/{pg_database}")
-            return constructed_url
+            # Check for template syntax in these variables too
+            if any("${{" in str(var) for var in [pg_host, pg_user, pg_password, pg_database] if var):
+                logger.error("🚨 PG* variables contain template syntax - Railway configuration issue")
+                template_vars = [name for name, var in [("PGHOST", pg_host), ("PGUSER", pg_user), ("PGPASSWORD", pg_password), ("PGDATABASE", pg_database)] if var and "${{" in str(var)]
+                logger.error(f"Template variables: {template_vars}")
+            else:
+                constructed_url = f"postgresql://{pg_user}:{pg_password}@{pg_host}:{pg_port}/{pg_database}"
+                logger.info("✅ Using Railway's PG* environment variables (fallback)")
+                logger.info(f"Constructed URL: postgresql://{pg_user}:***@{pg_host}:{pg_port}/{pg_database}")
+                return constructed_url
         
         # 4. Check if we're in a Railway environment but missing database config
         railway_env = os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_PROJECT_ID") or os.getenv("RAILWAY_SERVICE_ID")
