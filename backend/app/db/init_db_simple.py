@@ -22,7 +22,29 @@ logger.info(f"Database URL from settings: {db_url}")
 if settings.is_postgresql:
     # For PostgreSQL, use async engine
     async_db_url = settings.async_database_uri
-    logger.info(f"Using PostgreSQL with async engine: {async_db_url}")
+    logger.info(f"Using PostgreSQL with async engine: {async_db_url[:50]}...")
+    
+    # Check if we're in Railway environment for specific connection settings
+    railway_env = os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_PROJECT_ID") or os.getenv("RAILWAY_SERVICE_ID")
+    
+    # Railway-specific connection arguments
+    connect_args = {}
+    if railway_env:
+        logger.info("🚂 Railway environment detected - configuring SSL and connection settings")
+        connect_args = {
+            "server_settings": {
+                "jit": "off",  # Disable JIT for Railway compatibility
+            },
+            "ssl": "require",  # Railway requires SSL
+            "command_timeout": 60,
+        }
+    else:
+        logger.info("Local environment detected - using standard connection settings")
+        connect_args = {
+            "server_settings": {
+                "jit": "off"
+            }
+        }
     
     # Create the async engine with proper connection arguments
     async_engine = create_async_engine(
@@ -32,7 +54,10 @@ if settings.is_postgresql:
         max_overflow=10,
         pool_timeout=30,
         pool_recycle=3600,
+        connect_args=connect_args
     )
+    
+    logger.info(f"Async engine created with connect_args: {connect_args}")
     
     # Create async session factory
     AsyncSessionLocal = sessionmaker(
@@ -138,13 +163,63 @@ async def init_db():
             
         # Create database tables using async engine
         if settings.is_postgresql:
-            async with async_engine.begin() as conn:
-                await conn.run_sync(Base.metadata.create_all)
-                logger.info("Database tables created/verified successfully")
+            logger.info("🔧 Attempting to connect to PostgreSQL database...")
+            logger.info(f"Database URL being used: {settings.async_database_uri[:50]}...")
+            
+            # Check Railway environment variables for debugging
+            railway_env = os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_PROJECT_ID") or os.getenv("RAILWAY_SERVICE_ID")
+            database_url = os.getenv("DATABASE_URL")
+            
+            if railway_env:
+                logger.info(f"🚂 Railway Environment: {railway_env}")
+                logger.info(f"🚂 DATABASE_URL available: {'✓' if database_url else '✗'}")
+                if database_url:
+                    logger.info(f"🚂 DATABASE_URL starts with: {database_url[:30]}...")
+            
+            try:
+                # Test basic connection first
+                logger.info("Testing basic database connection...")
+                async with async_engine.connect() as conn:
+                    result = await conn.execute(text("SELECT 1"))
+                    test_result = result.scalar()
+                    logger.info(f"✅ Basic connection test successful: {test_result}")
+                
+                # Now create tables
+                logger.info("Creating/verifying database tables...")
+                async with async_engine.begin() as conn:
+                    await conn.run_sync(Base.metadata.create_all)
+                    logger.info("✅ Database tables created/verified successfully")
+                    
+            except Exception as db_error:
+                logger.error(f"❌ PostgreSQL connection failed: {db_error}")
+                logger.error(f"Error type: {type(db_error).__name__}")
+                
+                # Provide specific debugging for Railway
+                if railway_env:
+                    logger.error("🚂 Railway PostgreSQL Connection Troubleshooting:")
+                    logger.error("1. Ensure PostgreSQL service is added to Railway project")
+                    logger.error("2. Verify database service is connected to web service")
+                    logger.error("3. Check Railway dashboard for database status")
+                    logger.error("4. Verify DATABASE_URL environment variable is set")
+                    
+                    # Try to parse the DATABASE_URL for debugging
+                    if database_url:
+                        try:
+                            from urllib.parse import urlparse
+                            parsed = urlparse(database_url)
+                            logger.error(f"🔍 Database host: {parsed.hostname}")
+                            logger.error(f"🔍 Database port: {parsed.port}")
+                            logger.error(f"🔍 Database name: {parsed.path[1:] if parsed.path else 'N/A'}")
+                            logger.error(f"🔍 Database user: {parsed.username}")
+                        except Exception as parse_error:
+                            logger.error(f"Could not parse DATABASE_URL: {parse_error}")
+                
+                raise
         else:
             # For SQLite, use regular engine
+            logger.info("Creating SQLite database tables...")
             Base.metadata.create_all(bind=engine)
-            logger.info("Database tables created/verified successfully")
+            logger.info("✅ Database tables created/verified successfully")
             
         logger.info("Database initialization completed successfully")
         
