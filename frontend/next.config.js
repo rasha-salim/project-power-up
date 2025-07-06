@@ -2,21 +2,19 @@
 const nextConfig = {
   reactStrictMode: true,
   
-  // Only include API rewrites for local development
-  ...(process.env.NODE_ENV === 'development' && {
-    async rewrites() {
-      return [
-        {
-          source: '/api/:path*',
-          destination: 'http://localhost:8000/api/:path*',
-        },
-      ];
-    },
-  }),
-  
-  // Enable image optimization
+  // Enable image optimization for server-side rendering
   images: {
     domains: ['localhost'],
+  },
+  
+  // API rewrites for all environments
+  async rewrites() {
+    return [
+      {
+        source: '/api/:path*',
+        destination: 'http://localhost:8000/api/:path*',
+      },
+    ];
   },
 };
 

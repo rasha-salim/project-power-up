@@ -5,12 +5,9 @@
 [build.environment]
   NODE_VERSION = "18"
 
-[[redirects]]
-  from = "/*"
-  to = "/index.html"
-  status = 200
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
 
-# Function to handle Next.js API routes (if any)
 [[headers]]
   for = "/*"
   [headers.values]

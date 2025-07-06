@@ -1,5 +1,7 @@
 import { API_ENDPOINTS, apiRequest } from '../../config';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET() {
   try {
     const data = await apiRequest(API_ENDPOINTS.PROJECTS.LIST);

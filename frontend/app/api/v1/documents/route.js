@@ -1,5 +1,7 @@
 import { API_ENDPOINTS, apiRequest, uploadFile } from '../../config';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET(request) {
   try {
     // Get project_id from query params if provided
