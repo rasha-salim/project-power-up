@@ -30,12 +30,12 @@ export const API_ENDPOINTS = {
   
   // Project endpoints
   PROJECTS: {
-    LIST: `${API_BASE_URL}/projects`,
-    GET: (id) => `${API_BASE_URL}/projects/${id}`,
-    CREATE: `${API_BASE_URL}/projects`,
-    UPDATE: (id) => `${API_BASE_URL}/projects/${id}`,
-    DELETE: (id) => `${API_BASE_URL}/projects/${id}`,
-    INSIGHTS: (id) => `${API_BASE_URL}/projects/${id}/insights`,
+    LIST: `${API_BASE_URL}/projects/`,
+    GET: (id) => `${API_BASE_URL}/projects/${id}/`,
+    CREATE: `${API_BASE_URL}/projects/`,
+    UPDATE: (id) => `${API_BASE_URL}/projects/${id}/`,
+    DELETE: (id) => `${API_BASE_URL}/projects/${id}/`,
+    INSIGHTS: (id) => `${API_BASE_URL}/projects/${id}/insights/`,
   },
 };
 
@@ -43,6 +43,7 @@ export const API_ENDPOINTS = {
 export const apiRequest = async (url, options = {}) => {
   try {
     console.log(`Making API request to: ${url}`);
+    console.log(`Request options:`, options);
     const response = await fetch(url, {
       ...options,
       headers: {
