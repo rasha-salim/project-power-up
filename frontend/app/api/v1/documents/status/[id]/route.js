@@ -1,5 +1,3 @@
-import { API_ENDPOINTS, apiRequest } from '../../../../../../config';
-
 export async function GET(request, { params }) {
   try {
     const { id } = params;
@@ -7,7 +5,9 @@ export async function GET(request, { params }) {
     
     // Try direct backend call
     try {
-      const response = await fetch(`http://localhost:8000/api/v1/documents/status/${id}`);
+      // Use environment variable for backend URL
+      const backendUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const response = await fetch(`${backendUrl}/api/v1/documents/status/${id}`);
       
       if (!response.ok) {
         if (response.status === 404) {
