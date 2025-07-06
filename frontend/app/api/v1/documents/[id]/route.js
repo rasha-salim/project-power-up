@@ -15,7 +15,8 @@ export async function GET(request, { params }) {
       
       // Try direct fetch as fallback
       console.log(`Next.js API route: Trying direct fetch for document ${id}`);
-      const directResponse = await fetch(`http://localhost:8000/api/v1/documents/${id}`);
+      const backendUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const directResponse = await fetch(`${backendUrl}/api/v1/documents/${id}`);
       
       if (!directResponse.ok) {
         throw new Error(`Backend returned ${directResponse.status} for document ${id}`);
