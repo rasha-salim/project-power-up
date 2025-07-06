@@ -1,7 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  swcMinify: true,
   
   // Only include API rewrites for local development
   ...(process.env.NODE_ENV === 'development' && {
