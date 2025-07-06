@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeftIcon, DocumentTextIcon, ArrowUpTrayIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import { useDropzone } from 'react-dropzone';
+import { API_ENDPOINTS, apiRequest, uploadMultipleFiles } from '../../api/config';
 
 export default function NewProjectPage() {
   const router = useRouter();
@@ -78,20 +79,15 @@ export default function NewProjectPage() {
         planning_status: skipDocuments ? 'not_started' : 'not_started'
       };
 
-      const projectResponse = await fetch('/api/v1/projects', {
+      console.log('Creating project with data:', projectData);
+      console.log('Using API endpoint:', API_ENDPOINTS.PROJECTS.CREATE);
+      
+      const project = await apiRequest(API_ENDPOINTS.PROJECTS.CREATE, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify(projectData),
       });
-
-      if (!projectResponse.ok) {
-        const errorData = await projectResponse.json();
-        throw new Error(errorData.detail || 'Failed to create project');
-      }
-
-      const project = await projectResponse.json();
+      
+      console.log('Project created successfully:', project);
       const projectId = project.id;
 
       // Upload documents if there are any and user didn't skip
@@ -118,47 +114,17 @@ export default function NewProjectPage() {
     setUploadProgress(0);
 
     try {
-      // Create FormData for file upload
-      const formData = new FormData();
+      console.log('Uploading documents for project:', projectId);
+      console.log('Number of documents:', documents.length);
+      console.log('Using upload endpoint:', API_ENDPOINTS.DOCUMENTS.UPLOAD);
       
-      // Add project ID to FormData
-      formData.append('project_id', projectId);
+      // Use the configured uploadMultipleFiles function
+      const result = await uploadMultipleFiles(documents, projectId, '');
+      console.log('Upload completed successfully:', result);
       
-      // Add each file to FormData - IMPORTANT: The key must be 'file' to match the backend
-      // The backend expects 'file', not 'files'
-      documents.forEach(file => {
-        formData.append('file', file);
-      });
-
-      // Use XMLHttpRequest for progress tracking
-      return new Promise<void>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        
-        xhr.upload.addEventListener('progress', (event) => {
-          if (event.lengthComputable) {
-            const percentComplete = Math.round((event.loaded / event.total) * 100);
-            setUploadProgress(percentComplete);
-          }
-        });
-        
-        xhr.addEventListener('load', () => {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            setIsUploading(false);
-            resolve();
-          } else {
-            reject(new Error(`Upload failed with status ${xhr.status}`));
-          }
-        });
-        
-        xhr.addEventListener('error', () => {
-          reject(new Error('Upload failed'));
-        });
-        
-        // Use the correct endpoint for document upload
-        xhr.open('POST', '/api/v1/documents/upload');
-        xhr.send(formData);
-      });
+      setIsUploading(false);
     } catch (err) {
+      console.error('Upload failed:', err);
       setIsUploading(false);
       throw err;
     }
