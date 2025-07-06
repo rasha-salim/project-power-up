@@ -1,5 +1,20 @@
 // API configuration
-const API_BASE_URL = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/v1`;
+const getApiBaseUrl = () => {
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  // Add https:// if the URL doesn't have a protocol
+  if (apiUrl && !apiUrl.startsWith('http://') && !apiUrl.startsWith('https://')) {
+    return `https://${apiUrl}`;
+  }
+  return apiUrl;
+};
+
+const API_BASE_URL = `${getApiBaseUrl()}/api/v1`;
+
+// Debug logging
+console.log('API Configuration:', {
+  NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL,
+  API_BASE_URL: API_BASE_URL
+});
 
 export const API_ENDPOINTS = {
   // Document endpoints
