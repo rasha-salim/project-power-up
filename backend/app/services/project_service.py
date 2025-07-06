@@ -129,8 +129,16 @@ class ProjectService:
         Returns:
             List[Project]: List of projects
         """
-        result = await db.execute(select(Project))
-        return result.scalars().all()
+        try:
+            logger.info("Executing SELECT query for projects")
+            result = await db.execute(select(Project))
+            projects = result.scalars().all()
+            logger.info(f"Query executed successfully, found {len(projects)} projects")
+            return projects
+        except Exception as e:
+            logger.error(f"Error in list_projects: {str(e)}")
+            logger.error(f"Error type: {type(e)}")
+            raise
         
     async def list_projects_with_structured_insights(self, db: AsyncSession) -> List[Dict[str, Any]]:
         """

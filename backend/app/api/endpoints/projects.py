@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Optional
 import logging
 import uuid
+import os
 from app.db.init_db_simple import get_async_db
 from app.models.project import Project, ProjectCreate, ProjectUpdate, ProjectResponse
 from app.services.project_service import ProjectService
@@ -92,11 +93,23 @@ async def list_projects(
     List all projects
     """
     try:
+        logger.info("Starting list_projects request")
         project_service = ProjectService()
-        projects = await project_service.list_projects(db)
         
-        return [
-            ProjectResponse(
+        logger.info("Calling project_service.list_projects")
+        projects = await project_service.list_projects(db)
+        logger.info(f"Retrieved {len(projects)} projects from database")
+        
+        # Handle empty case
+        if not projects:
+            logger.info("No projects found, returning empty list")
+            return []
+        
+        # Convert projects to response format
+        result = []
+        for project in projects:
+            logger.debug(f"Processing project: {project.id}")
+            project_response = ProjectResponse(
                 id=project.id,
                 name=project.name,
                 description=project.description,
@@ -113,11 +126,18 @@ async def list_projects(
                 created_at=project.created_at,
                 updated_at=project.updated_at,
                 message="Project retrieved successfully"
-            ) for project in projects
-        ]
+            )
+            result.append(project_response)
+        
+        logger.info(f"Successfully processed {len(result)} projects")
+        return result
         
     except Exception as e:
         logger.error(f"Error listing projects: {str(e)}")
+        logger.error(f"Error type: {type(e)}")
+        logger.error(f"Railway ENV: {os.getenv('RAILWAY_ENVIRONMENT')}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Error listing projects: {str(e)}")
 
 @router.put("/{project_id}", response_model=ProjectResponse)
