@@ -165,6 +165,41 @@ async def process_document(background_tasks: BackgroundTasks, file: UploadFile, 
         await file.seek(0)
         logger.info("File position reset for future reads")
         
+        # Validate project_id if provided
+        if project_id:
+            logger.info(f"Validating project_id: {project_id}")
+            try:
+                project_check = await db.execute(
+                    text("SELECT EXISTS (SELECT 1 FROM projects WHERE id = :project_id)"),
+                    {"project_id": project_id}
+                )
+                project_exists = project_check.scalar()
+                logger.info(f"Project exists check result: {project_exists}")
+                
+                if not project_exists:
+                    logger.error(f"Invalid project_id: {project_id} - project does not exist")
+                    # Clean up the uploaded file
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                        logger.info("Uploaded file cleaned up due to invalid project_id")
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid project ID: The project '{project_id}' does not exist"
+                    )
+                logger.info("Project validation passed")
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"Error validating project_id: {str(e)}")
+                # Clean up the uploaded file
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                    logger.info("Uploaded file cleaned up due to project validation error")
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Error validating project: {str(e)}"
+                )
+        
         # Store document metadata in database using SQLAlchemy
         logger.info("Starting database operations for document storage")
         
@@ -265,9 +300,18 @@ async def process_document(background_tasks: BackgroundTasks, file: UploadFile, 
             except Exception as e:
                 logger.error(f"Error executing SQL insert: {str(e)}")
                 logger.error(f"Error type: {type(e)}")
+                logger.error(f"Project ID: {project_id}")
+                logger.error(f"File: {file.filename}")
+                logger.error(f"Railway ENV: {os.getenv('RAILWAY_ENVIRONMENT')}")
+                logger.error(f"Database URL exists: {'DATABASE_URL' in os.environ}")
+                logger.error(f"SQL Query: INSERT INTO documents ({columns_str}) VALUES ({values_str})")
+                logger.error(f"Parameters: {params}")
                 await db.rollback()
                 logger.info("Database transaction rolled back due to error")
-                raise
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Database error during document creation: {str(e)}"
+                )
         
         else:
             # Create documents table if it doesn't exist
