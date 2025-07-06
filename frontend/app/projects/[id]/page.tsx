@@ -7,6 +7,7 @@ import ProjectHeader from '@/components/project/ProjectHeader';
 import DocumentManager from '@/components/project/DocumentManager';
 import AgentConversation from '@/components/project/AgentConversation';
 import ProjectInsights from '@/components/project/ProjectInsights';
+import DocumentGeneration from '@/components/project/DocumentGeneration';
 import { API_ENDPOINTS, apiRequest, uploadMultipleFiles } from '@/app/api/config';
 
 // Types
@@ -172,34 +173,24 @@ export default function ProjectDetailPage() {
     const fetchProjectData = async () => {
       try {
         // Fetch project from the API
-        const projectResponse = await fetch(`/api/v1/projects/${projectId}`);
+        console.log('Fetching project data for ID:', projectId);
+        console.log('Using API endpoint:', API_ENDPOINTS.PROJECTS.GET(projectId));
         
-        if (!projectResponse.ok) {
-          const errorData = await projectResponse.json();
-          throw new Error(errorData.detail || 'Failed to load project');
-        }
-        
-        const projectData = await projectResponse.json();
+        const projectData = await apiRequest(API_ENDPOINTS.PROJECTS.GET(projectId));
+        console.log('Project data loaded:', projectData);
         
         // Fetch documents for this project
         let documentsData = [];
         try {
-          const documentsResponse = await fetch(API_ENDPOINTS.DOCUMENTS.PROJECT(projectId));
+          console.log('Fetching documents for project:', projectId);
+          console.log('Using documents endpoint:', API_ENDPOINTS.DOCUMENTS.PROJECT(projectId));
           
-          if (!documentsResponse.ok) {
-            console.error(`Error fetching documents: ${documentsResponse.status}`);
-          } else {
-            try {
-              const data = await documentsResponse.json();
-              // Ensure data is an array
-              documentsData = Array.isArray(data) ? data : [];
-              console.log('Documents loaded:', documentsData.length);
-            } catch (parseErr) {
-              console.error('Error parsing documents response:', parseErr);
-            }
-          }
+          const data = await apiRequest(API_ENDPOINTS.DOCUMENTS.PROJECT(projectId));
+          // Ensure data is an array
+          documentsData = Array.isArray(data) ? data : [];
+          console.log('Documents loaded:', documentsData.length);
         } catch (fetchErr) {
-          console.error('Network error fetching documents:', fetchErr);
+          console.error('Error fetching documents:', fetchErr);
         }
         
         setProject(projectData);
@@ -410,7 +401,7 @@ export default function ProjectDetailPage() {
                     : 'text-gray-500 hover:text-gray-700 hover:border-gray-300'
                 }`}
               >
-                Agent Conversation
+                🤖 Agent Conversation
               </button>
               <button
                 onClick={() => setActiveTab('insights')}
@@ -420,7 +411,17 @@ export default function ProjectDetailPage() {
                     : 'text-gray-500 hover:text-gray-700 hover:border-gray-300'
                 }`}
               >
-                Project Insights
+                📊 Project Insights
+              </button>
+              <button
+                onClick={() => setActiveTab('documents')}
+                className={`py-4 px-6 text-sm font-medium ${
+                  activeTab === 'documents'
+                    ? 'border-b-2 border-primary-500 text-primary-600'
+                    : 'text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                📄 Generate Documents
               </button>
             </nav>
           </div>
@@ -438,7 +439,7 @@ export default function ProjectDetailPage() {
             />
           </div>
 
-          {/* Right column - Agent Conversation or Insights */}
+          {/* Right column - Active Tab Content */}
           <div className="lg:col-span-2">
             {activeTab === 'conversation' ? (
               <AgentConversation 
@@ -447,11 +448,16 @@ export default function ProjectDetailPage() {
                 onAnalysisComplete={handleAnalysisComplete}
                 existingInsights={project.insights}  // Pass existing insights
               />
-            ) : (
+            ) : activeTab === 'insights' ? (
               <ProjectInsights 
                 projectId={projectId}
                 projectStatus={project.status}
                 projectInsights={project.insights}  // Pass existing insights
+              />
+            ) : (
+              <DocumentGeneration 
+                projectId={projectId}
+                projectStatus={project.status}
               />
             )}
           </div>
