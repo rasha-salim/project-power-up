@@ -173,36 +173,43 @@ export default function ProjectDetailPage() {
     const fetchProjectData = async () => {
       try {
         // Fetch project from the API
-        console.log('Fetching project data for ID:', projectId);
-        console.log('Using API endpoint:', API_ENDPOINTS.PROJECTS.GET(projectId));
+        console.log('🔵 Fetching project data for ID:', projectId);
+        console.log('🔵 Using API endpoint:', API_ENDPOINTS.PROJECTS.GET(projectId));
         
         const projectData = await apiRequest(API_ENDPOINTS.PROJECTS.GET(projectId));
-        console.log('Project data loaded:', projectData);
+        console.log('🟢 Project data loaded successfully:', projectData);
         
-        // Fetch documents for this project
-        let documentsData = [];
-        try {
-          console.log('Fetching documents for project:', projectId);
-          console.log('Using documents endpoint:', API_ENDPOINTS.DOCUMENTS.PROJECT(projectId));
-          
-          const data = await apiRequest(API_ENDPOINTS.DOCUMENTS.PROJECT(projectId));
-          // Ensure data is an array
-          documentsData = Array.isArray(data) ? data : [];
-          console.log('Documents loaded:', documentsData.length);
-        } catch (fetchErr) {
-          console.error('Error fetching documents:', fetchErr);
-        }
-        
+        // Set project data first, so page loads even if documents fail
         setProject(projectData);
-        setDocuments(documentsData);
-        setLoading(false);
         
         // If the project is in analyzing status, set the analysis running flag
         if (projectData.status === 'analyzing') {
           setIsAnalysisRunning(true);
         }
+        
+        // Fetch documents for this project (separate from project loading)
+        let documentsData = [];
+        try {
+          console.log('🔵 Fetching documents for project:', projectId);
+          console.log('🔵 Using documents endpoint:', API_ENDPOINTS.DOCUMENTS.PROJECT(projectId));
+          
+          const data = await apiRequest(API_ENDPOINTS.DOCUMENTS.PROJECT(projectId));
+          // Ensure data is an array
+          documentsData = Array.isArray(data) ? data : [];
+          console.log('🟢 Documents loaded successfully:', documentsData.length);
+          console.log('🟢 Documents data:', documentsData);
+        } catch (fetchErr) {
+          console.error('🔴 Error fetching documents (but project still loads):', fetchErr);
+          console.error('🔴 Documents will show as empty, but project page will still work');
+          // Don't throw here - let the project page load without documents
+        }
+        
+        setDocuments(documentsData);
+        setLoading(false);
+        
       } catch (err: any) {
-        console.error('Error fetching project data:', err);
+        console.error('🔴 Error fetching project data:', err);
+        console.error('🔴 Project page will show error state');
         setError(err.message || 'Failed to load project data. Please try again later.');
         setLoading(false);
       }

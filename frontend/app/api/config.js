@@ -19,13 +19,13 @@ console.log('API Configuration:', {
 export const API_ENDPOINTS = {
   // Document endpoints
   DOCUMENTS: {
-    UPLOAD: `${API_BASE_URL}/documents/upload`,
-    UPLOAD_MULTIPLE: `${API_BASE_URL}/documents/upload-multiple`,
-    LIST: `${API_BASE_URL}/documents`,
-    GET: (id) => `${API_BASE_URL}/documents/${id}`,
-    STATUS: (id) => `${API_BASE_URL}/documents/${id}/status`,
-    DELETE: (id) => `${API_BASE_URL}/documents/${id}`,
-    PROJECT: (projectId) => `${API_BASE_URL}/documents/project/${projectId}`,
+    UPLOAD: `${API_BASE_URL}/documents/upload/`,
+    UPLOAD_MULTIPLE: `${API_BASE_URL}/documents/upload-multiple/`,
+    LIST: `${API_BASE_URL}/documents/`,
+    GET: (id) => `${API_BASE_URL}/documents/${id}/`,
+    STATUS: (id) => `${API_BASE_URL}/documents/${id}/status/`,
+    DELETE: (id) => `${API_BASE_URL}/documents/${id}/`,
+    PROJECT: (projectId) => `${API_BASE_URL}/documents/project/${projectId}/`,
   },
   
   // Project endpoints
@@ -42,8 +42,15 @@ export const API_ENDPOINTS = {
 // Helper function for API requests
 export const apiRequest = async (url, options = {}) => {
   try {
-    console.log(`Making API request to: ${url}`);
-    console.log(`Request options:`, options);
+    console.log(`🔵 Making API request to: ${url}`);
+    console.log(`🔵 Request options:`, options);
+    console.log(`🔵 Full URL breakdown:`, {
+      baseUrl: API_BASE_URL,
+      fullUrl: url,
+      isDocumentsCall: url.includes('/documents'),
+      isProjectsCall: url.includes('/projects')
+    });
+    
     const response = await fetch(url, {
       ...options,
       headers: {
@@ -52,25 +59,28 @@ export const apiRequest = async (url, options = {}) => {
       },
     });
     
-    console.log(`API response status: ${response.status} for ${url}`);
+    console.log(`🟢 API response status: ${response.status} for ${url}`);
     
     if (!response.ok) {
       let errorDetail = 'API request failed';
       try {
         const errorJson = await response.json();
         errorDetail = errorJson.detail || errorJson.message || 'API request failed';
+        console.error(`🔴 API error response body:`, errorJson);
       } catch (parseError) {
         errorDetail = `API request failed with status ${response.status}`;
+        console.error(`🔴 Could not parse error response for ${url}`);
       }
-      console.error(`API error (${response.status}): ${errorDetail} for ${url}`);
+      console.error(`🔴 API error (${response.status}): ${errorDetail} for ${url}`);
       throw new Error(errorDetail);
     }
     
     const data = await response.json();
-    console.log(`API request successful for ${url}`);
+    console.log(`🟢 API request successful for ${url}`, { dataLength: Array.isArray(data) ? data.length : 'not array' });
     return data;
   } catch (error) {
-    console.error(`API request failed for ${url}: ${error.message}`);
+    console.error(`🔴 API request completely failed for ${url}: ${error.message}`);
+    console.error(`🔴 Error type: ${error.constructor.name}`);
     throw error;
   }
 };
