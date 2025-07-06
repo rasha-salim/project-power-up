@@ -42,9 +42,9 @@ class ProjectService:
             
             # Add to session and commit
             logger.info(f"Project object created, adding to database")
-            async with db.begin():
-                db.add(project)
-                logger.info(f"Project added to session, committing")
+            db.add(project)
+            await db.commit()
+            logger.info(f"Project committed to database")
             
             # Refresh to get updated values from database
             logger.info(f"Refreshing project object")

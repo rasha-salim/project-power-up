@@ -20,8 +20,11 @@ async def create_project(
     Create a new project
     """
     try:
+        logger.info(f"Starting project creation: {project_create.name}")
+        logger.info(f"Project data: {project_create.dict()}")
         project_service = ProjectService()
         project = await project_service.create_project(db, project_create)
+        logger.info(f"Project creation completed: {project.id}")
         
         return ProjectResponse(
             id=project.id,
@@ -43,6 +46,10 @@ async def create_project(
         
     except Exception as e:
         logger.error(f"Error creating project: {str(e)}")
+        logger.error(f"Error type: {type(e)}")
+        logger.error(f"Project data: {project_create.dict()}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Error creating project: {str(e)}")
 
 @router.get("/{project_id}", response_model=ProjectResponse)
