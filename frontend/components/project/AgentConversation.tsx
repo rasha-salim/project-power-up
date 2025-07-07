@@ -146,25 +146,51 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
       wsRef.current = null;
     }
 
+    // Import the getApiBaseUrl function from config to ensure consistent URL handling
+    const getApiBaseUrl = () => {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      
+      // Force HTTPS for Railway domains (production)
+      if (apiUrl && apiUrl.includes('railway.app')) {
+        if (apiUrl.startsWith('http://')) {
+          return apiUrl.replace('http://', 'https://');
+        } else if (!apiUrl.startsWith('https://')) {
+          return `https://${apiUrl}`;
+        }
+        return apiUrl;
+      }
+      
+      if (apiUrl && !apiUrl.startsWith('http://') && !apiUrl.startsWith('https://')) {
+        return `https://${apiUrl}`;
+      }
+      
+      return apiUrl;
+    };
+
     // Get the API base URL and convert to WebSocket URL
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+    const httpApiUrl = getApiBaseUrl();
     let wsBaseUrl;
     
-    if (apiUrl.includes('railway.app')) {
+    if (httpApiUrl.includes('railway.app')) {
       // Railway deployment - use wss and the Railway domain
-      wsBaseUrl = apiUrl.replace('https://', 'wss://').replace('http://', 'wss://');
-    } else if (apiUrl.startsWith('http://localhost')) {
+      wsBaseUrl = httpApiUrl.replace('https://', 'wss://').replace('http://', 'wss://');
+    } else if (httpApiUrl.startsWith('http://localhost')) {
       // Local development - use ws
-      wsBaseUrl = apiUrl.replace('http://', 'ws://');
+      wsBaseUrl = httpApiUrl.replace('http://', 'ws://');
     } else {
       // Default to secure WebSocket for production
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      wsBaseUrl = `${protocol}//${apiUrl.replace(/^https?:\/\//, '')}`;
+      wsBaseUrl = `${protocol}//${httpApiUrl.replace(/^https?:\/\//, '')}`;
     }
     
     const wsUrl = `${wsBaseUrl}/api/v1/ws/agent-conversation/${projectId}`;
     
-    console.log('Connecting to WebSocket:', wsUrl);
+    console.log('🔗 WebSocket connection details:', {
+      originalApiUrl: process.env.NEXT_PUBLIC_API_URL,
+      processedHttpUrl: httpApiUrl,
+      websocketUrl: wsUrl,
+      isRailway: httpApiUrl.includes('railway.app')
+    });
     const ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {

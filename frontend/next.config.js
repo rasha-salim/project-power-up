@@ -4,18 +4,11 @@ const nextConfig = {
   
   // Enable image optimization for server-side rendering
   images: {
-    domains: ['localhost'],
-  },
+    domains: ['localhost', 'project-power-up-production.up.railway.app'],
+  }
   
-  // API rewrites for all environments
-  async rewrites() {
-    return [
-      {
-        source: '/api/:path*',
-        destination: 'http://localhost:8000/api/:path*',
-      },
-    ];
-  },
+  // Note: API rewrites removed - using direct API calls via NEXT_PUBLIC_API_URL
+  // This prevents hardcoded localhost URLs that would cause Mixed Content errors in production
 };
 
 module.exports = nextConfig;
