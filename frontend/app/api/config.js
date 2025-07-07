@@ -51,8 +51,8 @@ console.log('API Configuration:', {
 export const API_ENDPOINTS = {
   // Document endpoints
   DOCUMENTS: {
-    UPLOAD: `${API_BASE_URL}/documents/upload/`,
-    UPLOAD_MULTIPLE: `${API_BASE_URL}/documents/upload-multiple/`,
+    UPLOAD: `${API_BASE_URL}/documents/upload`,
+    UPLOAD_MULTIPLE: `${API_BASE_URL}/documents/upload-multiple`,
     LIST: `${API_BASE_URL}/documents/`,
     GET: (id) => `${API_BASE_URL}/documents/${id}`,
     STATUS: (id) => `${API_BASE_URL}/documents/${id}/status`,
