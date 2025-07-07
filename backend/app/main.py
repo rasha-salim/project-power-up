@@ -54,7 +54,7 @@ logger.info(f"HTTPS redirect middleware DISABLED (temporarily) to fix redirect l
 # Add CORS middleware AFTER redirect middleware (processed first due to middleware stack order)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # For development - restrict in production
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
