@@ -172,6 +172,13 @@ WebSocket implementation for:
 - **CORS**: Use environment-appropriate CORS settings
 - **Least Privilege**: Follow principle of least privilege
 
+### **Railway Deployment Guidelines**
+- **Trailing Slash Pattern**: Individual resource endpoints (GET /resource/{id}, UPDATE, DELETE) should NOT have trailing slashes to prevent HTTPS→HTTP redirects
+- **Collection Endpoints**: Collection endpoints (LIST /resources/, CREATE, UPLOAD) should keep trailing slashes
+- **Mixed Content Prevention**: Always test API endpoints with curl to verify no HTTP redirects occur
+- **CORS Configuration**: Ensure frontend domain is explicitly added to CORS_ORIGINS in backend config
+- **URL Testing**: Test both `/endpoint/` and `/endpoint` patterns when deploying to Railway
+
 ### **Migration Protocol**
 - **Follow Plan**: Adhere to docs/database-migration-plan.md
 - **Test First**: Test compatibility layer before migrating files
@@ -192,7 +199,21 @@ WebSocket implementation for:
 
 ## Recent Major Updates
 
-### AI Agent Constraint Preservation System (Latest - Dec 2024)
+### Railway Mixed Content Error Resolution (Latest - Jul 2025)
+- **Issue Resolved**: Mixed content errors preventing HTTPS frontend from accessing Railway backend API
+- **Root Cause**: Railway was redirecting URLs with trailing slashes from HTTPS to HTTP, causing browser security blocks
+- **Solution**: Removed trailing slashes from individual resource endpoints while keeping them for collection endpoints
+- **Files Updated**: 
+  - `frontend/app/api/config.js` - Updated API endpoint patterns
+  - `backend/app/core/config.py` - Added proper CORS origins for Netlify domain
+  - `backend/app/main.py` - Used configured CORS origins instead of wildcard
+- **Pattern Established**:
+  - Individual resources: `/projects/{id}` (no trailing slash)
+  - Collections/uploads: `/projects/` (with trailing slash)
+  - CORS: Explicit domain whitelist instead of wildcard
+- **Impact**: Full HTTPS compatibility between Netlify frontend and Railway backend, resolving all mixed content security errors
+
+### AI Agent Constraint Preservation System (Dec 2024)
 - **Issue Resolved**: Agents were replacing entire project timelines during updates instead of preserving constraints
 - **Solution**: Comprehensive constraint preservation system with validation and real-time notifications
 - **Files Updated**: 
