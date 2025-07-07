@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
 import logging
@@ -35,6 +36,13 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["*"],
 )
+
+# Add HTTPS redirect middleware only in production (Railway)
+if settings.ENVIRONMENT == "production":
+    app.add_middleware(HTTPSRedirectMiddleware)
+    logger.info("HTTPS redirect middleware enabled for production environment")
+else:
+    logger.info(f"HTTPS redirect middleware disabled for {settings.ENVIRONMENT} environment")
 
 # Include API router
 app.include_router(api_router, prefix=settings.API_V1_STR)

@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "Intelligent Project Planning System"
     API_V1_STR: str = "/api/v1"
     
+    # Environment detection - Railway sets RAILWAY_ENVIRONMENT variable
+    ENVIRONMENT: str = os.getenv("RAILWAY_ENVIRONMENT", "development")
+    
     # CORS settings
     CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:8000"]
     
