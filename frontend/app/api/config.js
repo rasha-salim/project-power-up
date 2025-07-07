@@ -72,7 +72,7 @@ export const API_ENDPOINTS = {
   
   // Agent endpoints
   AGENTS: {
-    CATALOG: `${API_BASE_URL}/agents/catalog/`,
+    CATALOG: `${API_BASE_URL}/agents/catalog`,
   },
   
   // Document Generation endpoints
