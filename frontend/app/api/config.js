@@ -54,20 +54,20 @@ export const API_ENDPOINTS = {
     UPLOAD: `${API_BASE_URL}/documents/upload/`,
     UPLOAD_MULTIPLE: `${API_BASE_URL}/documents/upload-multiple/`,
     LIST: `${API_BASE_URL}/documents/`,
-    GET: (id) => `${API_BASE_URL}/documents/${id}/`,
-    STATUS: (id) => `${API_BASE_URL}/documents/${id}/status/`,
-    DELETE: (id) => `${API_BASE_URL}/documents/${id}/`,
-    PROJECT: (projectId) => `${API_BASE_URL}/documents/project/${projectId}/`,
+    GET: (id) => `${API_BASE_URL}/documents/${id}`,
+    STATUS: (id) => `${API_BASE_URL}/documents/${id}/status`,
+    DELETE: (id) => `${API_BASE_URL}/documents/${id}`,
+    PROJECT: (projectId) => `${API_BASE_URL}/documents/project/${projectId}`,
   },
   
   // Project endpoints
   PROJECTS: {
     LIST: `${API_BASE_URL}/projects/`,
-    GET: (id) => `${API_BASE_URL}/projects/${id}/`,
+    GET: (id) => `${API_BASE_URL}/projects/${id}`,
     CREATE: `${API_BASE_URL}/projects/`,
-    UPDATE: (id) => `${API_BASE_URL}/projects/${id}/`,
-    DELETE: (id) => `${API_BASE_URL}/projects/${id}/`,
-    INSIGHTS: (id) => `${API_BASE_URL}/projects/${id}/insights/`,
+    UPDATE: (id) => `${API_BASE_URL}/projects/${id}`,
+    DELETE: (id) => `${API_BASE_URL}/projects/${id}`,
+    INSIGHTS: (id) => `${API_BASE_URL}/projects/${id}/insights`,
   },
   
   // Agent endpoints
