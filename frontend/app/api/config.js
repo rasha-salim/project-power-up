@@ -45,7 +45,8 @@ const API_BASE_URL = `${getApiBaseUrl()}/api/v1`;
 // Debug logging
 console.log('API Configuration:', {
   NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL,
-  API_BASE_URL: API_BASE_URL
+  API_BASE_URL: API_BASE_URL,
+  timestamp: new Date().toISOString()
 });
 
 export const API_ENDPOINTS = {
