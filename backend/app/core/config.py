@@ -15,7 +15,11 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = os.getenv("RAILWAY_ENVIRONMENT", "development")
     
     # CORS settings
-    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:8000"]
+    CORS_ORIGINS: List[str] = [
+        "http://localhost:3000", 
+        "http://localhost:8000",
+        "https://project-power-up.netlify.app"
+    ]
     
     # Database settings - Unified configuration
     DATABASE_TYPE: str = os.getenv("DATABASE_TYPE", "postgresql")  # postgresql or sqlite
