@@ -188,31 +188,19 @@ class ProjectService:
         structured_projects = []
         
         for project in projects:
-            # Convert SQLAlchemy model to dict
-            project_dict = {
-                "id": project.id,
-                "name": project.name,
-                "description": project.description,
-                "status": project.status,
-                "team_size": project.team_size,
-                "deadline": project.deadline,
-                "goal": project.goal,
-                "industry": project.industry,
-                "budget": project.budget,
-                "created_at": project.created_at,
-                "updated_at": project.updated_at
-            }
+            # Project is already a dict from list_projects, so use it directly
+            project_dict = project.copy()  # Make a copy to avoid modifying original
             
             # If insights exist, deserialize them
-            if project.insights:
+            if project_dict.get("insights"):
                 try:
                     # Parse insights into Pydantic model
-                    structured_insights = self.deserialize_project_insights(project.insights)
+                    structured_insights = self.deserialize_project_insights(project_dict["insights"])
                     project_dict["insights"] = structured_insights
                 except Exception as e:
-                    logger.error(f"Error deserializing insights for project {project.id}: {str(e)}")
-                    # Fall back to raw insights
-                    project_dict["insights"] = project.insights
+                    logger.error(f"Error deserializing insights for project {project_dict.get('id')}: {str(e)}")
+                    # Fall back to raw insights (already in project_dict)
+                    pass
             
             structured_projects.append(project_dict)
                 
