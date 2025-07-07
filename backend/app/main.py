@@ -1,7 +1,8 @@
-from fastapi import FastAPI, HTTPException, WebSocket
+from fastapi import FastAPI, HTTPException, WebSocket, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 import uvicorn
 import logging
 import sys
@@ -21,6 +22,21 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Custom HTTPS redirect middleware that skips CORS preflight requests
+class CORSAwareHTTPSRedirectMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        # Skip redirect for OPTIONS requests (CORS preflight)
+        if request.method == "OPTIONS":
+            return await call_next(request)
+        
+        # Only redirect HTTP to HTTPS
+        if request.url.scheme == "http":
+            # Construct HTTPS URL
+            https_url = request.url.replace(scheme="https")
+            return RedirectResponse(url=str(https_url), status_code=307)
+        
+        return await call_next(request)
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
     description="Intelligent Project Planning System API",
@@ -37,10 +53,10 @@ app.add_middleware(
     expose_headers=["*"],
 )
 
-# Add HTTPS redirect middleware only in production (Railway)
+# Add CORS-aware HTTPS redirect middleware only in production (Railway)
 if settings.ENVIRONMENT == "production":
-    app.add_middleware(HTTPSRedirectMiddleware)
-    logger.info("HTTPS redirect middleware enabled for production environment")
+    app.add_middleware(CORSAwareHTTPSRedirectMiddleware)
+    logger.info("CORS-aware HTTPS redirect middleware enabled for production environment")
 else:
     logger.info(f"HTTPS redirect middleware disabled for {settings.ENVIRONMENT} environment")
 
