@@ -224,7 +224,7 @@ Current environment status:
         return self.DATABASE_TYPE.lower() == "postgresql"
     
     # Vector DB settings
-    CHROMA_PERSIST_DIRECTORY: str = os.getenv("CHROMA_PERSIST_DIRECTORY", "./chroma_db")
+    CHROMA_PERSIST_DIRECTORY: str = os.getenv("CHROMA_PERSIST_DIRECTORY", "/app/data/chroma_db")
     
     # Anthropic API settings
     ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
