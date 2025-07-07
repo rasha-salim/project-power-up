@@ -43,7 +43,15 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# Add CORS middleware with explicit WebSocket support
+# Add CORS-aware HTTPS redirect middleware FIRST (in production)
+# This must come before CORS middleware in the stack
+if settings.ENVIRONMENT == "production":
+    app.add_middleware(CORSAwareHTTPSRedirectMiddleware)
+    logger.info("CORS-aware HTTPS redirect middleware enabled for production environment")
+else:
+    logger.info(f"HTTPS redirect middleware disabled for {settings.ENVIRONMENT} environment")
+
+# Add CORS middleware AFTER redirect middleware (processed first due to middleware stack order)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # For development - restrict in production
@@ -52,13 +60,6 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["*"],
 )
-
-# Add CORS-aware HTTPS redirect middleware only in production (Railway)
-if settings.ENVIRONMENT == "production":
-    app.add_middleware(CORSAwareHTTPSRedirectMiddleware)
-    logger.info("CORS-aware HTTPS redirect middleware enabled for production environment")
-else:
-    logger.info(f"HTTPS redirect middleware disabled for {settings.ENVIRONMENT} environment")
 
 # Include API router
 app.include_router(api_router, prefix=settings.API_V1_STR)
