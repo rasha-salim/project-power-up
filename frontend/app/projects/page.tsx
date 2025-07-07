@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { PlusIcon, DocumentTextIcon, ChartBarIcon, ClockIcon } from '@heroicons/react/24/outline';
+import { API_ENDPOINTS, apiRequest } from '../api/config';
 
 // Types
 interface Project {
@@ -10,6 +11,7 @@ interface Project {
   name: string;
   description: string;
   status: string;
+  planning_status?: string;
   created_at: string;
   updated_at: string;
   document_count?: number;
@@ -25,14 +27,11 @@ export default function ProjectsPage() {
     const fetchProjects = async () => {
       try {
         // Fetch projects from the API
-        const response = await fetch('/api/v1/projects');
+        console.log('🔵 Fetching projects list');
+        console.log('🔵 Using API endpoint:', API_ENDPOINTS.PROJECTS.LIST);
         
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.detail || 'Failed to load projects');
-        }
-        
-        const data = await response.json();
+        const data = await apiRequest(API_ENDPOINTS.PROJECTS.LIST);
+        console.log('🟢 Projects fetched successfully:', data.length);
         
         // Add document count if available, or default to 0
         const projectsWithDocCount = data.map((project: any) => ({
@@ -43,7 +42,7 @@ export default function ProjectsPage() {
         setProjects(projectsWithDocCount);
         setLoading(false);
       } catch (err: any) {
-        console.error('Error fetching projects:', err);
+        console.error('🔴 Error fetching projects:', err);
         setError(err.message || 'Failed to load projects. Please try again later.');
         setLoading(false);
       }
@@ -67,6 +66,31 @@ export default function ProjectsPage() {
     return (
       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${bgColor}`}>
         {status.charAt(0).toUpperCase() + status.slice(1)}
+      </span>
+    );
+  };
+
+  // Planning status badge component
+  const PlanningStatusBadge = ({ planningStatus }: { planningStatus?: string }) => {
+    if (!planningStatus) return null;
+    
+    let bgColor = 'bg-gray-100 text-gray-600';
+    let displayText = planningStatus;
+    
+    if (planningStatus === 'completed') {
+      bgColor = 'bg-emerald-100 text-emerald-700';
+      displayText = 'Planning Complete';
+    } else if (planningStatus === 'in_progress') {
+      bgColor = 'bg-amber-100 text-amber-700';
+      displayText = 'Planning in Progress';
+    } else if (planningStatus === 'not_started') {
+      bgColor = 'bg-slate-100 text-slate-600';
+      displayText = 'Planning Not Started';
+    }
+    
+    return (
+      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${bgColor}`}>
+        📋 {displayText}
       </span>
     );
   };
@@ -138,7 +162,10 @@ export default function ProjectsPage() {
                           <h2 className="text-xl font-semibold text-gray-900 group-hover:text-primary-600 transition-colors duration-200">
                             {project.name}
                           </h2>
-                          <StatusBadge status={project.status} />
+                          <div className="flex flex-col gap-2">
+                            <StatusBadge status={project.status} />
+                            <PlanningStatusBadge planningStatus={project.planning_status} />
+                          </div>
                         </div>
                         <p className="text-gray-600 mb-6 line-clamp-3">
                           {project.description}

@@ -4,7 +4,13 @@ const getApiBaseUrl = () => {
   
   // Force HTTPS for Railway domains (production)
   if (apiUrl && apiUrl.includes('railway.app')) {
-    return apiUrl.replace('http://', 'https://');
+    // Handle both cases: with and without protocol
+    if (apiUrl.startsWith('http://')) {
+      return apiUrl.replace('http://', 'https://');
+    } else if (!apiUrl.startsWith('https://')) {
+      return `https://${apiUrl}`;
+    }
+    return apiUrl;
   }
   
   // Add https:// if the URL doesn't have a protocol
