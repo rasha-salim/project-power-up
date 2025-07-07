@@ -50,6 +50,23 @@ export const API_ENDPOINTS = {
     DELETE: (id) => `${API_BASE_URL}/projects/${id}/`,
     INSIGHTS: (id) => `${API_BASE_URL}/projects/${id}/insights/`,
   },
+  
+  // Agent endpoints
+  AGENTS: {
+    CATALOG: `${API_BASE_URL}/agents/catalog/`,
+  },
+  
+  // Document Generation endpoints
+  DOCUMENT_GENERATION: {
+    LIST: (projectId) => `${API_BASE_URL}/documents/generate/${projectId}/documents/`,
+    GENERATE: (projectId, type) => `${API_BASE_URL}/documents/generate/${projectId}/generate/${type}/`,
+    DOWNLOAD: (projectId, documentId) => `${API_BASE_URL}/documents/generate/${projectId}/documents/${documentId}/download/`,
+  },
+  
+  // Insights endpoints (legacy)
+  INSIGHTS: {
+    GET: (projectId) => `${API_BASE_URL}/insights/${projectId}/`,
+  },
 };
 
 // Helper function for API requests

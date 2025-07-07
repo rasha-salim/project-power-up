@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { API_ENDPOINTS, apiRequest } from '@/app/api/config';
 import { 
   DocumentTextIcon, 
   DocumentArrowDownIcon,
@@ -35,7 +36,7 @@ export default function DocumentGeneration({ projectId, projectStatus }: Documen
 
   const fetchDocuments = async () => {
     try {
-      const response = await fetch(`/api/v1/documents/generate/${projectId}/documents`);
+      const response = await fetch(API_ENDPOINTS.DOCUMENT_GENERATION.LIST(projectId));
       if (response.ok) {
         const data = await response.json();
         setDocuments(data.documents || []);
@@ -50,7 +51,7 @@ export default function DocumentGeneration({ projectId, projectStatus }: Documen
     setError(null);
 
     try {
-      const response = await fetch(`/api/v1/documents/generate/${projectId}/generate/${type}`, {
+      const response = await fetch(API_ENDPOINTS.DOCUMENT_GENERATION.GENERATE(projectId, type), {
         method: 'POST',
       });
 
@@ -74,7 +75,7 @@ export default function DocumentGeneration({ projectId, projectStatus }: Documen
 
   const downloadDocument = async (documentId: string, filename: string) => {
     try {
-      const response = await fetch(`/api/v1/documents/generate/${projectId}/documents/${documentId}/download`);
+      const response = await fetch(API_ENDPOINTS.DOCUMENT_GENERATION.DOWNLOAD(projectId, documentId));
       
       if (!response.ok) {
         throw new Error('Failed to download document');

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { PaperAirplaneIcon, XMarkIcon, CheckIcon, ArrowPathIcon, InformationCircleIcon, StopIcon } from '@heroicons/react/24/outline';
+import { API_ENDPOINTS, apiRequest } from '@/app/api/config';
 
 interface Message {
   id: string;
@@ -145,8 +146,23 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
       wsRef.current = null;
     }
 
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.hostname}:8000/api/v1/ws/agent-conversation/${projectId}`;
+    // Get the API base URL and convert to WebSocket URL
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+    let wsBaseUrl;
+    
+    if (apiUrl.includes('railway.app')) {
+      // Railway deployment - use wss and the Railway domain
+      wsBaseUrl = apiUrl.replace('https://', 'wss://').replace('http://', 'wss://');
+    } else if (apiUrl.startsWith('http://localhost')) {
+      // Local development - use ws
+      wsBaseUrl = apiUrl.replace('http://', 'ws://');
+    } else {
+      // Default to secure WebSocket for production
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      wsBaseUrl = `${protocol}//${apiUrl.replace(/^https?:\/\//, '')}`;
+    }
+    
+    const wsUrl = `${wsBaseUrl}/api/v1/ws/agent-conversation/${projectId}`;
     
     console.log('Connecting to WebSocket:', wsUrl);
     const ws = new WebSocket(wsUrl);
@@ -610,7 +626,7 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
 
   const fetchAgentCatalog = async () => {
     try {
-      const response = await fetch('/api/v1/agents/catalog');
+      const response = await fetch(API_ENDPOINTS.AGENTS.CATALOG);
       if (response.ok) {
         const data = await response.json();
         setAgents(data);

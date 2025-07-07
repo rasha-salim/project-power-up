@@ -8,6 +8,7 @@ interface ProjectHeaderProps {
     name: string;
     description: string;
     status: string;
+    planning_status?: string;
     created_at: string;
     updated_at: string;
   };
@@ -33,6 +34,31 @@ export default function ProjectHeader({ project }: ProjectHeaderProps) {
     return (
       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${bgColor}`}>
         {status.charAt(0).toUpperCase() + status.slice(1)}
+      </span>
+    );
+  };
+
+  // Planning status badge component
+  const PlanningStatusBadge = ({ planningStatus }: { planningStatus?: string }) => {
+    if (!planningStatus) return null;
+    
+    let bgColor = 'bg-gray-100 text-gray-600';
+    let displayText = planningStatus;
+    
+    if (planningStatus === 'completed') {
+      bgColor = 'bg-emerald-100 text-emerald-700';
+      displayText = 'Planning Complete';
+    } else if (planningStatus === 'in_progress') {
+      bgColor = 'bg-amber-100 text-amber-700';
+      displayText = 'Planning in Progress';
+    } else if (planningStatus === 'not_started') {
+      bgColor = 'bg-slate-100 text-slate-600';
+      displayText = 'Planning Not Started';
+    }
+    
+    return (
+      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${bgColor} ml-2`}>
+        📋 {displayText}
       </span>
     );
   };
@@ -82,6 +108,7 @@ export default function ProjectHeader({ project }: ProjectHeaderProps) {
               <div className="flex items-center">
                 <h1 className="text-2xl font-bold text-gray-900 mr-3">{project.name}</h1>
                 <StatusBadge status={project.status} />
+                <PlanningStatusBadge planningStatus={project.planning_status} />
               </div>
             )}
           </div>

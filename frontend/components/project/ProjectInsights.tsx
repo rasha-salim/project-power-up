@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { API_ENDPOINTS, apiRequest } from '@/app/api/config';
 import { 
   ChartBarIcon, 
   ClockIcon, 
@@ -104,7 +105,7 @@ export default function ProjectInsights({ projectId, projectStatus, projectInsig
 
       try {
         console.log(`Fetching insights for project: ${projectId}, status: ${projectStatus}`);
-        const response = await fetch(`/api/v1/projects/${projectId}/insights`);
+        const response = await fetch(API_ENDPOINTS.PROJECTS.INSIGHTS(projectId));
 
         if (!response.ok) {
           console.error(`Insights API error: ${response.status} ${response.statusText}`);
@@ -911,7 +912,7 @@ export default function ProjectInsights({ projectId, projectStatus, projectInsig
       </div>
 
       {/* Footer */}
-      <div className="px-4 py-3 bg-gray-50 flex justify-between items-center sm:px-6 border-t border-gray-200">
+      <div className="px-4 py-3 bg-gray-50 flex justify-end items-center sm:px-6 border-t border-gray-200">
         <div className="text-sm text-gray-500">
           {insights?.analysis_id && (
             <span>Analysis ID: {insights.analysis_id}</span>
@@ -923,13 +924,6 @@ export default function ProjectInsights({ projectId, projectStatus, projectInsig
             <span className="ml-4">Updated: {new Date(insights.updated_at).toLocaleDateString()}</span>
           )}
         </div>
-        <button className="btn btn-outline" onClick={() => {
-          // TODO: Implement export functionality
-          console.log('Export insights for project:', projectId);
-        }}>
-          <DocumentTextIcon className="w-4 h-4 mr-1" />
-          Export Insights
-        </button>
       </div>
     </div>
   );

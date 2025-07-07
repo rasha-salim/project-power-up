@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { API_ENDPOINTS, apiRequest } from '@/app/api/config';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Badge } from './ui/badge';
 import { Progress } from './ui/progress';
@@ -80,7 +81,7 @@ const InsightsTab: React.FC<InsightsTabProps> = ({ projectId }) => {
   const fetchInsights = async () => {
     try {
       setLoading(true);
-      const response = await fetch(`/api/v1/insights/${projectId}`);
+      const response = await fetch(API_ENDPOINTS.INSIGHTS.GET(projectId));
       if (!response.ok) throw new Error('Failed to fetch insights');
       const data = await response.json();
       setInsights(data.technical_analysis);

@@ -339,7 +339,7 @@ export default function ProjectDetailPage() {
   const handleDocumentDelete = async (documentId: string) => {
     try {
       // Call the API to delete the document
-      const response = await fetch(`/api/v1/documents/${documentId}`, {
+      const response = await fetch(API_ENDPOINTS.DOCUMENTS.DELETE(documentId), {
         method: 'DELETE',
       });
       
