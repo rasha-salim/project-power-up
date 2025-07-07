@@ -2,15 +2,34 @@
 const getApiBaseUrl = () => {
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
   
-  // Force HTTPS for Railway domains (production)
+  console.log('🔍 Raw NEXT_PUBLIC_API_URL:', apiUrl);
+  
+  // CRITICAL: Force HTTPS for ALL Railway domains to prevent Mixed Content errors
   if (apiUrl && apiUrl.includes('railway.app')) {
-    // Handle both cases: with and without protocol
+    let httpsUrl;
     if (apiUrl.startsWith('http://')) {
-      return apiUrl.replace('http://', 'https://');
+      httpsUrl = apiUrl.replace('http://', 'https://');
+      console.log('🔧 Converted HTTP to HTTPS:', httpsUrl);
     } else if (!apiUrl.startsWith('https://')) {
-      return `https://${apiUrl}`;
+      httpsUrl = `https://${apiUrl}`;
+      console.log('🔧 Added HTTPS protocol:', httpsUrl);
+    } else {
+      httpsUrl = apiUrl;
+      console.log('✅ Already HTTPS:', httpsUrl);
     }
-    return apiUrl;
+    return httpsUrl;
+  }
+  
+  // For production deployments, always use HTTPS unless explicitly localhost
+  if (typeof window !== 'undefined' && window.location.protocol === 'https:' && 
+      !apiUrl.includes('localhost') && !apiUrl.includes('127.0.0.1')) {
+    if (!apiUrl.startsWith('https://')) {
+      const httpsUrl = apiUrl.startsWith('http://') 
+        ? apiUrl.replace('http://', 'https://')
+        : `https://${apiUrl}`;
+      console.log('🔧 Production HTTPS enforcement:', httpsUrl);
+      return httpsUrl;
+    }
   }
   
   // Add https:// if the URL doesn't have a protocol
@@ -72,7 +91,19 @@ export const API_ENDPOINTS = {
 // Helper function for API requests
 export const apiRequest = async (url, options = {}) => {
   try {
+    // CRITICAL: Validate URL protocol before making request
+    if (url.startsWith('http://') && !url.includes('localhost')) {
+      console.error('🚨 BLOCKING HTTP REQUEST - Converting to HTTPS:', url);
+      url = url.replace('http://', 'https://');
+    }
+    
     console.log(`🔵 Making API request to: ${url}`);
+    console.log(`🔵 Protocol check:`, {
+      protocol: url.split('://')[0],
+      isHTTPS: url.startsWith('https://'),
+      isLocalhost: url.includes('localhost'),
+      currentPageProtocol: typeof window !== 'undefined' ? window.location.protocol : 'unknown'
+    });
     console.log(`🔵 Request options:`, options);
     console.log(`🔵 Full URL breakdown:`, {
       baseUrl: API_BASE_URL,
