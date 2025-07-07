@@ -43,13 +43,13 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# Add CORS-aware HTTPS redirect middleware FIRST (in production)
-# This must come before CORS middleware in the stack
-if settings.ENVIRONMENT == "production":
-    app.add_middleware(CORSAwareHTTPSRedirectMiddleware)
-    logger.info("CORS-aware HTTPS redirect middleware enabled for production environment")
-else:
-    logger.info(f"HTTPS redirect middleware disabled for {settings.ENVIRONMENT} environment")
+# Temporarily disable HTTPS redirect middleware to fix infinite redirect loop
+# TODO: Fix middleware logic to properly detect HTTPS requests
+# if settings.ENVIRONMENT == "production":
+#     app.add_middleware(CORSAwareHTTPSRedirectMiddleware)
+#     logger.info("CORS-aware HTTPS redirect middleware enabled for production environment")
+# else:
+logger.info(f"HTTPS redirect middleware DISABLED (temporarily) to fix redirect loop")
 
 # Add CORS middleware AFTER redirect middleware (processed first due to middleware stack order)
 app.add_middleware(
