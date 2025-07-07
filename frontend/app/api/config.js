@@ -1,10 +1,17 @@
 // API configuration
 const getApiBaseUrl = () => {
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  
+  // Force HTTPS for Railway domains (production)
+  if (apiUrl && apiUrl.includes('railway.app')) {
+    return apiUrl.replace('http://', 'https://');
+  }
+  
   // Add https:// if the URL doesn't have a protocol
   if (apiUrl && !apiUrl.startsWith('http://') && !apiUrl.startsWith('https://')) {
     return `https://${apiUrl}`;
   }
+  
   return apiUrl;
 };
 
