@@ -80,6 +80,7 @@ class ProjectResponse(BaseModel):
     generated_documents: Optional[Dict[str, Any]] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    document_count: Optional[int] = 0
     message: str
     
     class Config:

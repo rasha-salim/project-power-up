@@ -3,8 +3,10 @@ import json
 from typing import List, Dict, Any, Optional, Union
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from sqlalchemy import func
 from app.models.project import Project, ProjectCreate, ProjectUpdate
 from app.models.analysis import ProjectAnalysis
+from app.models.document import Document
 from app.services.analysis_helper import AnalysisDataHelper
 from app.db.init_db_simple import get_chroma_client
 
@@ -119,22 +121,54 @@ class ProjectService:
                 
         return project_dict
     
-    async def list_projects(self, db: AsyncSession) -> List[Project]:
+    async def list_projects(self, db: AsyncSession) -> List[Dict[str, Any]]:
         """
-        List all projects
+        List all projects with document counts
         
         Args:
             db: Database session
             
         Returns:
-            List[Project]: List of projects
+            List[Dict]: List of projects with document counts
         """
         try:
-            logger.info("Executing SELECT query for projects")
-            result = await db.execute(select(Project))
-            projects = result.scalars().all()
-            logger.info(f"Query executed successfully, found {len(projects)} projects")
-            return projects
+            logger.info("Executing SELECT query for projects with document counts")
+            
+            # Query projects with document counts using LEFT JOIN
+            result = await db.execute(
+                select(
+                    Project,
+                    func.count(Document.id).label('document_count')
+                )
+                .outerjoin(Document, Project.id == Document.project_id)
+                .group_by(Project.id)
+            )
+            
+            projects_with_counts = []
+            for project, doc_count in result:
+                # Convert project to dict and add document count
+                project_dict = {
+                    'id': project.id,
+                    'name': project.name,
+                    'description': project.description,
+                    'status': project.status,
+                    'team_size': project.team_size,
+                    'deadline': project.deadline,
+                    'goal': project.goal,
+                    'industry': project.industry,
+                    'budget': project.budget,
+                    'insights': project.insights,
+                    'planning_status': project.planning_status,
+                    'brief_sections': project.brief_sections,
+                    'generated_documents': project.generated_documents,
+                    'created_at': project.created_at,
+                    'updated_at': project.updated_at,
+                    'document_count': doc_count or 0
+                }
+                projects_with_counts.append(project_dict)
+            
+            logger.info(f"Query executed successfully, found {len(projects_with_counts)} projects")
+            return projects_with_counts
         except Exception as e:
             logger.error(f"Error in list_projects: {str(e)}")
             logger.error(f"Error type: {type(e)}")
