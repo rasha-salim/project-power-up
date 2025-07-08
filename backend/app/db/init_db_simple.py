@@ -126,22 +126,56 @@ def get_chroma_client():
     
     # Use the configured ChromaDB directory from settings
     chroma_dir = settings.CHROMA_PERSIST_DIRECTORY
-    logger.info(f"Using ChromaDB directory from settings: {chroma_dir}")
+    logger.info(f"🗂️  ChromaDB Configuration:")
+    logger.info(f"   - Settings directory: {chroma_dir}")
+    logger.info(f"   - Environment variable: {os.getenv('CHROMA_PERSIST_DIRECTORY')}")
+    logger.info(f"   - Current working directory: {os.getcwd()}")
+    logger.info(f"   - Absolute path: {os.path.abspath(chroma_dir)}")
     
     # Create ChromaDB directory if it doesn't exist
     try:
+        logger.info(f"📁 Creating/verifying ChromaDB directory: {chroma_dir}")
         os.makedirs(chroma_dir, exist_ok=True)
-        logger.info(f"ChromaDB directory created/verified: {chroma_dir}")
+        
+        # Check directory properties
+        if os.path.exists(chroma_dir):
+            stat_info = os.stat(chroma_dir)
+            logger.info(f"✅ ChromaDB directory verified:")
+            logger.info(f"   - Exists: ✓")
+            logger.info(f"   - Is directory: {os.path.isdir(chroma_dir)}")
+            logger.info(f"   - Permissions: {oct(stat_info.st_mode)[-3:]}")
+            logger.info(f"   - Readable: {os.access(chroma_dir, os.R_OK)}")
+            logger.info(f"   - Writable: {os.access(chroma_dir, os.W_OK)}")
+            
+            # List existing contents
+            contents = os.listdir(chroma_dir)
+            logger.info(f"   - Contents: {len(contents)} items")
+            if contents:
+                logger.info(f"   - Files: {contents[:5]}")  # First 5 items
+        
+        # Test write permissions
+        test_file = os.path.join(chroma_dir, ".write_test")
+        try:
+            with open(test_file, "w") as f:
+                f.write("test")
+            os.remove(test_file)
+            logger.info(f"✅ Write test successful")
+        except Exception as write_error:
+            logger.error(f"❌ Write test failed: {write_error}")
+            
     except Exception as e:
-        logger.error(f"Failed to create ChromaDB directory {chroma_dir}: {e}")
+        logger.error(f"❌ Failed to create ChromaDB directory {chroma_dir}: {e}")
         # Fallback to a local directory if volume mount fails
         chroma_dir = os.path.join(os.getcwd(), "chromadb_fallback")
         os.makedirs(chroma_dir, exist_ok=True)
-        logger.warning(f"Using fallback ChromaDB directory: {chroma_dir}")
+        logger.warning(f"⚠️  Using fallback ChromaDB directory: {chroma_dir}")
     
-    logger.info(f"Initializing ChromaDB client with persistent storage at {chroma_dir}")
+    logger.info(f"🚀 Initializing ChromaDB client with persistent storage at {chroma_dir}")
     chroma_client = chromadb.PersistentClient(path=chroma_dir)
-    logger.info(f"ChromaDB client initialized successfully: {type(chroma_client)}")
+    logger.info(f"✅ ChromaDB client initialized successfully: {type(chroma_client)}")
+    
+    # Log the actual storage location
+    logger.info(f"📊 ChromaDB will persist data to: {os.path.abspath(chroma_dir)}")
     return chroma_client
 
 async def init_db():
