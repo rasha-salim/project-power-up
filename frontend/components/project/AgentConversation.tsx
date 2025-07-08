@@ -120,13 +120,13 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
         setIsAgentThinking(false);
         setMessages(prev => [...prev, {
           id: generateMessageId(),
-          type: 'error',
+          type: 'system',
           sender: 'system',
           senderName: 'System',
           message: '⏰ Response timeout - the agent may have encountered an issue. Please try your message again.',
           timestamp: new Date().toISOString()
         }]);
-      }, 30000); // 30 second timeout
+      }, 120000); // 2 minute timeout for analysis operations
 
       return () => clearTimeout(timeout);
     }
