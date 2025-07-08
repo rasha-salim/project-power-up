@@ -166,22 +166,37 @@ class AnalysisExecutionService:
                             f"Estimated cost ${estimated_cost} exceeds budget ${project.budget}"
                         )
             
-            # Check team size compliance
+            # Check team size compliance - STRICT VALIDATION
             if project.team_size:
                 resource_reqs = project_plan.get('resource_requirements', {})
-                total_team_members = sum([
-                    resource_reqs.get('developers', 0),
-                    resource_reqs.get('designers', 0), 
-                    resource_reqs.get('qa', 0),
-                    resource_reqs.get('devops', 0),
-                    resource_reqs.get('pm', 0)
-                ])
+                total_team_members = 0
+                
+                # Count all team members including "other" field
+                for role, count in resource_reqs.items():
+                    if role == 'other' and isinstance(count, dict):
+                        # Sum up all values in the "other" dictionary
+                        total_team_members += sum(count.values()) if count else 0
+                    elif isinstance(count, int):
+                        total_team_members += count
+                
+                logger.info(f"🔍 TEAM SIZE VALIDATION:")
+                logger.info(f"   - Project team size limit: {project.team_size}")
+                logger.info(f"   - Resource requirements: {resource_reqs}")
+                logger.info(f"   - Calculated total team members: {total_team_members}")
                 
                 if total_team_members > project.team_size:
                     validation_result["constraint_compliance"]["team_size_maintained"] = False
                     validation_result["violations"].append(
-                        f"Required team size {total_team_members} exceeds constraint {project.team_size}"
+                        f"CRITICAL: Required team size {total_team_members} exceeds constraint {project.team_size}. "
+                        f"Resource breakdown: {resource_reqs}"
                     )
+                    logger.error(f"🚨 TEAM SIZE CONSTRAINT VIOLATION: {total_team_members} > {project.team_size}")
+                elif total_team_members == 0:
+                    validation_result["warnings"].append(
+                        f"No team members specified in resource requirements"
+                    )
+                else:
+                    logger.info(f"✅ Team size constraint satisfied: {total_team_members} <= {project.team_size}")
             
             # Check for timeline preservation in update mode
             if existing_analysis and 'project_plan' in existing_analysis:
@@ -386,13 +401,27 @@ class AnalysisExecutionService:
                 existing_analysis_context = self._get_existing_analysis_context(db, project_id)
                 
                 # Build task description with document information, forced search results, and existing analysis context
+                # Include constraint violation feedback for retry attempts
+                constraint_violation_feedback = ""
+                if attempt > 1:
+                    constraint_violation_feedback = f"""
+                    
+                    🚨 CONSTRAINT VIOLATION RETRY - ATTEMPT {attempt}/{self.max_retries}
+                    Previous attempt failed constraint validation. PAY SPECIAL ATTENTION TO:
+                    - Team size constraint: MUST NOT exceed {getattr(project, 'team_size', 'specified')} people total
+                    - Budget constraint: MUST NOT exceed ${getattr(project, 'budget', 'specified')} budget
+                    - Resource allocation MUST sum to team_size or less
+                    - This is a RETRY - follow constraints exactly or analysis will be rejected
+                    """
+                
                 task_description = self._build_task_description(
                     project, 
                     additional_context, 
                     document_status, 
                     document_preview, 
                     forced_search_results,
-                    existing_analysis_context
+                    existing_analysis_context,
+                    constraint_violation_feedback
                 )
                 
                 # Create analysis task
@@ -461,20 +490,44 @@ class AnalysisExecutionService:
                         )
                         
                         if not validation_result["is_valid"]:
-                            logger.warning(f"Analysis violates constraints: {validation_result['violations']}")
-                            # Send constraint violation warning via WebSocket
-                            if ws_manager:
-                                await ws_manager.broadcast(
-                                    project_id,
-                                    {
-                                        "type": "constraint_violation",
-                                        "analysis_id": analysis_id,
-                                        "violations": validation_result["violations"],
-                                        "warnings": validation_result["warnings"],
-                                        "message": "⚠️ Analysis may violate project constraints. Review recommended.",
-                                        "timestamp": datetime.now().isoformat()
-                                    }
-                                )
+                            logger.error(f"Analysis violates constraints: {validation_result['violations']}")
+                            
+                            # Check if we should retry due to constraint violation
+                            if attempt < self.max_retries:
+                                logger.warning(f"Retrying analysis due to constraint violation (attempt {attempt}/{self.max_retries})")
+                                
+                                # Send constraint violation retry notification
+                                if ws_manager:
+                                    await ws_manager.broadcast(
+                                        project_id,
+                                        {
+                                            "type": "constraint_violation_retry",
+                                            "analysis_id": analysis_id,
+                                            "violations": validation_result["violations"],
+                                            "warnings": validation_result["warnings"],
+                                            "message": f"🔄 Analysis violates constraints. Retrying with enhanced instructions (attempt {attempt + 1}/{self.max_retries})...",
+                                            "timestamp": datetime.now().isoformat(),
+                                            "attempt": attempt + 1
+                                        }
+                                    )
+                                
+                                # Skip to next attempt with enhanced constraint instructions
+                                continue
+                            else:
+                                # Final attempt failed - send constraint violation warning
+                                logger.error(f"Final attempt failed constraint validation - proceeding with warning")
+                                if ws_manager:
+                                    await ws_manager.broadcast(
+                                        project_id,
+                                        {
+                                            "type": "constraint_violation",
+                                            "analysis_id": analysis_id,
+                                            "violations": validation_result["violations"],
+                                            "warnings": validation_result["warnings"],
+                                            "message": "⚠️ Analysis violates project constraints but max retries reached. Manual review recommended.",
+                                            "timestamp": datetime.now().isoformat()
+                                        }
+                                    )
                         else:
                             logger.info(f"Analysis passes constraint validation")
                             
@@ -991,7 +1044,7 @@ class AnalysisExecutionService:
             logger.warning(f"Could not retrieve existing analysis for context: {e}")
             return None
 
-    def _build_task_description(self, project: Project, additional_context: str = "", document_status: Dict[str, Any] = None, document_preview: str = "", forced_search_results: str = "", existing_analysis: Optional[Dict[str, Any]] = None) -> str:
+    def _build_task_description(self, project: Project, additional_context: str = "", document_status: Dict[str, Any] = None, document_preview: str = "", forced_search_results: str = "", existing_analysis: Optional[Dict[str, Any]] = None, constraint_violation_feedback: str = "") -> str:
         """Build task description for analysis with document search instructions"""
         
         # Prepare document status information
@@ -1029,17 +1082,46 @@ class AnalysisExecutionService:
         Use this information to inform your technical analysis and recommendations.
         """
         
-        # Build constraint preservation section
+        # Build constraint preservation section with extra emphasis on team size
+        team_size = getattr(project, 'team_size', None)
+        team_size_constraint = ""
+        if team_size is not None:
+            team_size_constraint = f"""
+        
+        🚨🚨🚨 CRITICAL TEAM SIZE CONSTRAINT 🚨🚨🚨
+        - MAXIMUM TEAM SIZE: {team_size} people total
+        - This includes ALL roles: developers, designers, QA, DevOps, PM, and any other roles
+        - You MUST NOT exceed this limit under any circumstances
+        - If {team_size} = 1, then ALL work must be done by 1 person (full-stack developer)
+        - If {team_size} = 2, then distribute work among 2 people maximum
+        - Resource allocation MUST sum to exactly {team_size} or less
+        
+        RESOURCE ALLOCATION RULES:
+        - For team_size = 1: {{"developers": 1, "designers": 0, "qa": 0, "devops": 0, "pm": 0, "other": {{}}}}
+        - For team_size = 2: Example: {{"developers": 1, "designers": 1, "qa": 0, "devops": 0, "pm": 0, "other": {{}}}}
+        - The sum of all resource values MUST NOT exceed {team_size}
+        """
+        
         constraint_section = f"""
         
         🔒 PROJECT CONSTRAINTS (MUST BE PRESERVED):
         - Project Deadline: {getattr(project, 'deadline', 'Not specified')}
         - Budget Constraint: {getattr(project, 'budget', 'Not specified')}
-        - Team Size Limit: {getattr(project, 'team_size', 'Not specified')}
+        - Team Size Limit: {team_size} people maximum
         - Project Goal: {getattr(project, 'goal', 'Not specified')}
+        {team_size_constraint}
         
         ⚠️ CRITICAL: These constraints MUST be respected in your analysis. Do not violate these limits.
+        🚨 TEAM SIZE CONSTRAINT: You MUST NOT recommend more than {team_size} team members total.
         """
+        
+        # Debug logging for constraint verification
+        logger.info(f"🔍 PROJECT CONSTRAINTS DEBUG:")
+        logger.info(f"   - Project ID: {project.id}")
+        logger.info(f"   - Team Size: {getattr(project, 'team_size', 'Not specified')}")
+        logger.info(f"   - Budget: {getattr(project, 'budget', 'Not specified')}")
+        logger.info(f"   - Deadline: {getattr(project, 'deadline', 'Not specified')}")
+        logger.info(f"   - Goal: {getattr(project, 'goal', 'Not specified')}")
         
         # Build existing analysis context section
         existing_context_section = ""
@@ -1085,7 +1167,7 @@ class AnalysisExecutionService:
         """
         
         base_description = f"""
-        Analyze the project '{project.name}' and provide a comprehensive technical analysis based on the uploaded project documents.{project_brief_section}{constraint_section}{existing_context_section}{user_context_section}
+        Analyze the project '{project.name}' and provide a comprehensive technical analysis based on the uploaded project documents.{project_brief_section}{constraint_section}{constraint_violation_feedback}{existing_context_section}{user_context_section}
         
         Project Details:
         - Name: {project.name}
