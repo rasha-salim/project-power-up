@@ -336,11 +336,11 @@ class AgentService:
         
         # Find the project with this analysis
         for project in projects:
-            if project.insights and project.insights.get("analysis_id") == analysis_id:
+            if project.get("insights") and project["insights"].get("analysis_id") == analysis_id:
                 return {
                     "analysis_id": analysis_id,
                     "status": "completed",
-                    "results": project.insights
+                    "results": project["insights"]
                 }
         
         # If not found, return a pending status
@@ -627,8 +627,8 @@ class AgentService:
                 {feedback}
                 
                 Project Details:
-                - Name: {project.name}
-                - Description: {project.description}
+                - Name: {project.get("name", "Unknown")}
+                - Description: {project.get("description", "No description")}
                 
                 Please regenerate the technical analysis incorporating the user's feedback.
                 You MUST maintain the exact same structure and format as the previous analysis.
@@ -797,15 +797,15 @@ class AgentService:
             
             # Build context about the project
             context = f"""
-            Project: {project.name if project else 'Unknown'}
-            Description: {project.description if project else 'No description available'}
+            Project: {project.get("name") if project else 'Unknown'}
+            Description: {project.get("description") if project else 'No description available'}
             
             User Message: {message}
             """
             
             # Check if the message is asking about project insights
-            if project and project.insights and any(keyword in message.lower() for keyword in ['analysis', 'insights', 'recommendations', 'technical', 'risks', 'plan']):
-                context += f"\n\nPrevious Analysis Results:\n{json.dumps(project.insights, indent=2)}"
+            if project and project.get("insights") and any(keyword in message.lower() for keyword in ['analysis', 'insights', 'recommendations', 'technical', 'risks', 'plan']):
+                context += f"\n\nPrevious Analysis Results:\n{json.dumps(project['insights'], indent=2)}"
             
             # Create a task for the chat
             chat_task = Task(
@@ -1128,8 +1128,8 @@ class AgentService:
                 {feedback}
                 
                 Project Details:
-                - Name: {project.name}
-                - Description: {project.description}
+                - Name: {project.get("name", "Unknown")}
+                - Description: {project.get("description", "No description")}
                 
                 Please regenerate the technical analysis incorporating the user's feedback.
                 You MUST maintain the exact same structure and format as the previous analysis.
