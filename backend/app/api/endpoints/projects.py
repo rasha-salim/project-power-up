@@ -115,23 +115,24 @@ async def list_projects(
         # Convert projects to response format
         result = []
         for project in projects:
-            logger.debug(f"Processing project: {project.id}")
+            logger.debug(f"Processing project: {project['id']}")
             project_response = ProjectResponse(
-                id=project.id,
-                name=project.name,
-                description=project.description,
-                status=project.status,
-                team_size=project.team_size,
-                deadline=project.deadline,
-                goal=project.goal,
-                industry=project.industry,
-                budget=project.budget,
-                insights=project.insights,
-                planning_status=project.planning_status,
-                brief_sections=project.brief_sections,
-                generated_documents=project.generated_documents,
-                created_at=project.created_at,
-                updated_at=project.updated_at,
+                id=project["id"],
+                name=project["name"],
+                description=project["description"],
+                status=project["status"],
+                team_size=project["team_size"],
+                deadline=project["deadline"],
+                goal=project["goal"],
+                industry=project["industry"],
+                budget=project["budget"],
+                insights=project["insights"],
+                planning_status=project["planning_status"],
+                brief_sections=project["brief_sections"],
+                generated_documents=project["generated_documents"],
+                created_at=project["created_at"],
+                updated_at=project["updated_at"],
+                document_count=project["document_count"],
                 message="Project retrieved successfully"
             )
             result.append(project_response)
