@@ -124,9 +124,20 @@ def get_chroma_client():
         logger.info(f"Using existing ChromaDB client: {type(chroma_client)}")
         return chroma_client
     
+    # Use the configured ChromaDB directory from settings
+    chroma_dir = settings.CHROMA_PERSIST_DIRECTORY
+    logger.info(f"Using ChromaDB directory from settings: {chroma_dir}")
+    
     # Create ChromaDB directory if it doesn't exist
-    chroma_dir = os.path.join(os.getcwd(), "chromadb")
-    os.makedirs(chroma_dir, exist_ok=True)
+    try:
+        os.makedirs(chroma_dir, exist_ok=True)
+        logger.info(f"ChromaDB directory created/verified: {chroma_dir}")
+    except Exception as e:
+        logger.error(f"Failed to create ChromaDB directory {chroma_dir}: {e}")
+        # Fallback to a local directory if volume mount fails
+        chroma_dir = os.path.join(os.getcwd(), "chromadb_fallback")
+        os.makedirs(chroma_dir, exist_ok=True)
+        logger.warning(f"Using fallback ChromaDB directory: {chroma_dir}")
     
     logger.info(f"Initializing ChromaDB client with persistent storage at {chroma_dir}")
     chroma_client = chromadb.PersistentClient(path=chroma_dir)
