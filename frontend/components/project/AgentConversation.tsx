@@ -99,7 +99,11 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
   }, [messages]);
 
   useEffect(() => {
-    console.log('isAgentThinking:', isAgentThinking); // Debug log
+    console.log('🟡 isAgentThinking state changed:', {
+      newState: isAgentThinking,
+      timestamp: new Date().toISOString(),
+      stackTrace: new Error().stack?.split('\n').slice(1, 5).join('\n')
+    });
   }, [isAgentThinking]);
 
   useEffect(() => {
@@ -230,6 +234,10 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
           messageLength: data.message?.length || 0,
           hasResult: !!data.result,
           resultKeys: data.result ? Object.keys(data.result) : [],
+          // Enhanced isThinking logging
+          isThinkingField: data.isThinking,
+          isThinkingType: typeof data.isThinking,
+          hasIsThinkingField: data.hasOwnProperty('isThinking'),
           currentState: {
             isAnalyzing: isAnalyzing,
             isAgentThinking: isAgentThinking,
@@ -238,6 +246,11 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
           },
           fullData: data
         });
+        
+        // Special logging for isThinking field changes
+        if (data.hasOwnProperty('isThinking')) {
+          console.log(`🟡 isThinking field detected: ${data.isThinking} (current UI state: ${isAgentThinking})`);
+        }
         
         // Clear any previous errors when receiving new messages
         if (data.type !== 'error' && data.type !== 'analysis_failed') {
@@ -345,6 +358,19 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
             break;
 
           case 'analysis_status':
+            console.log('🟡 Processing analysis_status message:', {
+              status: data.status,
+              isThinking: data.isThinking,
+              message: data.message,
+              currentThinkingState: isAgentThinking
+            });
+            
+            // Handle isThinking field explicitly
+            if (data.hasOwnProperty('isThinking')) {
+              console.log(`🟡 Setting isAgentThinking to: ${data.isThinking}`);
+              setIsAgentThinking(data.isThinking);
+            }
+            
             if (data.status === 'analyzing') {
               setIsAgentThinking(true);
               setAnalysisProgress(data.message || 'Analyzing...');
@@ -353,6 +379,10 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
             } else if (data.status === 'already_running') {
               setCurrentAnalysisId(data.analysis_id);
               setAnalysisProgress(data.message || 'Analysis in progress...');
+            } else if (data.status === 'completed' || data.status === 'finished') {
+              console.log('🟡 Analysis status indicates completion, stopping thinking indicator');
+              setIsAgentThinking(false);
+              setAnalysisProgress('');
             }
             break;
 
@@ -440,8 +470,20 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
             });
             
             // Notify parent component
+            console.log('🟡 Checking onAnalysisComplete callback:', {
+              hasCallback: !!onAnalysisComplete,
+              hasResult: !!data.result,
+              resultKeys: data.result ? Object.keys(data.result) : [],
+              willCallCallback: !!(onAnalysisComplete && data.result)
+            });
+            
             if (onAnalysisComplete && data.result) {
+              console.log('🟡 Calling onAnalysisComplete with result:', data.result);
               onAnalysisComplete(data.result);
+            } else if (onAnalysisComplete && !data.result) {
+              console.warn('🟡 onAnalysisComplete available but no result data to pass');
+            } else if (!onAnalysisComplete && data.result) {
+              console.warn('🟡 Result data available but no onAnalysisComplete callback');
             }
             
             // Log if we're missing result data
@@ -478,22 +520,23 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
             }]);
             
             // Notify parent component
+            console.log('🟡 analysis_result - Checking onAnalysisComplete callback:', {
+              hasCallback: !!onAnalysisComplete,
+              hasResult: !!data.result,
+              resultKeys: data.result ? Object.keys(data.result) : [],
+              willCallCallback: !!(onAnalysisComplete && data.result)
+            });
+            
             if (onAnalysisComplete && data.result) {
+              console.log('🟡 analysis_result - Calling onAnalysisComplete with result:', data.result);
               onAnalysisComplete(data.result);
+            } else if (onAnalysisComplete && !data.result) {
+              console.warn('🟡 analysis_result - onAnalysisComplete available but no result data to pass');
+            } else if (!onAnalysisComplete && data.result) {
+              console.warn('🟡 analysis_result - Result data available but no onAnalysisComplete callback');
             }
             break;
 
-          case 'analysis_status':
-            setMessages(prev => [...prev, {
-              id: generateMessageId(),
-              type: 'system',
-              sender: data.sender || 'technical_agent',
-              senderName: data.sender_name || 'Technical Analysis Agent',
-              message: data.message || 'Processing...',
-              timestamp: new Date().toISOString(),
-              message_id: data.message_id
-            }]);
-            break;
 
           case 'analysis_saved':
             console.log('Analysis saved successfully:', data);
