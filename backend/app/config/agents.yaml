@@ -290,10 +290,10 @@ tasks:
             }
           ],
           "resource_requirements": {
-            "developers": [number respecting original team size],
-            "designers": [number respecting original team size],
-            "qa": [number respecting original team size],
-            "devops": [number respecting original team size],
+            "developers": [whole number - integer only, no decimals, respecting original team size],
+            "designers": [whole number - integer only, no decimals, respecting original team size],
+            "qa": [whole number - integer only, no decimals, respecting original team size],
+            "devops": [whole number - integer only, no decimals, respecting original team size],
             "pm": 1,
             "other": {}
           },
@@ -327,6 +327,8 @@ tasks:
       - If document searches find limited content, state this in explanations
       - Include specific document references in explanations sections
       - Provide realistic scores and estimates based on actual project requirements
+      - CRITICAL: All resource requirement numbers (developers, designers, qa, devops, pm) MUST be integers (whole numbers), not decimals
+      - Example: Use "developers": 2, not "developers": 2.0
     agent: "technical_analyst"
     dependencies: []
     context_requirements:

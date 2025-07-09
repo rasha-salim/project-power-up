@@ -619,11 +619,11 @@ class AnalysisDataService:
             print(f"🔍 Developers from simple int: {developers_count}")
         
         resources = ResourceRequirements(
-            developers=developers_count,
-            designers=resource_data.get('designers', 0),
-            qa=resource_data.get('qa', 0),
-            devops=resource_data.get('devops', 0),
-            pm=resource_data.get('pm', 0),
+            developers=int(developers_count),
+            designers=int(resource_data.get('designers', 0)),
+            qa=int(resource_data.get('qa', 0)),
+            devops=int(resource_data.get('devops', 0)),
+            pm=int(resource_data.get('pm', 0)),
             other=resource_data.get('other', {})
         )
         print(f"🔍 Final resource requirements: developers={resources.developers}, devops={resources.devops}, pm={resources.pm}")
