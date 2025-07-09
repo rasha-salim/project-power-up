@@ -638,7 +638,7 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
         }
       } catch (error) {
         console.error('🔴 Error parsing WebSocket message:', {
-          error: error.message,
+          error: error instanceof Error ? error.message : String(error),
           rawData: event.data,
           timestamp: new Date().toISOString()
         });
