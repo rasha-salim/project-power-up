@@ -194,7 +194,7 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
     const ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
-      console.log('WebSocket connected');
+      console.log('🟢 WebSocket connected successfully');
       setIsConnected(true);
       
       // Update the connecting message if it exists
@@ -222,11 +222,20 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        console.log('WebSocket message received:', data.type, {
-          hasAnalysisId: !!data.analysis_id,
-          messageLength: data.message?.length || 0,
+        console.log('🔴 WebSocket message received:', {
+          type: data.type,
+          timestamp: new Date().toISOString(),
+          analysisId: data.analysis_id,
           sender: data.sender,
+          messageLength: data.message?.length || 0,
           hasResult: !!data.result,
+          resultKeys: data.result ? Object.keys(data.result) : [],
+          currentState: {
+            isAnalyzing: isAnalyzing,
+            isAgentThinking: isAgentThinking,
+            messagesCount: messages.length,
+            currentAnalysisId: currentAnalysisId
+          },
           fullData: data
         });
         
@@ -239,6 +248,11 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
           case 'user_message':
           case 'agent_message':
           case 'system_message':
+            console.log('🟢 Processing message:', data.type, {
+              sender: data.sender,
+              messagePreview: data.message?.substring(0, 100) + '...',
+              willBeFiltered: data.type === 'agent_message' && !data.analysis_id && data.sender !== 'project_planner'
+            });
             // Filter out certain system messages to keep chat clean
             if (data.type === 'system_message' && 
                 (data.message.includes('Connected to agent conversation') || 
@@ -366,15 +380,21 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
             break;
 
           case 'analysis_complete':
-            console.log('Handling analysis_complete:', {
+            console.log('🟡 ANALYSIS_COMPLETE handler triggered:', {
               analysis_id: data.analysis_id,
               currentAnalysisId: currentAnalysisId,
               willSetAnalysisId: data.analysis_id && !currentAnalysisId,
               hasResult: !!data.result,
               resultKeys: data.result ? Object.keys(data.result) : [],
-              resultData: data.result
+              resultData: data.result,
+              currentState: {
+                isAnalyzing: isAnalyzing,
+                analysisComplete: analysisComplete,
+                messagesLength: messages.length
+              }
             });
             
+            console.log('🟡 Setting analysis states...');
             setIsAnalyzing(false);
             setAnalysisComplete(true);
             setIsAgentThinking(false); // Reset typing indicator
@@ -382,6 +402,7 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
             
             // Always set the analysis ID from the complete message
             if (data.analysis_id) {
+              console.log('🟡 Setting currentAnalysisId:', data.analysis_id);
               setCurrentAnalysisId(data.analysis_id);
             }
             
@@ -395,16 +416,28 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
                   : 'Analysis completed successfully!')
               : 'Analysis completed! Waiting for detailed results...';
             
-            setMessages(prev => [...prev, {
-              id: generateMessageId(),
-              type: 'result',
-              sender: data.sender || 'technical_agent',
-              senderName: data.sender_name || 'Technical Analysis Agent',
-              message: messageText,
-              timestamp: new Date().toISOString(),
-              result: data.result,
-              message_id: data.message_id
-            }]);
+            console.log('🟡 Adding analysis complete message:', {
+              messageText,
+              hasResult: !!data.result,
+              resultKeys: data.result ? Object.keys(data.result) : [],
+              messageId: generateMessageId()
+            });
+            
+            setMessages(prev => {
+              const newMessage = {
+                id: generateMessageId(),
+                type: 'result',
+                sender: data.sender || 'technical_agent',
+                senderName: data.sender_name || 'Technical Analysis Agent',
+                message: messageText,
+                timestamp: new Date().toISOString(),
+                result: data.result,
+                message_id: data.message_id
+              };
+              console.log('🟡 New message being added:', newMessage);
+              console.log('🟡 Previous messages count:', prev.length);
+              return [...prev, newMessage];
+            });
             
             // Notify parent component
             if (onAnalysisComplete && data.result) {
@@ -601,16 +634,20 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
             break;
 
           default:
-            console.log('Unknown message type:', data.type);
+            console.warn('🔶 Unknown message type:', data.type, 'Full data:', data);
         }
       } catch (error) {
-        console.error('Error parsing WebSocket message:', error);
+        console.error('🔴 Error parsing WebSocket message:', {
+          error: error.message,
+          rawData: event.data,
+          timestamp: new Date().toISOString()
+        });
       }
     };
 
     ws.onerror = (error) => {
       // WebSocket error events don't contain much detail in browsers
-      console.error('WebSocket error occurred');
+      console.error('🔴 WebSocket error occurred:', error);
       
       // Only add the connecting message if we don't already have one
       if (!connectionMessageId.current) {
@@ -628,7 +665,12 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
     };
 
     ws.onclose = (event) => {
-      console.log(`WebSocket disconnected with code: ${event.code}, reason: ${event.reason}`);
+      console.log('🔴 WebSocket disconnected:', {
+        code: event.code,
+        reason: event.reason,
+        wasClean: event.wasClean,
+        timestamp: new Date().toISOString()
+      });
       setIsConnected(false);
       wsRef.current = null;
       
