@@ -78,9 +78,9 @@ export const API_ENDPOINTS = {
   
   // Document Generation endpoints
   DOCUMENT_GENERATION: {
-    LIST: (projectId) => `${API_BASE_URL}/documents/generate/${projectId}/documents/`,
-    GENERATE: (projectId, type) => `${API_BASE_URL}/documents/generate/${projectId}/generate/${type}/`,
-    DOWNLOAD: (projectId, documentId) => `${API_BASE_URL}/documents/generate/${projectId}/documents/${documentId}/download/`,
+    LIST: (projectId) => `${API_BASE_URL}/documents/generate/${projectId}/documents`,
+    GENERATE: (projectId, type) => `${API_BASE_URL}/documents/generate/${projectId}/generate/${type}`,
+    DOWNLOAD: (projectId, documentId) => `${API_BASE_URL}/documents/generate/${projectId}/documents/${documentId}/download`,
   },
   
   // Insights endpoints (legacy)
