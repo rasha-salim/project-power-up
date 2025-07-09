@@ -33,8 +33,15 @@ class AnalysisExecutionService:
         self.anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
         self.anthropic_model = os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
         self.analysis_data_service = AnalysisDataService()
-        self.max_retries = 3
-        self.retry_delay = 5  # seconds
+        
+        # Separate retry limits for different error types
+        self.max_api_retries = 3
+        self.max_constraint_retries = 2
+        
+        # Exponential backoff configuration for API errors
+        self.base_api_delay = 10  # seconds
+        self.overload_base_delay = 60  # seconds for overloaded errors
+        self.max_api_delay = 300  # 5 minutes max delay
     
     def _get_llm(self, temperature: float = 0.1) -> ChatAnthropic:
         """Get configured Anthropic LLM instance for analysis"""
@@ -90,23 +97,51 @@ class AnalysisExecutionService:
         except Exception as cleanup_error:
             logger.error(f"Error during cleanup of analysis {analysis_id}: {str(cleanup_error)}")
     
-    async def _should_retry_analysis(self, error: Exception, attempt: int) -> bool:
-        """Determine if analysis should be retried based on error type"""
-        if attempt >= self.max_retries:
-            return False
-            
-        # Retry for transient errors
-        transient_errors = [
-            "InternalServerError",
-            "RateLimitError", 
-            "TimeoutError",
-            "ConnectionError",
-            "API rate limit",
-            "Internal server error"
-        ]
-        
+    def _classify_error(self, error: Exception) -> str:
+        """Classify error type for appropriate retry strategy"""
         error_str = str(error).lower()
-        return any(transient_error.lower() in error_str for transient_error in transient_errors)
+        
+        # Anthropic specific errors
+        if "overloaded_error" in error_str or "overloaded" in error_str:
+            return "overload_error"
+        elif "rate_limit" in error_str or "ratelimiterror" in error_str:
+            return "rate_limit_error"
+        elif "anthropic" in error_str and ("api" in error_str or "internalservererror" in error_str):
+            return "api_error"
+        elif "timeout" in error_str or "timeouterror" in error_str:
+            return "timeout_error"
+        elif "connection" in error_str or "connectionerror" in error_str:
+            return "connection_error"
+        else:
+            return "other_error"
+    
+    def _calculate_api_retry_delay(self, attempt: int, error_type: str) -> int:
+        """Calculate exponential backoff delay for API errors"""
+        if error_type == "overload_error":
+            # Longer delays for overload errors: 60s, 180s, 300s
+            delay = self.overload_base_delay * (3 ** (attempt - 1))
+        else:
+            # Standard exponential backoff: 10s, 30s, 90s
+            delay = self.base_api_delay * (3 ** (attempt - 1))
+        
+        # Cap at maximum delay
+        return min(delay, self.max_api_delay)
+    
+    async def _should_retry_api_error(self, error: Exception, api_attempt: int) -> tuple[bool, int]:
+        """Determine if API error should be retried and calculate delay"""
+        if api_attempt >= self.max_api_retries:
+            return False, 0
+            
+        error_type = self._classify_error(error)
+        
+        # Retry transient API errors
+        retryable_errors = ["overload_error", "rate_limit_error", "api_error", "timeout_error", "connection_error"]
+        
+        if error_type in retryable_errors:
+            delay = self._calculate_api_retry_delay(api_attempt, error_type)
+            return True, delay
+        
+        return False, 0
     
     def _validate_constraint_compliance(
         self, 
@@ -254,13 +289,17 @@ class AnalysisExecutionService:
         Returns:
             Dict with analysis results
         """
-        attempt = 0
+        api_attempt = 0
+        constraint_attempt = 0
+        total_attempts = 0
         last_error = None
         
-        while attempt < self.max_retries:
+        max_total_attempts = self.max_api_retries + self.max_constraint_retries + 1
+        
+        while total_attempts < max_total_attempts:
             try:
-                attempt += 1
-                logger.info(f"Starting analysis execution attempt {attempt}/{self.max_retries} for {analysis_id}")
+                total_attempts += 1
+                logger.info(f"Starting analysis execution attempt {total_attempts} (API: {api_attempt + 1}, Constraint: {constraint_attempt}) for {analysis_id}")
                 
                 # Send status update
                 if ws_manager:
@@ -270,8 +309,8 @@ class AnalysisExecutionService:
                             "type": "analysis_status",
                             "status": "initializing",
                             "analysis_id": analysis_id,
-                            "attempt": attempt,
-                            "message": f"🔄 Initializing analysis (attempt {attempt}/{self.max_retries})..."
+                            "attempt": total_attempts,
+                            "message": f"🔄 Initializing analysis (attempt {total_attempts})..."
                         }
                     )
                 
@@ -403,10 +442,10 @@ class AnalysisExecutionService:
                 # Build task description with document information, forced search results, and existing analysis context
                 # Include constraint violation feedback for retry attempts
                 constraint_violation_feedback = ""
-                if attempt > 1:
+                if constraint_attempt > 0:
                     constraint_violation_feedback = f"""
                     
-                    🚨 CONSTRAINT VIOLATION RETRY - ATTEMPT {attempt}/{self.max_retries}
+                    🚨 CONSTRAINT VIOLATION RETRY - ATTEMPT {constraint_attempt + 1}/{self.max_constraint_retries + 1}
                     Previous attempt failed constraint validation. PAY SPECIAL ATTENTION TO:
                     - Team size constraint: MUST NOT exceed {getattr(project, 'team_size', 'specified')} people total
                     - Budget constraint: MUST NOT exceed ${getattr(project, 'budget', 'specified')} budget
@@ -493,8 +532,9 @@ class AnalysisExecutionService:
                             logger.error(f"Analysis violates constraints: {validation_result['violations']}")
                             
                             # Check if we should retry due to constraint violation
-                            if attempt < self.max_retries:
-                                logger.warning(f"Retrying analysis due to constraint violation (attempt {attempt}/{self.max_retries})")
+                            if constraint_attempt < self.max_constraint_retries:
+                                constraint_attempt += 1
+                                logger.warning(f"Retrying analysis due to constraint violation (constraint attempt {constraint_attempt}/{self.max_constraint_retries})")
                                 
                                 # Send constraint violation retry notification
                                 if ws_manager:
@@ -505,17 +545,17 @@ class AnalysisExecutionService:
                                             "analysis_id": analysis_id,
                                             "violations": validation_result["violations"],
                                             "warnings": validation_result["warnings"],
-                                            "message": f"🔄 Analysis violates constraints. Retrying with enhanced instructions (attempt {attempt + 1}/{self.max_retries})...",
+                                            "message": f"🔄 Analysis violates constraints. Retrying with enhanced instructions (constraint attempt {constraint_attempt}/{self.max_constraint_retries})...",
                                             "timestamp": datetime.now().isoformat(),
-                                            "attempt": attempt + 1
+                                            "attempt": constraint_attempt
                                         }
                                     )
                                 
                                 # Skip to next attempt with enhanced constraint instructions
                                 continue
                             else:
-                                # Final attempt failed - send constraint violation warning
-                                logger.error(f"Final attempt failed constraint validation - proceeding with warning")
+                                # Final constraint attempt failed - send warning but continue
+                                logger.error(f"Final constraint attempt failed - proceeding with warning")
                                 if ws_manager:
                                     await ws_manager.broadcast(
                                         project_id,
@@ -524,7 +564,7 @@ class AnalysisExecutionService:
                                             "analysis_id": analysis_id,
                                             "violations": validation_result["violations"],
                                             "warnings": validation_result["warnings"],
-                                            "message": "⚠️ Analysis violates project constraints but max retries reached. Manual review recommended.",
+                                            "message": "⚠️ Analysis violates project constraints but max constraint retries reached. Manual review recommended.",
                                             "timestamp": datetime.now().isoformat()
                                         }
                                     )
@@ -616,50 +656,50 @@ class AnalysisExecutionService:
                 else:
                     logger.error(f"WebSocket manager is None - cannot broadcast messages!")
                 
-                logger.info(f"Analysis {analysis_id} completed successfully on attempt {attempt}")
+                logger.info(f"Analysis {analysis_id} completed successfully after {total_attempts} total attempts (API: {api_attempt}, Constraint: {constraint_attempt})")
                 return {
                     "status": "completed",
                     "analysis_id": analysis_id,
                     "raw_output": str(crew_result),
                     "structured_analysis": structured_analysis,
-                    "attempts": attempt
+                    "attempts": total_attempts,
+                    "api_attempts": api_attempt,
+                    "constraint_attempts": constraint_attempt
                 }
                 
             except Exception as e:
                 last_error = e
                 error_msg = str(e)
-                logger.error(f"Analysis execution attempt {attempt} failed: {error_msg}")
+                logger.error(f"Analysis execution attempt {total_attempts} failed: {error_msg}")
                 
-                # Determine error type for proper handling
-                if "anthropic" in error_msg.lower() or "api" in error_msg.lower():
-                    error_type = "api_error"
-                elif "timeout" in error_msg.lower():
-                    error_type = "timeout_error"
-                elif "configuration" in error_msg.lower():
-                    error_type = "configuration_error"
-                else:
-                    error_type = "execution_error"
+                # Classify error type and determine retry strategy
+                error_type = self._classify_error(e)
+                should_retry_api, retry_delay = await self._should_retry_api_error(e, api_attempt + 1)
                 
-                # Check if we should retry
-                should_retry = await self._should_retry_analysis(e, attempt)
-                
-                if should_retry and attempt < self.max_retries:
-                    logger.info(f"Retrying analysis {analysis_id} in {self.retry_delay} seconds...")
+                if should_retry_api:
+                    api_attempt += 1
+                    logger.warning(f"API error detected ({error_type}). Retrying in {retry_delay} seconds... (API attempt {api_attempt}/{self.max_api_retries})")
+                    
                     if ws_manager:
                         await ws_manager.broadcast(
                             project_id,
                             {
-                                "type": "analysis_status",
-                                "status": "retrying",
+                                "type": "api_retry",
+                                "status": "api_retrying", 
                                 "analysis_id": analysis_id,
-                                "message": f"⚠️ Retrying analysis in {self.retry_delay} seconds... (attempt {attempt + 1}/{self.max_retries})"
+                                "error_type": error_type,
+                                "retry_delay": retry_delay,
+                                "message": f"🔄 {error_type.replace('_', ' ').title()} detected. Retrying in {retry_delay} seconds... (API attempt {api_attempt}/{self.max_api_retries})",
+                                "timestamp": datetime.now().isoformat(),
+                                "attempt": api_attempt
                             }
                         )
-                    await asyncio.sleep(self.retry_delay)
+                    
+                    await asyncio.sleep(retry_delay)
                     continue
                 else:
-                    # Final failure - no more retries
-                    logger.error(f"Analysis {analysis_id} failed after {attempt} attempts")
+                    # No more API retries or non-retryable error
+                    logger.error(f"Analysis {analysis_id} failed after {total_attempts} total attempts (API: {api_attempt}, Constraint: {constraint_attempt})")
                     await self._notify_analysis_failure(
                         project_id, analysis_id, error_msg, error_type, ws_manager
                     )
