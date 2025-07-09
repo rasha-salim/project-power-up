@@ -211,8 +211,8 @@ class AnalysisExecutionService:
                     if role == 'other' and isinstance(count, dict):
                         # Sum up all values in the "other" dictionary
                         total_team_members += sum(count.values()) if count else 0
-                    elif isinstance(count, int):
-                        total_team_members += count
+                    elif isinstance(count, (int, float)):
+                        total_team_members += int(count)
                 
                 logger.info(f"🔍 TEAM SIZE VALIDATION:")
                 logger.info(f"   - Project team size limit: {project.team_size}")
@@ -611,7 +611,7 @@ class AnalysisExecutionService:
                             "analysis_id": analysis_id,
                             "result": structured_data,  # Only send structured data, not raw text
                             "message": "✅ Technical analysis completed successfully!",
-                            "attempts": attempt,
+                            "attempts": total_attempts,
                             "completed_at": str(datetime.now())
                         }
                         
@@ -643,7 +643,7 @@ class AnalysisExecutionService:
                                 "analysis_id": analysis_id,
                                 "result": {"raw_analysis": str(crew_result)},
                                 "message": "⚠️ Analysis completed with limited formatting",
-                                "attempts": attempt,
+                                "attempts": total_attempts,
                                 "completed_at": str(datetime.now())
                             }
                             
