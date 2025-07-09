@@ -126,7 +126,7 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
           message: '⏰ Response timeout - the agent may have encountered an issue. Please try your message again.',
           timestamp: new Date().toISOString()
         }]);
-      }, 120000); // 2 minute timeout for analysis operations
+      }, 400000); // 6.5 minute timeout for analysis operations (accounts for API retry delays up to 300s)
 
       return () => clearTimeout(timeout);
     }
@@ -562,6 +562,48 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
 
           case 'ping':
             // Ignore ping messages
+            break;
+
+          case 'api_retry':
+            console.log('API retry message received:', data);
+            setMessages(prev => [...prev, {
+              id: generateMessageId(),
+              type: 'system',
+              sender: 'system',
+              senderName: 'System',
+              message: data.message || `🔄 API error detected. Retrying in ${data.retry_delay || 'a few'} seconds...`,
+              timestamp: new Date().toISOString()
+            }]);
+            break;
+
+          case 'constraint_violation_retry':
+            console.log('Constraint violation retry message received:', data);
+            setMessages(prev => [...prev, {
+              id: generateMessageId(),
+              type: 'system',
+              sender: 'system',
+              senderName: 'System',
+              message: data.message || '🔄 Analysis violates constraints. Retrying with enhanced instructions...',
+              timestamp: new Date().toISOString()
+            }]);
+            break;
+
+          case 'constraint_violation':
+            console.log('Constraint violation warning received:', data);
+            setMessages(prev => [...prev, {
+              id: generateMessageId(),
+              type: 'system',
+              sender: 'system',
+              senderName: 'System',
+              message: data.message || '⚠️ Analysis may violate project constraints. Manual review recommended.',
+              timestamp: new Date().toISOString()
+            }]);
+            break;
+
+          case 'heartbeat':
+            // Update analysis progress with countdown
+            console.log('Heartbeat received:', data);
+            setAnalysisProgress(data.message || `⏳ Waiting ${data.remaining_seconds || 'a moment'}s before retry...`);
             break;
 
           default:
