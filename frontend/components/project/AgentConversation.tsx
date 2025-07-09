@@ -424,7 +424,7 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
             });
             
             setMessages(prev => {
-              const newMessage = {
+              const newMessage: Message = {
                 id: generateMessageId(),
                 type: 'result',
                 sender: data.sender || 'technical_agent',
