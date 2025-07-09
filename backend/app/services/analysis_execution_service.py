@@ -143,37 +143,6 @@ class AnalysisExecutionService:
         
         return False, 0
     
-    async def _sleep_with_heartbeat(
-        self, 
-        delay: int, 
-        project_id: str, 
-        analysis_id: str, 
-        ws_manager: Optional[WebSocketManager] = None
-    ) -> None:
-        """Sleep with periodic heartbeat messages to keep WebSocket alive"""
-        heartbeat_interval = 30  # Send heartbeat every 30 seconds
-        elapsed = 0
-        
-        while elapsed < delay:
-            sleep_time = min(heartbeat_interval, delay - elapsed)
-            await asyncio.sleep(sleep_time)
-            elapsed += sleep_time
-            
-            # Send heartbeat if we still have time left and WebSocket manager is available
-            if elapsed < delay and ws_manager:
-                remaining = delay - elapsed
-                await ws_manager.broadcast(
-                    project_id,
-                    {
-                        "type": "heartbeat",
-                        "analysis_id": analysis_id,
-                        "message": f"⏳ Waiting {remaining}s before retry...",
-                        "remaining_seconds": remaining,
-                        "timestamp": datetime.now().isoformat()
-                    }
-                )
-                logger.debug(f"Sent heartbeat for analysis {analysis_id}, {remaining}s remaining")
-    
     def _validate_constraint_compliance(
         self, 
         project: Project, 
@@ -724,8 +693,8 @@ class AnalysisExecutionService:
                             }
                         )
                     
-                    # Send heartbeat messages during long delays to keep WebSocket alive
-                    await self._sleep_with_heartbeat(retry_delay, project_id, analysis_id, ws_manager)
+                    # Wait before retrying
+                    await asyncio.sleep(retry_delay)
                     continue
                 else:
                     # No more API retries or non-retryable error

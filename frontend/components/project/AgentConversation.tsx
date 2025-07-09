@@ -600,12 +600,6 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
             }]);
             break;
 
-          case 'heartbeat':
-            // Update analysis progress with countdown
-            console.log('Heartbeat received:', data);
-            setAnalysisProgress(data.message || `⏳ Waiting ${data.remaining_seconds || 'a moment'}s before retry...`);
-            break;
-
           default:
             console.log('Unknown message type:', data.type);
         }
