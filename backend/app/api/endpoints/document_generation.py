@@ -160,27 +160,34 @@ async def download_document(
             logger.error(f"Available document IDs: {[doc.get('id') for doc in documents]}")
             raise HTTPException(status_code=404, detail=f"Document not found. Available documents: {len(documents)}")
         
-        file_path = document.get('file_path')
-        logger.info(f"📁 Document file path: {file_path}")
-        
-        if not file_path:
-            logger.error(f"❌ No file_path found in document metadata: {document}")
-            raise HTTPException(status_code=404, detail="Document file path not specified")
+        # Check if content is stored in database (new format)
+        if 'content' in document:
+            logger.info(f"📦 Content found in database for document {document_id}")
+            content = document['content']
+            logger.info(f"✅ Database content retrieved, length: {len(content)} characters")
+        else:
+            # Fallback to file system for legacy documents
+            file_path = document.get('file_path')
+            logger.info(f"📁 Fallback to file system: {file_path}")
             
-        if not os.path.exists(file_path):
-            logger.error(f"❌ File does not exist at path: {file_path}")
-            logger.info(f"🔍 Checking if directory exists: {os.path.dirname(file_path)}")
-            logger.info(f"Directory exists: {os.path.exists(os.path.dirname(file_path))}")
-            if os.path.exists(os.path.dirname(file_path)):
-                logger.info(f"📂 Files in directory: {os.listdir(os.path.dirname(file_path))}")
-            raise HTTPException(status_code=404, detail=f"Document file not found at path: {file_path}")
-        
-        # Read file content
-        logger.info(f"📖 Reading file content from: {file_path}")
-        with open(file_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        
-        logger.info(f"✅ File read successfully, content length: {len(content)} characters")
+            if not file_path:
+                logger.error(f"❌ No content in database and no file_path found in document metadata: {document}")
+                raise HTTPException(status_code=404, detail="Document content not available")
+                
+            if not os.path.exists(file_path):
+                logger.error(f"❌ File does not exist at path: {file_path}")
+                logger.info(f"🔍 Checking if directory exists: {os.path.dirname(file_path)}")
+                logger.info(f"Directory exists: {os.path.exists(os.path.dirname(file_path))}")
+                if os.path.exists(os.path.dirname(file_path)):
+                    logger.info(f"📂 Files in directory: {os.listdir(os.path.dirname(file_path))}")
+                raise HTTPException(status_code=404, detail=f"Document content not found in database or file system")
+            
+            # Read file content
+            logger.info(f"📖 Reading file content from: {file_path}")
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            logger.info(f"✅ File read successfully, content length: {len(content)} characters")
         
         # Return file as download
         filename = document.get('filename', 'document.md')

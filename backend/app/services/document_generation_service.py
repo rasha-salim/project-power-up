@@ -20,8 +20,9 @@ class DocumentGenerationService:
         """Initialize the document generation service"""
         self.project_service = ProjectService()
         self.output_directory = "./generated_documents"
-        # Ensure output directory exists
+        # Create output directory for legacy compatibility (but won't be used for new documents)
         os.makedirs(self.output_directory, exist_ok=True)
+        logger.info("Document generation service initialized - using database storage for new documents")
     
     async def generate_project_brief_markdown(
         self, 
@@ -56,23 +57,20 @@ class DocumentGenerationService:
             # Generate markdown content
             markdown_content = self._generate_markdown_from_sections(project, brief_sections)
             
-            # Save to file
+            # Create filename for compatibility but don't save to file system
             filename = f"project_brief_{project_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
-            file_path = os.path.join(self.output_directory, filename)
             
-            with open(file_path, 'w', encoding='utf-8') as f:
-                f.write(markdown_content)
-            
-            # Create document metadata
+            # Create document metadata with content stored in database
             document_metadata = {
                 "id": str(uuid.uuid4()),
                 "type": "markdown",
                 "filename": filename,
-                "file_path": file_path,
-                "file_size": os.path.getsize(file_path),
+                "content": markdown_content,  # Store content directly in database
+                "file_size": len(markdown_content.encode('utf-8')),  # Calculate size from content
                 "generated_at": datetime.now().isoformat(),
                 "content_sections": len(brief_sections),
-                "title": f"Project Brief - {project.name}"
+                "title": f"Project Brief - {project.name}",
+                "storage_type": "database"  # Indicate this is stored in database
             }
             
             # Update project with generated document metadata
@@ -118,22 +116,19 @@ class DocumentGenerationService:
             # Generate markdown content
             markdown_content = self._generate_analysis_markdown(project, insights)
             
-            # Save to file
+            # Create filename for compatibility but don't save to file system
             filename = f"analysis_report_{project_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
-            file_path = os.path.join(self.output_directory, filename)
             
-            with open(file_path, 'w', encoding='utf-8') as f:
-                f.write(markdown_content)
-            
-            # Create document metadata
+            # Create document metadata with content stored in database
             document_metadata = {
                 "id": str(uuid.uuid4()),
                 "type": "analysis_report",
                 "filename": filename,
-                "file_path": file_path,
-                "file_size": os.path.getsize(file_path),
+                "content": markdown_content,  # Store content directly in database
+                "file_size": len(markdown_content.encode('utf-8')),  # Calculate size from content
                 "generated_at": datetime.now().isoformat(),
-                "title": f"Analysis Report - {project.name}"
+                "title": f"Analysis Report - {project.name}",
+                "storage_type": "database"  # Indicate this is stored in database
             }
             
             # Update project with generated document metadata
@@ -177,22 +172,19 @@ class DocumentGenerationService:
             # Generate comprehensive markdown content
             markdown_content = self._generate_comprehensive_markdown(project, brief_sections, insights)
             
-            # Save to file
+            # Create filename for compatibility but don't save to file system
             filename = f"comprehensive_report_{project_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
-            file_path = os.path.join(self.output_directory, filename)
             
-            with open(file_path, 'w', encoding='utf-8') as f:
-                f.write(markdown_content)
-            
-            # Create document metadata
+            # Create document metadata with content stored in database
             document_metadata = {
                 "id": str(uuid.uuid4()),
                 "type": "comprehensive_report",
                 "filename": filename,
-                "file_path": file_path,
-                "file_size": os.path.getsize(file_path),
+                "content": markdown_content,  # Store content directly in database
+                "file_size": len(markdown_content.encode('utf-8')),  # Calculate size from content
                 "generated_at": datetime.now().isoformat(),
-                "title": f"Comprehensive Report - {project.name}"
+                "title": f"Comprehensive Report - {project.name}",
+                "storage_type": "database"  # Indicate this is stored in database
             }
             
             # Update project with generated document metadata
@@ -261,14 +253,21 @@ class DocumentGenerationService:
                 return None
             
             document = generated_documents[document_id]
+            
+            # Check if content is stored in database (new format)
+            if 'content' in document:
+                logger.info(f"Retrieved document content from database for {document_id}")
+                return document['content']
+            
+            # Fallback to file system for legacy documents
             file_path = document.get('file_path')
-            
-            if not file_path or not os.path.exists(file_path):
-                logger.warning(f"Document file not found: {file_path}")
+            if file_path and os.path.exists(file_path):
+                logger.info(f"Retrieved document content from file system for {document_id}")
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    return f.read()
+            else:
+                logger.warning(f"Document content not found in database or file system for {document_id}")
                 return None
-            
-            with open(file_path, 'r', encoding='utf-8') as f:
-                return f.read()
                 
         except Exception as e:
             logger.error(f"Error getting document content: {str(e)}")
