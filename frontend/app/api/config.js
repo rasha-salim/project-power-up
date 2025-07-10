@@ -206,6 +206,73 @@ export const uploadFile = async (formData) => {
   }
 };
 
+// Helper function for file downloads with HTTPS enforcement
+export const downloadFile = async (url, filename) => {
+  try {
+    // CRITICAL: Validate URL protocol before making request (same as apiRequest)
+    if (url.startsWith('http://') && !url.includes('localhost')) {
+      console.error('🚨 BLOCKING HTTP DOWNLOAD REQUEST - Converting to HTTPS:', url);
+      url = url.replace('http://', 'https://');
+    }
+    
+    console.log(`🔵 Making download request to: ${url}`);
+    console.log(`🔵 Download protocol check:`, {
+      protocol: url.split('://')[0],
+      isHTTPS: url.startsWith('https://'),
+      isLocalhost: url.includes('localhost'),
+      currentPageProtocol: typeof window !== 'undefined' ? window.location.protocol : 'unknown'
+    });
+    
+    const response = await fetch(url);
+    
+    console.log(`🟢 Download response status: ${response.status} for ${url}`);
+    
+    if (!response.ok) {
+      let errorDetail = `Download failed with status ${response.status}`;
+      try {
+        // Try to get error details, but handle non-JSON responses
+        const contentType = response.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          const errorJson = await response.json();
+          errorDetail = errorJson.detail || errorJson.message || errorDetail;
+          console.error(`🔴 Download error response body:`, errorJson);
+        } else {
+          const errorText = await response.text();
+          if (errorText) {
+            errorDetail = `${errorDetail} - ${errorText}`;
+          }
+          console.error(`🔴 Download error response text:`, errorText);
+        }
+      } catch (parseError) {
+        console.error(`🔴 Could not parse download error response for ${url}:`, parseError);
+      }
+      throw new Error(errorDetail);
+    }
+    
+    // Get the blob data
+    const blob = await response.blob();
+    console.log(`🟢 Download blob received, size: ${blob.size} bytes, type: ${blob.type}`);
+    
+    // Create download link and trigger download
+    const downloadUrl = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.style.display = 'none';
+    a.href = downloadUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(downloadUrl);
+    document.body.removeChild(a);
+    
+    console.log(`🟢 File download completed successfully: ${filename}`);
+    
+  } catch (error) {
+    console.error(`🔴 Download request completely failed for ${url}: ${error.message}`);
+    console.error(`🔴 Download error type: ${error.constructor.name}`);
+    throw error;
+  }
+};
+
 // Helper function for multiple file uploads
 export const uploadMultipleFiles = async (files, projectId, description) => {
   try {
@@ -291,5 +358,6 @@ export default {
   API_ENDPOINTS,
   apiRequest,
   uploadFile,
+  downloadFile,
   uploadMultipleFiles,
 };

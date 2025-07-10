@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { API_ENDPOINTS, apiRequest } from '@/app/api/config';
+import { API_ENDPOINTS, apiRequest, downloadFile } from '@/app/api/config';
 import { 
   DocumentTextIcon, 
   DocumentArrowDownIcon,
@@ -75,25 +75,25 @@ export default function DocumentGeneration({ projectId, projectStatus }: Documen
 
   const downloadDocument = async (documentId: string, filename: string) => {
     try {
-      const response = await fetch(API_ENDPOINTS.DOCUMENT_GENERATION.DOWNLOAD(projectId, documentId));
+      setError(null); // Clear any previous errors
       
-      if (!response.ok) {
-        throw new Error('Failed to download document');
-      }
-
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.style.display = 'none';
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
+      const downloadUrl = API_ENDPOINTS.DOCUMENT_GENERATION.DOWNLOAD(projectId, documentId);
+      console.log(`📥 Starting document download:`, {
+        documentId,
+        filename,
+        downloadUrl,
+        projectId
+      });
+      
+      // Use the HTTPS-safe download helper
+      await downloadFile(downloadUrl, filename);
+      
+      console.log(`✅ Document download completed successfully: ${filename}`);
+      
     } catch (err) {
       console.error('Error downloading document:', err);
-      setError('Failed to download document');
+      const errorMessage = err instanceof Error ? err.message : 'Failed to download document';
+      setError(`Download failed: ${errorMessage}`);
     }
   };
 
