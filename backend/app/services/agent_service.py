@@ -9,6 +9,7 @@ from decimal import Decimal
 import traceback
 from typing import Dict, Any, Optional, List, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
+from pydantic import ValidationError
 from crewai import Agent, Task, Crew, Process
 from langchain_anthropic import ChatAnthropic
 from app.models.analysis import ProjectAnalysis, TechnicalAnalysis, RiskAssessment, ProjectPlan
@@ -49,12 +50,17 @@ class AgentService:
         
         return json.dumps(obj, default=json_serial, **kwargs)
     
-    def _validate_analysis_json(self, result_text: str) -> tuple[bool, dict, str]:
+    def _validate_analysis_with_pydantic(self, result_text: str, analysis_id: str, project_id: str) -> tuple[bool, dict, str]:
         """
-        Validate that the agent response is proper JSON with required structure
+        Validate agent response using Pydantic models for guaranteed structure consistency
         
+        Args:
+            result_text: Raw JSON response from agent
+            analysis_id: ID of the analysis
+            project_id: ID of the project
+            
         Returns:
-            tuple: (is_valid, parsed_json, error_message)
+            tuple: (is_valid, validated_dict, error_message)
         """
         try:
             # Clean the result text
@@ -63,35 +69,6 @@ class AgentService:
             # Check if it starts and ends with braces
             if not (cleaned_text.startswith('{') and cleaned_text.endswith('}')):
                 return False, {}, "Response is not valid JSON (must start with { and end with })"
-            
-            # Try to parse JSON
-            try:
-                parsed_result = json.loads(cleaned_text)
-            except json.JSONDecodeError as e:
-                return False, {}, f"Invalid JSON format: {str(e)}"
-            
-            # Check for required top-level fields
-            required_fields = ['technical_analysis', 'risk_assessment', 'project_plan', 'recommendations']
-            missing_fields = [field for field in required_fields if field not in parsed_result]
-            
-            if missing_fields:
-                return False, {}, f"Missing required fields: {', '.join(missing_fields)}"
-            
-            # Validate technical_analysis structure
-            tech_analysis = parsed_result.get('technical_analysis', {})
-            required_tech_fields = ['architecture', 'tech_stack']
-            missing_tech_fields = [field for field in required_tech_fields if field not in tech_analysis]
-            
-            if missing_tech_fields:
-                return False, {}, f"Missing technical analysis fields: {', '.join(missing_tech_fields)}"
-            
-            # Validate project_plan structure  
-            project_plan = parsed_result.get('project_plan', {})
-            required_plan_fields = ['timeline', 'estimated_cost', 'resource_requirements']
-            missing_plan_fields = [field for field in required_plan_fields if field not in project_plan]
-            
-            if missing_plan_fields:
-                return False, {}, f"Missing project plan fields: {', '.join(missing_plan_fields)}"
             
             # Check for wrong format patterns (indicates agent not following template)
             wrong_format_indicators = [
@@ -108,40 +85,60 @@ class AgentService:
             if any(indicator in cleaned_text for indicator in wrong_format_indicators):
                 return False, {}, f"Response uses wrong format - detected forbidden patterns. Must use exact JSON structure from template."
             
-            # Validate tech_stack structure more strictly
-            tech_stack = parsed_result.get('technical_analysis', {}).get('tech_stack', {})
-            required_tech_categories = ['frontend', 'backend', 'infrastructure', 'tools']
-            for category in required_tech_categories:
-                if category not in tech_stack:
-                    return False, {}, f"Missing required tech_stack category: {category}"
-                if not isinstance(tech_stack[category], list):
-                    return False, {}, f"tech_stack.{category} must be an array, not {type(tech_stack[category])}"
-            
-            # Validate scores are present and are numbers
-            tech_analysis = parsed_result.get('technical_analysis', {})
-            required_scores = ['complexity_score', 'maintainability_score', 'scalability_score', 'performance_score', 'security_score']
-            for score in required_scores:
-                if score not in tech_analysis:
-                    return False, {}, f"Missing required score: {score}"
-                if not isinstance(tech_analysis[score], (int, float)):
-                    return False, {}, f"{score} must be a number, not {type(tech_analysis[score])}"
-                if not (1 <= tech_analysis[score] <= 10):
-                    return False, {}, f"{score} must be between 1 and 10, got {tech_analysis[score]}"
-            
-            # Validate risk_assessment structure
-            risk_assessment = parsed_result.get('risk_assessment', {})
-            if 'overall_risk_score' not in risk_assessment:
-                return False, {}, "Missing overall_risk_score in risk_assessment"
-            if 'key_risks' not in risk_assessment or not isinstance(risk_assessment['key_risks'], list):
-                return False, {}, "key_risks must be an array in risk_assessment"
-            
             # Check if response contains raw document content (indicates agent confusion)
             if len(cleaned_text) > 15000:  # Very long responses might contain raw docs
                 return False, {}, "Response too long - likely contains raw document content instead of structured analysis"
             
-            return True, parsed_result, ""
+            # Parse JSON first to check basic structure
+            try:
+                parsed_json = json.loads(cleaned_text)
+            except json.JSONDecodeError as e:
+                return False, {}, f"Invalid JSON format: {str(e)}"
             
+            # Add required fields for ProjectAnalysis model
+            analysis_data = {
+                "analysis_id": analysis_id,
+                "project_id": project_id,
+                "version": 1,
+                "created_at": datetime.utcnow(),
+                "updated_at": datetime.utcnow(),
+                **parsed_json
+            }
+            
+            # Validate using Pydantic model
+            try:
+                # Use Pydantic to validate the complete structure
+                validated_analysis = ProjectAnalysis.model_validate(analysis_data)
+                
+                # Convert back to dict format expected by the frontend
+                validated_dict = validated_analysis.model_dump(mode='json')
+                
+                # Remove the metadata fields that were added for validation
+                # Keep only the core analysis fields expected by the frontend
+                frontend_dict = {
+                    "technical_analysis": validated_dict["technical_analysis"],
+                    "risk_assessment": validated_dict["risk_assessment"],
+                    "project_plan": validated_dict["project_plan"],
+                    "recommendations": validated_dict["recommendations"]
+                }
+                
+                logger.info(f"Pydantic validation successful for analysis {analysis_id}")
+                return True, frontend_dict, ""
+                
+            except ValidationError as e:
+                # Extract specific validation errors
+                error_details = []
+                for error in e.errors():
+                    field_path = " -> ".join(str(x) for x in error['loc'])
+                    error_msg = error['msg']
+                    error_details.append(f"{field_path}: {error_msg}")
+                
+                detailed_error = f"Pydantic validation failed:\n" + "\n".join(error_details)
+                logger.error(f"Pydantic validation failed for analysis {analysis_id}: {detailed_error}")
+                return False, {}, detailed_error
+                
         except Exception as e:
+            logger.error(f"Unexpected error during Pydantic validation: {str(e)}")
             return False, {}, f"Validation error: {str(e)}"
     
     async def start_analysis(self, db: AsyncSession, project_id: str, ws_manager: Optional[WebSocketManager] = None, force: bool = False) -> str:
@@ -379,8 +376,8 @@ class AgentService:
                     
                     logger.info(f"Analysis attempt {attempt + 1} completed for {analysis_id}, result length: {len(crew_result)}")
                     
-                    # Validate the result
-                    is_valid, parsed_result, error_message = self._validate_analysis_json(crew_result)
+                    # Validate the result using Pydantic models
+                    is_valid, parsed_result, error_message = self._validate_analysis_with_pydantic(crew_result, analysis_id, project_id)
                     
                     if is_valid:
                         analysis_result = parsed_result
@@ -394,15 +391,24 @@ class AgentService:
                             # Retry with stronger instructions
                             logger.info(f"Retrying analysis with stronger JSON enforcement...")
                             
-                            # Update task description with stronger JSON enforcement
+                            # Update task description with specific Pydantic validation errors
                             stronger_task_description = f"""
-                            CRITICAL: Your previous response was invalid. You MUST return ONLY valid JSON.
+                            CRITICAL: Your previous response failed Pydantic validation. You MUST return ONLY valid JSON that matches the exact schema.
                             
-                            ERROR: {error_message}
+                            PYDANTIC VALIDATION ERRORS:
+                            {error_message}
+                            
+                            REQUIREMENTS:
+                            1. Return ONLY valid JSON - no text, markdown, or explanations
+                            2. Response must start with {{ and end with }}
+                            3. All fields must match the exact data types specified
+                            4. All scores must be numbers between 1-10
+                            5. All arrays must contain strings (tech_stack, recommendations, etc.)
+                            6. Resource requirements must be integers (whole numbers)
+                            7. Risk levels must be exactly: "Low", "Medium", "High", or "Critical"
                             
                             DO NOT include any explanatory text, markdown, or content outside the JSON structure.
                             DO NOT return raw document content or meeting transcripts.
-                            Your response must start with {{ and end with }}
                             
                             Analyze the technical aspects of project {project_id}.
                             
@@ -412,7 +418,7 @@ class AgentService:
                             COMPREHENSIVE DOCUMENT CONTENT:
                             {comprehensive_document_content}
                             
-                            RETURN ONLY THIS JSON STRUCTURE (no other text):
+                            RETURN ONLY THIS EXACT JSON STRUCTURE (fix the validation errors above):
                             {{
                                 "technical_analysis": {{
                                     "architecture": "string description",
@@ -477,11 +483,12 @@ class AgentService:
                             # Final attempt failed, use fallback
                             logger.error(f"All attempts failed for analysis {analysis_id}")
                             analysis_result = {
-                                "error": "Analysis validation failed",
+                                "error": "Pydantic validation failed after all retries",
                                 "raw_response": crew_result,
-                                "validation_error": error_message,
+                                "pydantic_validation_error": error_message,
                                 "analysis_id": analysis_id,
-                                "project_id": project_id
+                                "project_id": project_id,
+                                "retry_count": max_retries
                             }
                             break
                             

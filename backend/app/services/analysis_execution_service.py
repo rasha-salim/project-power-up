@@ -14,7 +14,7 @@ from langchain_anthropic import ChatAnthropic
 from app.config.config_loader import ConfigLoader
 from app.services.project_service import ProjectService
 from app.utils.message_formatter import MessageFormatter
-from app.services.analysis_data_service import AnalysisDataService
+from pydantic import ValidationError
 from app.tools.document_search import DocumentSearchTool
 from app.services.websocket_manager import WebSocketManager
 from app.models.project import Project
@@ -32,7 +32,7 @@ class AnalysisExecutionService:
         self.config_loader = ConfigLoader()
         self.anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
         self.anthropic_model = os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
-        self.analysis_data_service = AnalysisDataService()
+        # Remove dependency on AnalysisDataService - use direct Pydantic validation instead
         
         # Separate retry limits for different error types
         self.max_api_retries = 3
@@ -42,6 +42,85 @@ class AnalysisExecutionService:
         self.base_api_delay = 10  # seconds
         self.overload_base_delay = 60  # seconds for overloaded errors
         self.max_api_delay = 300  # 5 minutes max delay
+    
+    def _validate_analysis_with_pydantic(self, result_text: str, analysis_id: str, project_id: str) -> tuple[bool, Optional[ProjectAnalysis], str]:
+        """
+        Validate agent response using Pydantic models for guaranteed structure consistency
+        
+        Args:
+            result_text: Raw JSON response from agent
+            analysis_id: ID of the analysis
+            project_id: ID of the project
+            
+        Returns:
+            tuple: (is_valid, validated_pydantic_object, error_message)
+        """
+        try:
+            # Clean the result text
+            cleaned_text = result_text.strip()
+            
+            # Check if it starts and ends with braces
+            if not (cleaned_text.startswith('{') and cleaned_text.endswith('}')):
+                return False, None, "Response is not valid JSON (must start with { and end with })"
+            
+            # Check for wrong format patterns (indicates agent not following template)
+            wrong_format_indicators = [
+                "Technical Analysis Update",  # Wrong header format
+                "Start Date:",               # Wrong date format  
+                "End Date:",                 # Wrong date format
+                "Architecture Overview:",    # Wrong section name
+                "Primary Framework:",        # Wrong tech stack format
+                "UI Components:",           # Wrong tech stack format
+                "Key Technical Components:", # Wrong section name
+                "Content Ingestion Pipeline:", # Wrong section structure
+            ]
+            
+            if any(indicator in cleaned_text for indicator in wrong_format_indicators):
+                return False, None, f"Response uses wrong format - detected forbidden patterns. Must use exact JSON structure from template."
+            
+            # Check if response contains raw document content (indicates agent confusion)
+            if len(cleaned_text) > 15000:  # Very long responses might contain raw docs
+                return False, None, "Response too long - likely contains raw document content instead of structured analysis"
+            
+            # Parse JSON first to check basic structure
+            try:
+                parsed_json = json.loads(cleaned_text)
+            except json.JSONDecodeError as e:
+                return False, None, f"Invalid JSON format: {str(e)}"
+            
+            # Add required fields for ProjectAnalysis model
+            analysis_data = {
+                "analysis_id": analysis_id,
+                "project_id": project_id,
+                "version": 1,
+                "created_at": datetime.now(),
+                "updated_at": datetime.now(),
+                **parsed_json
+            }
+            
+            # Validate using Pydantic model
+            try:
+                # Use Pydantic to validate the complete structure
+                validated_analysis = ProjectAnalysis.model_validate(analysis_data)
+                
+                logger.info(f"Pydantic validation successful for analysis {analysis_id}")
+                return True, validated_analysis, ""
+                
+            except ValidationError as e:
+                # Extract specific validation errors
+                error_details = []
+                for error in e.errors():
+                    field_path = " -> ".join(str(x) for x in error['loc'])
+                    error_msg = error['msg']
+                    error_details.append(f"{field_path}: {error_msg}")
+                
+                detailed_error = f"Pydantic validation failed:\n" + "\n".join(error_details)
+                logger.error(f"Pydantic validation failed for analysis {analysis_id}: {detailed_error}")
+                return False, None, detailed_error
+                
+        except Exception as e:
+            logger.error(f"Unexpected error during Pydantic validation: {str(e)}")
+            return False, None, f"Validation error: {str(e)}"
     
     def _get_llm(self, temperature: float = 0.1) -> ChatAnthropic:
         """Get configured Anthropic LLM instance for analysis"""
@@ -514,16 +593,23 @@ class AnalysisExecutionService:
                 except asyncio.TimeoutError:
                     raise TimeoutError("Analysis execution timed out after 5 minutes")
                 
-                # Parse and structure the results
-                structured_analysis = self.analysis_data_service.parse_agent_output_to_pydantic(
+                # Parse and structure the results using Pydantic validation
+                is_valid, structured_analysis, validation_error = self._validate_analysis_with_pydantic(
                     crew_output, analysis_id, project_id
                 )
+                
+                if not is_valid:
+                    logger.error(f"Analysis validation failed: {validation_error}")
+                    raise ValueError(f"Analysis validation failed: {validation_error}")
+                
+                if not structured_analysis:
+                    raise ValueError("Analysis validation returned no structured data")
                 
                 # Validate constraint compliance
                 validation_result = None
                 if structured_analysis:
                     try:
-                        analysis_dict = structured_analysis.dict()
+                        analysis_dict = structured_analysis.model_dump(mode='json')
                         validation_result = self._validate_constraint_compliance(
                             project, analysis_dict, existing_analysis_context
                         )
@@ -585,7 +671,7 @@ class AnalysisExecutionService:
                 structured_data = None
                 if structured_analysis:
                     try:
-                        structured_data = structured_analysis.dict()
+                        structured_data = structured_analysis.model_dump(mode='json')
                         print(f"🔍 SERIALIZING PYDANTIC TO DICT")
                         print(f"🔍 Pydantic dict keys: {list(structured_data.keys())}")
                         print(f"🔍 Tech analysis architecture: {structured_data.get('technical_analysis', {}).get('architecture', 'NOT FOUND')[:100]}...")
@@ -867,10 +953,17 @@ class AnalysisExecutionService:
             
             print(f"🔍 REGEN FINAL OUTPUT LENGTH: {len(crew_output)} characters")
             
-            # Parse results
-            structured_analysis = self.analysis_data_service.parse_agent_output_to_pydantic(
+            # Parse results using Pydantic validation
+            is_valid, structured_analysis, validation_error = self._validate_analysis_with_pydantic(
                 crew_output, analysis_id, project_id
             )
+            
+            if not is_valid:
+                logger.error(f"Regeneration analysis validation failed: {validation_error}")
+                raise ValueError(f"Regeneration analysis validation failed: {validation_error}")
+            
+            if not structured_analysis:
+                raise ValueError("Regeneration analysis validation returned no structured data")
             
             # Debug logging before broadcasts
             logger.info(f"About to broadcast regeneration completion for project_id: {project_id} (type: {type(project_id)})")
@@ -882,7 +975,7 @@ class AnalysisExecutionService:
             structured_data = None
             if structured_analysis:
                 try:
-                    structured_data = structured_analysis.dict()
+                    structured_data = structured_analysis.model_dump(mode='json')
                     # Convert datetime objects to strings for JSON serialization
                     if 'created_at' in structured_data:
                         structured_data['created_at'] = str(structured_data['created_at'])
