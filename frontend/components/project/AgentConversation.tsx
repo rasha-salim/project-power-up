@@ -234,34 +234,37 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
     return recommendations;
   };
 
-  // Render structured analysis data using the same HTML structure as result messages
-  const renderStructuredAnalysis = (analysisData: any) => {
+  // Unified structured content rendering function - used for both agent messages and results
+  const renderUnifiedStructuredContent = (analysisData: any) => {
+    if (!analysisData) return null;
+    
     return (
-      <div className="space-y-3">
+      <div className="space-y-4">
+        {/* Technical Analysis Section */}
         {analysisData.technical_analysis && (
           <div>
-            <h4 className="font-semibold text-sm mb-1">Technical Analysis</h4>
-            <div className="text-xs space-y-1">
+            <h3 className="font-semibold text-base mb-2 text-gray-900">Technical Analysis</h3>
+            <div className="text-sm space-y-2 text-gray-800">
               {analysisData.technical_analysis.architecture && (
-                <p><strong>Architecture:</strong> {analysisData.technical_analysis.architecture}</p>
+                <p><span className="font-semibold">Architecture:</span> {analysisData.technical_analysis.architecture}</p>
               )}
-              {analysisData.technical_analysis.tech_stack && Object.keys(analysisData.technical_analysis.tech_stack).length > 0 && (
+              {analysisData.technical_analysis.tech_stack && (
                 <div>
-                  <strong>Tech Stack:</strong>
-                  <ul className="ml-4 mt-1">
+                  <span className="font-semibold">Tech Stack:</span>
+                  <div className="ml-4 mt-1 space-y-1">
                     {analysisData.technical_analysis.tech_stack.frontend?.length > 0 && (
-                      <li>Frontend: {analysisData.technical_analysis.tech_stack.frontend.join(', ')}</li>
+                      <div><span className="font-medium">Frontend:</span> {analysisData.technical_analysis.tech_stack.frontend.join(', ')}</div>
                     )}
                     {analysisData.technical_analysis.tech_stack.backend?.length > 0 && (
-                      <li>Backend: {analysisData.technical_analysis.tech_stack.backend.join(', ')}</li>
+                      <div><span className="font-medium">Backend:</span> {analysisData.technical_analysis.tech_stack.backend.join(', ')}</div>
                     )}
                     {analysisData.technical_analysis.tech_stack.infrastructure?.length > 0 && (
-                      <li>Infrastructure: {analysisData.technical_analysis.tech_stack.infrastructure.join(', ')}</li>
+                      <div><span className="font-medium">Infrastructure:</span> {analysisData.technical_analysis.tech_stack.infrastructure.join(', ')}</div>
                     )}
                     {analysisData.technical_analysis.tech_stack.tools?.length > 0 && (
-                      <li>Tools: {analysisData.technical_analysis.tech_stack.tools.join(', ')}</li>
+                      <div><span className="font-medium">Tools:</span> {analysisData.technical_analysis.tech_stack.tools.join(', ')}</div>
                     )}
-                  </ul>
+                  </div>
                 </div>
               )}
               {(analysisData.technical_analysis.complexity_score || 
@@ -269,7 +272,7 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
                 analysisData.technical_analysis.scalability_score ||
                 analysisData.technical_analysis.security_score) && (
                 <div>
-                  <strong>Scores:</strong>
+                  <span className="font-semibold">Scores:</span>
                   {[
                     analysisData.technical_analysis.complexity_score && `Complexity: ${analysisData.technical_analysis.complexity_score}/10`,
                     analysisData.technical_analysis.maintainability_score && `Maintainability: ${analysisData.technical_analysis.maintainability_score}/10`,
@@ -282,61 +285,69 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
           </div>
         )}
         
+        {/* Risk Assessment Section */}
         {analysisData.risk_assessment && (
           <div>
-            <h4 className="font-semibold text-sm mb-1">Risk Assessment</h4>
-            <div className="text-xs space-y-1">
+            <h3 className="font-semibold text-base mb-2 text-gray-900">Risk Assessment</h3>
+            <div className="text-sm space-y-2 text-gray-800">
               {analysisData.risk_assessment.overall_risk_score && (
-                <p><strong>Overall Risk Score:</strong> {analysisData.risk_assessment.overall_risk_score}/10</p>
+                <p><span className="font-semibold">Overall Risk Score:</span> {analysisData.risk_assessment.overall_risk_score}/10</p>
               )}
               {analysisData.risk_assessment.key_risks?.length > 0 && (
                 <div>
-                  <strong>Key Risks:</strong>
-                  <ul className="ml-4 mt-1">
+                  <span className="font-semibold">Key Risks:</span>
+                  <div className="ml-4 mt-1 space-y-1">
                     {analysisData.risk_assessment.key_risks.map((risk: any, idx: number) => (
-                      <li key={idx}>{risk.name} ({risk.level}) - {risk.description}</li>
+                      <div key={idx}>{risk.name} ({risk.level}) - {risk.description}</div>
                     ))}
-                  </ul>
+                  </div>
                 </div>
               )}
             </div>
           </div>
         )}
         
+        {/* Project Plan Section */}
         {analysisData.project_plan && (
           <div>
-            <h4 className="font-semibold text-sm mb-1">Project Plan</h4>
-            <div className="text-xs space-y-1">
+            <h3 className="font-semibold text-base mb-2 text-gray-900">Project Plan</h3>
+            <div className="text-sm space-y-2 text-gray-800">
               {analysisData.project_plan.timeline && (
-                <p><strong>Timeline:</strong> {analysisData.project_plan.timeline}</p>
+                <p><span className="font-semibold">Timeline:</span> {analysisData.project_plan.timeline}</p>
               )}
               {analysisData.project_plan.estimated_cost && (
-                <p><strong>Estimated Cost:</strong> ${analysisData.project_plan.estimated_cost.toLocaleString?.() || analysisData.project_plan.estimated_cost}</p>
+                <p><span className="font-semibold">Estimated Cost:</span> ${typeof analysisData.project_plan.estimated_cost === 'number' ? 
+                  analysisData.project_plan.estimated_cost.toLocaleString() : 
+                  analysisData.project_plan.estimated_cost}</p>
               )}
               {analysisData.project_plan.phases?.length > 0 && (
                 <div>
-                  <strong>Phases:</strong>
-                  <ul className="ml-4 mt-1">
+                  <span className="font-semibold">Phases:</span>
+                  <div className="ml-4 mt-1 space-y-1">
                     {analysisData.project_plan.phases.map((phase: any, idx: number) => (
-                      <li key={idx}>
+                      <div key={idx}>
                         {phase.name} ({phase.duration} weeks) - {phase.description}
-                      </li>
+                      </div>
                     ))}
-                  </ul>
+                  </div>
                 </div>
               )}
             </div>
           </div>
         )}
         
+        {/* Recommendations Section */}
         {analysisData.recommendations?.length > 0 && (
           <div>
-            <h4 className="font-semibold text-sm mb-1">Recommendations</h4>
-            <ul className="text-xs ml-4">
+            <h3 className="font-semibold text-base mb-2 text-gray-900">Recommendations</h3>
+            <div className="text-sm space-y-1 text-gray-800">
               {analysisData.recommendations.map((rec: string, idx: number) => (
-                <li key={idx}>{rec}</li>
+                <div key={idx} className="flex items-start">
+                  <span className="font-medium mr-2">{idx + 1}.</span>
+                  <span>{rec}</span>
+                </div>
               ))}
-            </ul>
+            </div>
           </div>
         )}
       </div>
@@ -1492,13 +1503,14 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
                     }
                     
                     if (structuredData) {
-                      // Render structured analysis using exact same styling as message.result
+                      // Use unified structured rendering for consistent formatting
                       return (
                         <div className="w-full">
+                          <div className="mb-2">Analysis completed successfully!</div>
                           <div className="mt-2 pt-2 border-t border-gray-300">
-                            <div className="text-sm font-semibold mb-1">Analysis Results:</div>
-                            <div className="text-xs overflow-x-auto bg-white bg-opacity-50 p-2 rounded">
-                              {renderStructuredAnalysis(structuredData)}
+                            <div className="text-sm font-semibold mb-3">Analysis Results:</div>
+                            <div className="bg-white bg-opacity-50 p-3 rounded">
+                              {renderUnifiedStructuredContent(structuredData)}
                             </div>
                           </div>
                         </div>
@@ -1544,16 +1556,16 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
               </div>
               {message.result && (
                 <div className="mt-2 pt-2 border-t border-gray-300">
-                  <div className="text-sm font-semibold mb-1">Analysis Results:</div>
-                  <div className="text-xs overflow-x-auto bg-white bg-opacity-50 p-2 rounded">
+                  <div className="text-sm font-semibold mb-3">Analysis Results:</div>
+                  <div className="bg-white bg-opacity-50 p-3 rounded">
                     {message.result.raw_analysis ? (
                       // Display raw analysis as markdown if available
-                      <ReactMarkdown className="prose prose-xs max-w-none">
+                      <ReactMarkdown className="prose prose-sm max-w-none">
                         {message.result.raw_analysis}
                       </ReactMarkdown>
                     ) : message.result.technical_analysis || message.result.risk_assessment || message.result.project_plan ? (
-                      // Display structured analysis data
-                      <div className="space-y-3">
+                      // Use unified structured rendering for consistent formatting
+                      renderUnifiedStructuredContent(message.result)
                         {message.result.technical_analysis && (
                           <div>
                             <h4 className="font-semibold text-sm mb-1">Technical Analysis</h4>
@@ -1638,7 +1650,7 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
                       </div>
                     ) : (
                       // Fallback to JSON display
-                      <pre>{JSON.stringify(message.result, null, 2)}</pre>
+                      <pre className="text-xs whitespace-pre-wrap">{JSON.stringify(message.result, null, 2)}</pre>
                     )}
                   </div>
                 </div>
