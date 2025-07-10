@@ -386,15 +386,31 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
   }, [isAgentThinking]);
 
   useEffect(() => {
-    console.log('Save button state:', {
+    const shouldShowSaveButton = analysisComplete && !analysisSaved && currentAnalysisId;
+    console.log('🔘 Save button state evaluation:', {
       analysisComplete,
       analysisSaved,
       currentAnalysisId,
       isConnected,
       existingInsights: !!existingInsights,
-      showButton: analysisComplete && !analysisSaved,
-      hasNewAnalysis: analysisComplete && currentAnalysisId && !analysisSaved
+      shouldShowSaveButton,
+      condition1_analysisComplete: analysisComplete,
+      condition2_notAnalysisSaved: !analysisSaved,
+      condition3_hasCurrentAnalysisId: !!currentAnalysisId,
+      allConditionsMet: analysisComplete && !analysisSaved && currentAnalysisId,
+      buttonWillShow: shouldShowSaveButton && isConnected
     });
+    
+    if (!shouldShowSaveButton) {
+      console.log('🚫 Save button NOT showing because:', {
+        missingAnalysisComplete: !analysisComplete,
+        alreadySaved: analysisSaved,
+        missingAnalysisId: !currentAnalysisId,
+        notConnected: !isConnected
+      });
+    } else {
+      console.log('✅ Save button SHOULD be showing');
+    }
   }, [analysisComplete, analysisSaved, currentAnalysisId, isConnected, existingInsights]);
 
   // Timeout recovery for agent responses
@@ -601,12 +617,24 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
               
               // Check if this is a new analysis with structured data
               if (data.structured_data && data.analysis_id) {
-                console.log('🟡 New structured analysis detected, activating save button');
+                console.log('🟡 New structured analysis detected, activating save button:', {
+                  analysis_id: data.analysis_id,
+                  currentAnalysisId: currentAnalysisId,
+                  willSetAnalysisId: !currentAnalysisId,
+                  structured_data_keys: Object.keys(data.structured_data || {}),
+                  currentStates: {
+                    analysisComplete: analysisComplete,
+                    analysisSaved: analysisSaved,
+                    isConnected: isConnected
+                  }
+                });
+                
                 setAnalysisComplete(true);
                 setAnalysisSaved(false);  // Reset saved state for new analysis
-                if (!currentAnalysisId) {
-                  setCurrentAnalysisId(data.analysis_id);
-                }
+                
+                // Always set the analysis ID for new analyses (remove conditional check)
+                console.log('🟡 Setting currentAnalysisId from agent message:', data.analysis_id);
+                setCurrentAnalysisId(data.analysis_id);
               }
               
               setMessages(prev => [...prev, {
@@ -725,9 +753,18 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
             
             // Always set the analysis ID from the complete message
             if (data.analysis_id) {
-              console.log('🟡 Setting currentAnalysisId:', data.analysis_id);
+              console.log('🟡 Setting currentAnalysisId from analysis_complete:', data.analysis_id);
               setCurrentAnalysisId(data.analysis_id);
+            } else {
+              console.warn('🟡 No analysis_id provided in analysis_complete message');
             }
+            
+            console.log('🟡 Analysis states set - save button should appear with:', {
+              analysisComplete: true,
+              analysisSaved: false,
+              currentAnalysisId: data.analysis_id,
+              expectedSaveButton: !!data.analysis_id
+            });
             
             // Check if this is a regenerated analysis
             const isRegenerated = data.result?.version && data.result.version > 1;
