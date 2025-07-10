@@ -75,6 +75,273 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
+  // Parse structured content from agent messages
+  const parseStructuredContent = (messageText: string) => {
+    try {
+      // Try to parse JSON first
+      if (messageText.trim().startsWith('{') && messageText.trim().endsWith('}')) {
+        const parsed = JSON.parse(messageText);
+        if (parsed.technical_analysis || parsed.risk_assessment || parsed.project_plan) {
+          return parsed;
+        }
+      }
+      
+      // Try to detect structured markdown content
+      if (messageText.includes('## Analysis Results:') || 
+          messageText.includes('### Technical Analysis') ||
+          messageText.includes('### Risk Assessment') ||
+          messageText.includes('### Project Plan')) {
+        
+        // Parse markdown-formatted analysis into structured data
+        const result: any = {};
+        
+        // Extract Technical Analysis section
+        const techMatch = messageText.match(/### Technical Analysis([\s\S]*?)(?=###|\n\n|$)/);
+        if (techMatch) {
+          const techContent = techMatch[1];
+          result.technical_analysis = {
+            architecture: extractValue(techContent, 'Architecture'),
+            tech_stack: extractTechStack(techContent),
+            complexity_score: extractScore(techContent, 'Complexity'),
+            maintainability_score: extractScore(techContent, 'Maintainability'),
+            scalability_score: extractScore(techContent, 'Scalability'),
+            security_score: extractScore(techContent, 'Security')
+          };
+        }
+        
+        // Extract Risk Assessment section
+        const riskMatch = messageText.match(/### Risk Assessment([\s\S]*?)(?=###|\n\n|$)/);
+        if (riskMatch) {
+          const riskContent = riskMatch[1];
+          result.risk_assessment = {
+            overall_risk_score: extractScore(riskContent, 'Overall Risk Score'),
+            key_risks: extractRisks(riskContent)
+          };
+        }
+        
+        // Extract Project Plan section
+        const planMatch = messageText.match(/### Project Plan([\s\S]*?)(?=###|\n\n|$)/);
+        if (planMatch) {
+          const planContent = planMatch[1];
+          result.project_plan = {
+            timeline: extractValue(planContent, 'Timeline'),
+            estimated_cost: extractCost(planContent),
+            phases: extractPhases(planContent)
+          };
+        }
+        
+        // Extract Recommendations section
+        const recMatch = messageText.match(/### Recommendations([\s\S]*?)(?=###|\n\n|$)/);
+        if (recMatch) {
+          result.recommendations = extractRecommendations(recMatch[1]);
+        }
+        
+        return Object.keys(result).length > 0 ? result : null;
+      }
+      
+      return null;
+    } catch (error) {
+      console.log('Failed to parse structured content:', error);
+      return null;
+    }
+  };
+
+  // Helper functions for parsing markdown content
+  const extractValue = (content: string, key: string) => {
+    const match = content.match(new RegExp(`\\*\\*${key}\\*\\*:?\\s*([^\n]+)`));
+    return match ? match[1].trim() : '';
+  };
+
+  const extractScore = (content: string, key: string) => {
+    const match = content.match(new RegExp(`${key}:?\\s*(\\d+)`));
+    return match ? parseInt(match[1]) : 0;
+  };
+
+  const extractTechStack = (content: string) => {
+    const stack: any = {};
+    const stackMatch = content.match(/\*\*Tech Stack\*\*:([\s\S]*?)(?=\*\*|$)/);
+    if (stackMatch) {
+      const stackContent = stackMatch[1];
+      
+      const frontendMatch = stackContent.match(/Frontend:\s*([^\n]+)/);
+      if (frontendMatch) stack.frontend = frontendMatch[1].split(',').map(s => s.trim());
+      
+      const backendMatch = stackContent.match(/Backend:\s*([^\n]+)/);
+      if (backendMatch) stack.backend = backendMatch[1].split(',').map(s => s.trim());
+      
+      const infraMatch = stackContent.match(/Infrastructure:\s*([^\n]+)/);
+      if (infraMatch) stack.infrastructure = infraMatch[1].split(',').map(s => s.trim());
+      
+      const toolsMatch = stackContent.match(/Tools:\s*([^\n]+)/);
+      if (toolsMatch) stack.tools = toolsMatch[1].split(',').map(s => s.trim());
+    }
+    return stack;
+  };
+
+  const extractRisks = (content: string) => {
+    const risks: any[] = [];
+    const riskMatches = content.match(/\s{2,}([^(]+)\s*\(([^)]+)\)\s*-\s*([^\n]+)/g);
+    if (riskMatches) {
+      riskMatches.forEach(match => {
+        const parsed = match.match(/\s{2,}([^(]+)\s*\(([^)]+)\)\s*-\s*([^\n]+)/);
+        if (parsed) {
+          risks.push({
+            name: parsed[1].trim(),
+            level: parsed[2].trim(),
+            description: parsed[3].trim()
+          });
+        }
+      });
+    }
+    return risks;
+  };
+
+  const extractCost = (content: string) => {
+    const match = content.match(/\*\*Estimated Cost\*\*:?\s*\$?([\d,]+)/);
+    return match ? parseInt(match[1].replace(/,/g, '')) : 0;
+  };
+
+  const extractPhases = (content: string) => {
+    const phases: any[] = [];
+    const phaseMatches = content.match(/\s{2,}Phase\s+([^(]+)\s*\(([^)]+)\)\s*-\s*([^\n]+)/g);
+    if (phaseMatches) {
+      phaseMatches.forEach(match => {
+        const parsed = match.match(/\s{2,}Phase\s+([^(]+)\s*\(([^)]+)\)\s*-\s*([^\n]+)/);
+        if (parsed) {
+          phases.push({
+            name: parsed[1].trim(),
+            duration: parsed[2].replace(/weeks?/i, '').trim(),
+            description: parsed[3].trim()
+          });
+        }
+      });
+    }
+    return phases;
+  };
+
+  const extractRecommendations = (content: string) => {
+    const recommendations: string[] = [];
+    const recMatches = content.match(/^\d+\.\s*(.+)$/gm);
+    if (recMatches) {
+      recMatches.forEach(match => {
+        const parsed = match.match(/^\d+\.\s*(.+)$/);
+        if (parsed) {
+          recommendations.push(parsed[1].trim());
+        }
+      });
+    }
+    return recommendations;
+  };
+
+  // Render structured analysis data using the same HTML structure as result messages
+  const renderStructuredAnalysis = (analysisData: any) => {
+    return (
+      <div className="space-y-3">
+        {analysisData.technical_analysis && (
+          <div>
+            <h4 className="font-semibold text-sm mb-1">Technical Analysis</h4>
+            <div className="text-xs space-y-1">
+              {analysisData.technical_analysis.architecture && (
+                <p><strong>Architecture:</strong> {analysisData.technical_analysis.architecture}</p>
+              )}
+              {analysisData.technical_analysis.tech_stack && Object.keys(analysisData.technical_analysis.tech_stack).length > 0 && (
+                <div>
+                  <strong>Tech Stack:</strong>
+                  <ul className="ml-4 mt-1">
+                    {analysisData.technical_analysis.tech_stack.frontend?.length > 0 && (
+                      <li>Frontend: {analysisData.technical_analysis.tech_stack.frontend.join(', ')}</li>
+                    )}
+                    {analysisData.technical_analysis.tech_stack.backend?.length > 0 && (
+                      <li>Backend: {analysisData.technical_analysis.tech_stack.backend.join(', ')}</li>
+                    )}
+                    {analysisData.technical_analysis.tech_stack.infrastructure?.length > 0 && (
+                      <li>Infrastructure: {analysisData.technical_analysis.tech_stack.infrastructure.join(', ')}</li>
+                    )}
+                    {analysisData.technical_analysis.tech_stack.tools?.length > 0 && (
+                      <li>Tools: {analysisData.technical_analysis.tech_stack.tools.join(', ')}</li>
+                    )}
+                  </ul>
+                </div>
+              )}
+              {(analysisData.technical_analysis.complexity_score || 
+                analysisData.technical_analysis.maintainability_score || 
+                analysisData.technical_analysis.scalability_score ||
+                analysisData.technical_analysis.security_score) && (
+                <div>
+                  <strong>Scores:</strong>
+                  {[
+                    analysisData.technical_analysis.complexity_score && `Complexity: ${analysisData.technical_analysis.complexity_score}/10`,
+                    analysisData.technical_analysis.maintainability_score && `Maintainability: ${analysisData.technical_analysis.maintainability_score}/10`,
+                    analysisData.technical_analysis.scalability_score && `Scalability: ${analysisData.technical_analysis.scalability_score}/10`,
+                    analysisData.technical_analysis.security_score && `Security: ${analysisData.technical_analysis.security_score}/10`
+                  ].filter(Boolean).join(', ')}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+        
+        {analysisData.risk_assessment && (
+          <div>
+            <h4 className="font-semibold text-sm mb-1">Risk Assessment</h4>
+            <div className="text-xs space-y-1">
+              {analysisData.risk_assessment.overall_risk_score && (
+                <p><strong>Overall Risk Score:</strong> {analysisData.risk_assessment.overall_risk_score}/10</p>
+              )}
+              {analysisData.risk_assessment.key_risks?.length > 0 && (
+                <div>
+                  <strong>Key Risks:</strong>
+                  <ul className="ml-4 mt-1">
+                    {analysisData.risk_assessment.key_risks.map((risk: any, idx: number) => (
+                      <li key={idx}>{risk.name} ({risk.level}) - {risk.description}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+        
+        {analysisData.project_plan && (
+          <div>
+            <h4 className="font-semibold text-sm mb-1">Project Plan</h4>
+            <div className="text-xs space-y-1">
+              {analysisData.project_plan.timeline && (
+                <p><strong>Timeline:</strong> {analysisData.project_plan.timeline}</p>
+              )}
+              {analysisData.project_plan.estimated_cost && (
+                <p><strong>Estimated Cost:</strong> ${analysisData.project_plan.estimated_cost.toLocaleString?.() || analysisData.project_plan.estimated_cost}</p>
+              )}
+              {analysisData.project_plan.phases?.length > 0 && (
+                <div>
+                  <strong>Phases:</strong>
+                  <ul className="ml-4 mt-1">
+                    {analysisData.project_plan.phases.map((phase: any, idx: number) => (
+                      <li key={idx}>
+                        {phase.name} ({phase.duration} weeks) - {phase.description}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+        
+        {analysisData.recommendations?.length > 0 && (
+          <div>
+            <h4 className="font-semibold text-sm mb-1">Recommendations</h4>
+            <ul className="text-xs ml-4">
+              {analysisData.recommendations.map((rec: string, idx: number) => (
+                <li key={idx}>{rec}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   // Only auto-scroll when messages are added and user is already near the bottom
   useEffect(() => {
     // Check if user is already near the bottom before auto-scrolling
@@ -1203,32 +1470,50 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
               )}
               <div className="whitespace-pre-wrap flex items-center gap-2">
                 {message.type === 'agent' ? (
-                  <ReactMarkdown 
-                    className="prose prose-sm max-w-none text-gray-700 leading-relaxed"
-                    components={{
-                      h1: ({node, ...props}) => <h1 className="text-xl font-bold mt-4 mb-3 text-gray-900 border-b border-gray-200 pb-1" {...props} />,
-                      h2: ({node, ...props}) => <h2 className="text-lg font-bold mt-4 mb-2 text-gray-900" {...props} />,
-                      h3: ({node, ...props}) => <h3 className="text-base font-semibold mt-3 mb-2 text-gray-800" {...props} />,
-                      h4: ({node, ...props}) => <h4 className="text-sm font-semibold mt-2 mb-1 text-gray-800" {...props} />,
-                      ul: ({node, ordered, ...props}) => 
-                        ordered ? 
-                          <ol className="list-decimal list-outside ml-4 mb-3 space-y-1" {...props} /> : 
-                          <ul className="list-disc list-outside ml-4 mb-3 space-y-1" {...props} />,
-                      ol: ({node, ...props}) => <ol className="list-decimal list-outside ml-4 mb-3 space-y-1" {...props} />,
-                      li: ({node, ...props}) => <li className="mb-1 leading-relaxed" {...props} />,
-                      p: ({node, ...props}) => <p className="mb-3 leading-relaxed" {...props} />,
-                      strong: ({node, ...props}) => <strong className="font-semibold text-gray-900" {...props} />,
-                      em: ({node, ...props}) => <em className="italic text-gray-600" {...props} />,
-                      code: ({node, ...props}) => <code className="bg-gray-100 px-1 py-0.5 rounded text-sm font-mono text-gray-800" {...props} />,
-                      blockquote: ({node, ...props}) => <blockquote className="border-l-4 border-blue-200 pl-4 py-2 mb-3 bg-blue-50 rounded-r" {...props} />,
-                      hr: ({node, ...props}) => <hr className="my-4 border-gray-300" {...props} />,
-                      table: ({node, ...props}) => <table className="w-full border-collapse border border-gray-300 mb-3" {...props} />,
-                      th: ({node, ...props}) => <th className="border border-gray-300 px-2 py-1 bg-gray-100 font-semibold text-left" {...props} />,
-                      td: ({node, ...props}) => <td className="border border-gray-300 px-2 py-1" {...props} />
-                    }}
-                  >
-                    {message.message}
-                  </ReactMarkdown>
+                  (() => {
+                    // Try to parse structured content from agent messages
+                    const structuredData = parseStructuredContent(message.message);
+                    
+                    if (structuredData) {
+                      // Render structured analysis using consistent HTML styling
+                      return (
+                        <div className="text-xs overflow-x-auto bg-white bg-opacity-50 p-2 rounded">
+                          <div className="text-sm font-semibold mb-1">Analysis Results:</div>
+                          {renderStructuredAnalysis(structuredData)}
+                        </div>
+                      );
+                    } else {
+                      // Fallback to ReactMarkdown for non-structured content
+                      return (
+                        <ReactMarkdown 
+                          className="prose prose-sm max-w-none text-gray-700 leading-relaxed"
+                          components={{
+                            h1: ({node, ...props}) => <h1 className="text-xl font-bold mt-4 mb-3 text-gray-900 border-b border-gray-200 pb-1" {...props} />,
+                            h2: ({node, ...props}) => <h2 className="text-lg font-bold mt-4 mb-2 text-gray-900" {...props} />,
+                            h3: ({node, ...props}) => <h3 className="text-base font-semibold mt-3 mb-2 text-gray-800" {...props} />,
+                            h4: ({node, ...props}) => <h4 className="text-sm font-semibold mt-2 mb-1 text-gray-800" {...props} />,
+                            ul: ({node, ordered, ...props}) => 
+                              ordered ? 
+                                <ol className="list-decimal list-outside ml-4 mb-3 space-y-1" {...props} /> : 
+                                <ul className="list-disc list-outside ml-4 mb-3 space-y-1" {...props} />,
+                            ol: ({node, ...props}) => <ol className="list-decimal list-outside ml-4 mb-3 space-y-1" {...props} />,
+                            li: ({node, ...props}) => <li className="mb-1 leading-relaxed" {...props} />,
+                            p: ({node, ...props}) => <p className="mb-3 leading-relaxed" {...props} />,
+                            strong: ({node, ...props}) => <strong className="font-semibold text-gray-900" {...props} />,
+                            em: ({node, ...props}) => <em className="italic text-gray-600" {...props} />,
+                            code: ({node, ...props}) => <code className="bg-gray-100 px-1 py-0.5 rounded text-sm font-mono text-gray-800" {...props} />,
+                            blockquote: ({node, ...props}) => <blockquote className="border-l-4 border-blue-200 pl-4 py-2 mb-3 bg-blue-50 rounded-r" {...props} />,
+                            hr: ({node, ...props}) => <hr className="my-4 border-gray-300" {...props} />,
+                            table: ({node, ...props}) => <table className="w-full border-collapse border border-gray-300 mb-3" {...props} />,
+                            th: ({node, ...props}) => <th className="border border-gray-300 px-2 py-1 bg-gray-100 font-semibold text-left" {...props} />,
+                            td: ({node, ...props}) => <td className="border border-gray-300 px-2 py-1" {...props} />
+                          }}
+                        >
+                          {message.message}
+                        </ReactMarkdown>
+                      );
+                    }
+                  })()
                 ) : (
                   message.message
                 )}
