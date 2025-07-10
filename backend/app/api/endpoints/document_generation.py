@@ -138,28 +138,53 @@ async def download_document(
     Download a generated document file
     """
     try:
-        # Get document metadata
-        documents = await document_generation_service.list_generated_documents(db, project_id)
-        document = None
+        logger.info(f"📥 Download request: project_id={project_id}, document_id={document_id}")
         
+        # Get document metadata
+        logger.info(f"🔍 Fetching documents list for project {project_id}")
+        documents = await document_generation_service.list_generated_documents(db, project_id)
+        
+        logger.info(f"📋 Found {len(documents)} documents for project {project_id}")
+        for i, doc in enumerate(documents):
+            logger.info(f"  Document {i+1}: id={doc.get('id')}, filename={doc.get('filename')}, file_path={doc.get('file_path')}")
+        
+        document = None
         for doc in documents:
             if doc.get('id') == document_id:
                 document = doc
+                logger.info(f"✅ Found matching document: {doc}")
                 break
         
         if not document:
-            raise HTTPException(status_code=404, detail="Document not found")
+            logger.error(f"❌ Document with ID {document_id} not found in {len(documents)} available documents")
+            logger.error(f"Available document IDs: {[doc.get('id') for doc in documents]}")
+            raise HTTPException(status_code=404, detail=f"Document not found. Available documents: {len(documents)}")
         
         file_path = document.get('file_path')
-        if not file_path or not os.path.exists(file_path):
-            raise HTTPException(status_code=404, detail="Document file not found")
+        logger.info(f"📁 Document file path: {file_path}")
+        
+        if not file_path:
+            logger.error(f"❌ No file_path found in document metadata: {document}")
+            raise HTTPException(status_code=404, detail="Document file path not specified")
+            
+        if not os.path.exists(file_path):
+            logger.error(f"❌ File does not exist at path: {file_path}")
+            logger.info(f"🔍 Checking if directory exists: {os.path.dirname(file_path)}")
+            logger.info(f"Directory exists: {os.path.exists(os.path.dirname(file_path))}")
+            if os.path.exists(os.path.dirname(file_path)):
+                logger.info(f"📂 Files in directory: {os.listdir(os.path.dirname(file_path))}")
+            raise HTTPException(status_code=404, detail=f"Document file not found at path: {file_path}")
         
         # Read file content
+        logger.info(f"📖 Reading file content from: {file_path}")
         with open(file_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
+        logger.info(f"✅ File read successfully, content length: {len(content)} characters")
+        
         # Return file as download
         filename = document.get('filename', 'document.md')
+        logger.info(f"📤 Returning file download: {filename}")
         
         return Response(
             content=content,
@@ -169,8 +194,12 @@ async def download_document(
             }
         )
         
-    except HTTPException:
+    except HTTPException as he:
+        logger.error(f"❌ HTTP Exception in download: {he.status_code} - {he.detail}")
         raise
     except Exception as e:
-        logger.error(f"Error downloading document: {str(e)}")
+        logger.error(f"❌ Unexpected error downloading document: {str(e)}")
+        logger.error(f"Exception type: {type(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Error downloading document: {str(e)}")
