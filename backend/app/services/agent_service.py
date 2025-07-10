@@ -252,12 +252,27 @@ class AgentService:
             
             logger.info(f"Analysis completed for {analysis_id}")
             
+            # Try to parse the result as structured JSON data
+            analysis_result = crew_result
+            try:
+                import json
+                if crew_result.strip().startswith('{') and crew_result.strip().endswith('}'):
+                    # Parse as JSON to preserve structure
+                    parsed_result = json.loads(crew_result)
+                    if any(key in parsed_result for key in ['technical_analysis', 'risk_assessment', 'project_plan']):
+                        analysis_result = parsed_result
+                    else:
+                        analysis_result = crew_result
+            except (json.JSONDecodeError, ValueError):
+                # Keep as string if not valid JSON
+                analysis_result = crew_result
+            
             # Update pending analysis with result
             self.pending_analyses[analysis_id] = {
                 "project_id": project_id,
                 "status": "completed",
-                "result": {
-                    "technical_analysis": crew_result,
+                "result": analysis_result if isinstance(analysis_result, dict) else {
+                    "raw_analysis": crew_result,
                     "additional_context": additional_context,
                     "analysis_id": analysis_id,
                     "project_id": project_id,
@@ -282,14 +297,28 @@ class AgentService:
                     }
                 )
                 
-                # Send agent message
+                # Send formatted agent message with analysis content
+                # Format the analysis result for display
+                if isinstance(analysis_result, dict):
+                    # If it's structured data, format it properly
+                    from app.utils.message_formatter import MessageFormatter
+                    formatted_message = MessageFormatter.format_technical_analysis(analysis_result)
+                    if additional_context:
+                        formatted_message = f"Here is the previous analysis for this project:\n\n{formatted_message}"
+                    else:
+                        formatted_message = f"Here is the updated analysis for this project:\n\n{formatted_message}"
+                else:
+                    # If it's raw text, format it as a regular response
+                    from app.utils.message_formatter import MessageFormatter
+                    formatted_message = MessageFormatter.format_agent_response(analysis_result)
+                
                 await ws_manager.broadcast(
                     project_id,
                     {
                         "type": "agent_message",
-                        "sender": "technical",
+                        "sender": "technical_analyst",
                         "sender_name": "Technical Analysis Agent",
-                        "message": f"I've completed the analysis incorporating your context: '{additional_context}'. The analysis now reflects these considerations. Feel free to ask questions or request further updates.",
+                        "message": formatted_message,
                         "analysis_id": analysis_id
                     }
                 )
@@ -2667,11 +2696,11 @@ class AgentService:
             # Create ResourceRequirements
             resource_data = plan_data.get('resource_requirements', {})
             resources = ResourceRequirements(
-                developers=resource_data.get('developers', 0),
-                designers=resource_data.get('designers', 0),
-                qa=resource_data.get('qa', 0),
-                devops=resource_data.get('devops', 0),
-                pm=resource_data.get('pm', 0),
+                developers=int(resource_data.get('developers', 0)),
+                designers=int(resource_data.get('designers', 0)),
+                qa=int(resource_data.get('qa', 0)),
+                devops=int(resource_data.get('devops', 0)),
+                pm=int(resource_data.get('pm', 0)),
                 other=resource_data.get('other', {})
             )
             

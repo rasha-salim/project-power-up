@@ -505,7 +505,24 @@ class AgentCommunicationService:
                 
                 # Format the response for better readability
                 try:
-                    formatted_response = MessageFormatter.format_agent_response(response_text)
+                    # Check if response contains structured analysis data (JSON format)
+                    if response_text.strip().startswith('{') and response_text.strip().endswith('}'):
+                        try:
+                            # Try to parse as JSON and format as technical analysis
+                            import json
+                            analysis_data = json.loads(response_text)
+                            if any(key in analysis_data for key in ['technical_analysis', 'risk_assessment', 'project_plan']):
+                                formatted_response = MessageFormatter.format_technical_analysis(analysis_data)
+                                logger.debug(f"Formatted as technical analysis: {formatted_response[:200]}...")
+                            else:
+                                formatted_response = MessageFormatter.format_agent_response(response_text)
+                        except json.JSONDecodeError:
+                            # Not valid JSON, use regular formatting
+                            formatted_response = MessageFormatter.format_agent_response(response_text)
+                    else:
+                        # Regular response, use standard formatting
+                        formatted_response = MessageFormatter.format_agent_response(response_text)
+                        
                     logger.debug(f"Formatted response preview: {formatted_response[:200]}...")
                 except Exception as format_error:
                     logger.error(f"Error formatting response: {str(format_error)}")

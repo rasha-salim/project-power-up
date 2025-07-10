@@ -208,3 +208,106 @@ class MessageFormatter:
             formatted_sections.append(section_text)
         
         return '\n\n\n'.join(formatted_sections)
+    
+    @staticmethod
+    def format_technical_analysis(analysis_data: dict) -> str:
+        """
+        Format technical analysis data in the structured format shown in the reference image
+        
+        Args:
+            analysis_data: Dictionary containing technical analysis results
+            
+        Returns:
+            Formatted technical analysis text
+        """
+        if not analysis_data:
+            return "No analysis data available"
+        
+        sections = []
+        
+        # Analysis Results header
+        sections.append("## Analysis Results:\n")
+        
+        # Technical Analysis Section
+        if 'technical_analysis' in analysis_data:
+            tech = analysis_data['technical_analysis']
+            sections.append("### Technical Analysis")
+            
+            if 'architecture' in tech:
+                sections.append(f"**Architecture**: {tech['architecture']}")
+            
+            if 'tech_stack' in tech:
+                sections.append("**Tech Stack**:")
+                stack = tech['tech_stack']
+                if 'frontend' in stack and stack['frontend']:
+                    sections.append(f"  Frontend: {', '.join(stack['frontend'])}")
+                if 'backend' in stack and stack['backend']:
+                    sections.append(f"  Backend: {', '.join(stack['backend'])}")
+                if 'infrastructure' in stack and stack['infrastructure']:
+                    sections.append(f"  Infrastructure: {', '.join(stack['infrastructure'])}")
+                if 'tools' in stack and stack['tools']:
+                    sections.append(f"  Tools: {', '.join(stack['tools'])}")
+            
+            # Scores
+            scores = []
+            if 'complexity_score' in tech:
+                scores.append(f"Complexity: {tech['complexity_score']}/10")
+            if 'maintainability_score' in tech:
+                scores.append(f"Maintainability: {tech['maintainability_score']}/10")
+            if 'scalability_score' in tech:
+                scores.append(f"Scalability: {tech['scalability_score']}/10")
+            if 'security_score' in tech:
+                scores.append(f"Security: {tech['security_score']}/10")
+            
+            if scores:
+                sections.append(f"**Scores**: {', '.join(scores)}")
+        
+        # Risk Assessment Section
+        if 'risk_assessment' in analysis_data:
+            risk = analysis_data['risk_assessment']
+            sections.append("\n### Risk Assessment")
+            
+            if 'overall_risk_score' in risk:
+                sections.append(f"**Overall Risk Score**: {risk['overall_risk_score']}/10")
+            
+            if 'key_risks' in risk and risk['key_risks']:
+                sections.append("**Key Risks**:")
+                for risk_item in risk['key_risks']:
+                    risk_name = risk_item.get('name', 'Unknown Risk')
+                    risk_level = risk_item.get('level', 'Unknown')
+                    risk_desc = risk_item.get('description', '')
+                    sections.append(f"  {risk_name} ({risk_level}) - {risk_desc}")
+        
+        # Project Plan Section
+        if 'project_plan' in analysis_data:
+            plan = analysis_data['project_plan']
+            sections.append("\n### Project Plan")
+            
+            if 'timeline' in plan:
+                sections.append(f"**Timeline**: {plan['timeline']}")
+            
+            if 'estimated_cost' in plan:
+                cost = plan['estimated_cost']
+                if isinstance(cost, (int, float)):
+                    sections.append(f"**Estimated Cost**: ${cost:,.0f}")
+                else:
+                    sections.append(f"**Estimated Cost**: {cost}")
+            
+            if 'phases' in plan and plan['phases']:
+                sections.append("**Phases**:")
+                for phase in plan['phases']:
+                    if isinstance(phase, dict):
+                        phase_name = phase.get('name', 'Unknown Phase')
+                        phase_duration = phase.get('duration', 'TBD')
+                        phase_desc = phase.get('description', '')
+                        sections.append(f"  Phase {phase_name} ({phase_duration} weeks) - {phase_desc}")
+                    else:
+                        sections.append(f"  {phase}")
+        
+        # Recommendations Section
+        if 'recommendations' in analysis_data and analysis_data['recommendations']:
+            sections.append("\n### Recommendations")
+            for i, rec in enumerate(analysis_data['recommendations'], 1):
+                sections.append(f"{i}. {rec}")
+        
+        return '\n'.join(sections)
