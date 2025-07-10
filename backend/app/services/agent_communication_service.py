@@ -546,7 +546,8 @@ class AgentCommunicationService:
                             "sender": "technical_analyst",
                             "sender_name": "Technical Analyst",
                             "message": formatted_response,
-                            "is_thinking": False
+                            "is_thinking": False,
+                            "analysis_id": existing_analysis_id  # Include analysis_id to prevent filtering
                         }
                     )
                     logger.info(f"Successfully sent technical agent response via WebSocket")

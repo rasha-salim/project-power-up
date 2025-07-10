@@ -277,10 +277,11 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
             
             // Filter out preliminary agent messages since we have typing indicator
             // BUT don't filter if this is an analysis content message (has analysis_id)
-            // OR if this is from project_planner (never filter project planner responses)
+            // OR if this is from project_planner or technical_analyst (never filter these responses)
             if (data.type === 'agent_message' && 
                 !data.analysis_id &&  // Only filter if NOT an analysis message
                 data.sender !== 'project_planner' &&  // Never filter project planner responses
+                data.sender !== 'technical_analyst' &&  // Never filter technical analyst responses
                 (data.message.includes('Let me analyze') || 
                  data.message.includes('thinking') ||
                  data.message.includes('Processing') ||
