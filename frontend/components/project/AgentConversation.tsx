@@ -1182,13 +1182,13 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
                   ? 'bg-blue-600 text-white'
                   : message.type === 'error'
                   ? 'bg-red-100 text-red-800'
-                  : message.sender === 'technical_agent' || message.type === 'result'
+                  : (message.sender === 'technical_agent' || message.sender === 'technical_analyst') || message.type === 'result'
                   ? 'bg-green-100 text-green-800'
-                  : message.sender === 'planner' || message.sender === 'project_planner'
+                  : (message.sender === 'planner' || message.sender === 'project_planner')
                   ? 'bg-blue-100 text-blue-800'
-                  : message.sender === 'assistant'
+                  : (message.sender === 'assistant' || message.sender === 'project_assistant')
                   ? 'bg-yellow-100 text-yellow-800'
-                  : message.sender === 'risk_analyst'
+                  : (message.sender === 'risk_analyst' || message.sender === 'security_analyst')
                   ? 'bg-purple-100 text-purple-800'
                   : message.type === 'system'
                   ? 'bg-gray-100 text-gray-800'
