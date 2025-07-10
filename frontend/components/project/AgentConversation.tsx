@@ -112,9 +112,11 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
       analysisSaved,
       currentAnalysisId,
       isConnected,
-      showButton: analysisComplete && !analysisSaved
+      existingInsights: !!existingInsights,
+      showButton: analysisComplete && !analysisSaved,
+      hasNewAnalysis: analysisComplete && currentAnalysisId && !analysisSaved
     });
-  }, [analysisComplete, analysisSaved, currentAnalysisId, isConnected]);
+  }, [analysisComplete, analysisSaved, currentAnalysisId, isConnected, existingInsights]);
 
   // Timeout recovery for agent responses
   useEffect(() => {
@@ -1028,7 +1030,7 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
               <InformationCircleIcon className="h-5 w-5" />
               Agents
             </button>
-            {analysisComplete && !analysisSaved && (
+            {analysisComplete && !analysisSaved && currentAnalysisId && (
               <button
                 onClick={confirmAndSaveAnalysis}
                 disabled={!isConnected || !currentAnalysisId}
@@ -1038,7 +1040,7 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
                 Save to Insights
               </button>
             )}
-            {!isAnalyzing && !analysisComplete && (
+            {!isAnalyzing && !analysisComplete && !existingInsights && (
               <button
                 onClick={() => startAnalysis()}
                 disabled={!isConnected}
@@ -1367,7 +1369,7 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
       <div className="bg-white border-t px-6 py-4">
         <div className="relative">
           {/* Save to Insights button (bottom placement) */}
-          {analysisComplete && !analysisSaved && (
+          {analysisComplete && !analysisSaved && currentAnalysisId && (
             <div className="mb-4 flex justify-end">
               <button
                 onClick={confirmAndSaveAnalysis}
