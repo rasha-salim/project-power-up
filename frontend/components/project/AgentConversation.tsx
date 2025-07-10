@@ -1475,11 +1475,15 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
                     const structuredData = parseStructuredContent(message.message);
                     
                     if (structuredData) {
-                      // Render structured analysis using consistent HTML styling
+                      // Render structured analysis using exact same styling as message.result
                       return (
-                        <div className="text-xs overflow-x-auto bg-white bg-opacity-50 p-2 rounded">
-                          <div className="text-sm font-semibold mb-1">Analysis Results:</div>
-                          {renderStructuredAnalysis(structuredData)}
+                        <div className="w-full">
+                          <div className="mt-2 pt-2 border-t border-gray-300">
+                            <div className="text-sm font-semibold mb-1">Analysis Results:</div>
+                            <div className="text-xs overflow-x-auto bg-white bg-opacity-50 p-2 rounded">
+                              {renderStructuredAnalysis(structuredData)}
+                            </div>
+                          </div>
                         </div>
                       );
                     } else {
