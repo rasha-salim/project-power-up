@@ -159,6 +159,135 @@ class DocumentSearchTool(BaseTool):
         logger.error("Failed to fetch documents after multiple attempts")
         return []
     
+    def batch_search(self, queries: list, limit_per_query: int = 3) -> str:
+        """
+        Perform multiple document searches in a single operation to reduce API calls
+        
+        Args:
+            queries: List of search queries to execute
+            limit_per_query: Maximum results per query
+            
+        Returns:
+            Combined search results from all queries
+        """
+        logger.info(f"BATCH DOCUMENT SEARCH - Project: {self.project_id}, Queries: {queries}")
+        print(f"BATCH DOCUMENT SEARCH - Project: {self.project_id}, Queries: {len(queries)} queries")
+        
+        all_results = []
+        seen_content = set()  # Avoid duplicate content
+        
+        for query in queries:
+            try:
+                # Get results for this query
+                query_results = self._search_single_query(query, limit_per_query)
+                
+                # Add unique results to combined results
+                for result in query_results:
+                    content_hash = hash(result.get('content', '')[:200])  # Hash first 200 chars
+                    if content_hash not in seen_content:
+                        seen_content.add(content_hash)
+                        result['query'] = query  # Track which query found this
+                        all_results.append(result)
+                        
+            except Exception as e:
+                logger.error(f"Error in batch search for query '{query}': {e}")
+                continue
+        
+        # Format combined results
+        if not all_results:
+            return "No relevant documents found for any of the search queries."
+        
+        # Organize results by relevance and query
+        formatted_sections = []
+        
+        # Group by query for better organization
+        query_groups = {}
+        for result in all_results:
+            query = result.get('query', 'unknown')
+            if query not in query_groups:
+                query_groups[query] = []
+            query_groups[query].append(result)
+        
+        # Format each query group
+        for query, results in query_groups.items():
+            if results:
+                formatted_sections.append(f"## Results for '{query}':")
+                for i, result in enumerate(results[:limit_per_query]):
+                    formatted_sections.append(
+                        f"**Document {i+1}**: {result.get('source', 'Unknown')}\n"
+                        f"**Content**: {result.get('content', 'No content')}\n"
+                    )
+                formatted_sections.append("")  # Add spacing between query groups
+        
+        combined_result = "\n".join(formatted_sections)
+        logger.info(f"Batch search complete: {len(all_results)} unique results from {len(queries)} queries")
+        return combined_result
+    
+    def _search_single_query(self, query: str, limit: int) -> list:
+        """
+        Execute a single search query and return results as list of dictionaries
+        
+        Args:
+            query: Search query
+            limit: Maximum number of results
+            
+        Returns:
+            List of result dictionaries
+        """
+        results = []
+        
+        try:
+            # Try ChromaDB first
+            collection_name = f"project_{self.project_id}"
+            
+            if self.chroma_client is not None:
+                try:
+                    collection = self.chroma_client.get_collection(collection_name)
+                    chroma_results = collection.query(
+                        query_texts=[query],
+                        n_results=limit
+                    )
+                    
+                    if chroma_results and chroma_results["documents"] and len(chroma_results["documents"][0]) > 0:
+                        for i in range(len(chroma_results["documents"][0])):
+                            document_text = chroma_results["documents"][0][i]
+                            metadata = chroma_results["metadatas"][0][i] if chroma_results.get("metadatas") else {}
+                            
+                            results.append({
+                                'source': metadata.get("source", "Unknown document"),
+                                'document_id': metadata.get("document_id", "Unknown ID"),
+                                'content': document_text,
+                                'relevance': i + 1
+                            })
+                        return results
+                        
+                except Exception as e:
+                    logger.warning(f"ChromaDB search failed for query '{query}': {e}")
+            
+            # Fall back to database search
+            documents = self._get_documents_from_db()
+            if documents:
+                for doc in documents:
+                    if "content" not in doc or not doc["content"]:
+                        continue
+                    
+                    # Simple keyword matching
+                    if query.lower() in doc["content"].lower():
+                        results.append({
+                            'source': doc.get('filename', 'Unnamed'),
+                            'document_id': doc.get('id', 'Unknown'),
+                            'content': doc.get('content', '')[:500] + "...",
+                            'relevance': len(results) + 1
+                        })
+                        
+                        if len(results) >= limit:
+                            break
+            
+        except Exception as e:
+            logger.error(f"Error in single query search for '{query}': {e}")
+        
+        return results
+    
     def _run(self, query: str, limit: int = 5) -> str:
         """
         Run the tool to search for documents

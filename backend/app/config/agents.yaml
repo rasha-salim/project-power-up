@@ -13,12 +13,9 @@ agents:
     - If new requirements conflict with original constraints, flag this and request clarification
     
     CRITICAL WORKFLOW - YOU MUST FOLLOW THIS EXACT PROCESS:
-    1. IMMEDIATELY use your document_search tool to search for 'requirements'
-    2. IMMEDIATELY use your document_search tool to search for 'architecture' 
-    3. IMMEDIATELY use your document_search tool to search for 'technology'
-    4. IMMEDIATELY use your document_search tool to search for 'timeline'
-    5. Check if this is an UPDATE to existing analysis - if so, review existing analysis data
-    6. ONLY AFTER completing these searches, analyze the results and provide your technical analysis
+    1. Review the comprehensive document content provided in your task description
+    2. Check if this is an UPDATE to existing analysis - if so, review existing analysis data
+    3. Analyze the provided document content and provide your technical analysis in the specified JSON format
     
     ANALYSIS MODE HANDLING:
     - For INITIAL analysis: Create comprehensive new analysis based on documents
@@ -182,7 +179,7 @@ agents:
 
 tasks:
   technical_analysis:
-    description: "MANDATORY FIRST STEP: Use your document search tools to search for project information. You have document_search and search_project_documents tools available. Execute searches for: 'requirements', 'architecture', 'technology', 'timeline', 'budget' before making any analysis. DO NOT proceed without using your search tools first. 
+    description: "MANDATORY FIRST STEP: Review the comprehensive document content provided in your task description. All relevant project documents have been pre-analyzed and provided to you. Use this information as the foundation for your technical analysis. DO NOT search for additional information - everything you need is provided. 
     
     ANALYSIS MODE DETERMINATION:
     - Check if this is an UPDATE to existing analysis (existing_analysis context provided)
@@ -202,17 +199,13 @@ tasks:
     
     After searching, analyze the found content to provide comprehensive technical recommendations based on actual document findings and constraint preservation principles."
     expected_output: |
-      CRITICAL: You MUST use your document search tools BEFORE providing any analysis. If you do not see tool execution happening, you are doing something wrong.
+      CRITICAL: You MUST use the comprehensive document content provided in your task description. All relevant project documents have been pre-analyzed and provided to you. Do NOT attempt to search for additional information.
       
       EXECUTION PROCESS (Follow this order exactly):
       
-      1. DOCUMENT SEARCH PHASE: Use the document_search tool multiple times with different keywords:
-         - Search for "requirements" to find functional and non-functional requirements
-         - Search for "architecture" to find system design details
-         - Search for "technology" or "tech stack" to find technology choices
-         - Search for "timeline" or "schedule" to find project timelines  
-         - Search for "budget" or "cost" to find financial constraints
-         - Search for "security", "performance", "database", "API" as relevant
+      1. DOCUMENT REVIEW PHASE: Review the comprehensive document content provided in your task description:
+         - All relevant project information including requirements, architecture, technology, timeline, budget, security, performance, database, and API details have been pre-compiled
+         - Use this provided content as the foundation for your analysis
       
       2. ANALYSIS PHASE: Analyze all document search results to extract:
          - Specific technologies, frameworks, and tools mentioned
@@ -322,11 +315,11 @@ tasks:
       }
       
       IMPORTANT NOTES:
-      - You MUST execute document searches before providing final JSON output
-      - Base all analysis on actual document content, not assumptions
-      - If document searches find limited content, state this in explanations
+      - You MUST use the comprehensive document content provided in your task description
+      - Base all analysis on the actual document content provided, not assumptions
+      - If the provided document content is limited, state this in explanations
       - Include specific document references in explanations sections
-      - Provide realistic scores and estimates based on actual project requirements
+      - Provide realistic scores and estimates based on actual project requirements from the provided content
       - CRITICAL: All resource requirement numbers (developers, designers, qa, devops, pm) MUST be integers (whole numbers), not decimals
       - Example: Use "developers": 2, not "developers": 2.0
     agent: "technical_analyst"
@@ -356,7 +349,7 @@ tasks:
       - risk_assessment_results
 
   security_analysis:
-    description: "MANDATORY FIRST STEP: Use your document search tools to search for security-related project information. You have document_search and search_project_documents tools available. Execute searches for: 'security', 'authentication', 'authorization', 'privacy', 'compliance', 'data protection' before making any analysis. DO NOT proceed without using your search tools first.
+    description: "MANDATORY FIRST STEP: Review the comprehensive document content and technical analysis provided in your task description. All relevant security-related project documents have been pre-analyzed and provided to you. Use this information as the foundation for your security analysis. DO NOT search for additional information - everything you need is provided.
 
     SECURITY ANALYSIS PROCESS:
     - Review existing technical analysis for security implications
@@ -370,18 +363,13 @@ tasks:
 
     After searching, analyze the found content to provide comprehensive security assessment based on actual document findings and technical analysis data."
     expected_output: |
-      CRITICAL: You MUST use your document search tools BEFORE providing any security analysis. If you do not see tool execution happening, you are doing something wrong.
+      CRITICAL: You MUST use the comprehensive document content and technical analysis provided in your task description. All relevant security-related project documents have been pre-analyzed and provided to you. Do NOT attempt to search for additional information.
       
       EXECUTION PROCESS (Follow this order exactly):
       
-      1. DOCUMENT SEARCH PHASE: Use the document_search tool multiple times with different security-related keywords:
-         - Search for "security" to find security requirements and specifications
-         - Search for "authentication" to find authentication mechanisms
-         - Search for "authorization" to find access control requirements
-         - Search for "privacy" to find data privacy requirements
-         - Search for "compliance" to find regulatory and standards requirements
-         - Search for "encryption" to find data protection specifications
-         - Search for "API" security considerations
+      1. DOCUMENT REVIEW PHASE: Review the comprehensive document content and technical analysis provided in your task description:
+         - All security-related information including security requirements, authentication, authorization, privacy, compliance, encryption, and API security considerations have been pre-compiled
+         - Use this provided content as the foundation for your security analysis
       
       2. ANALYSIS PHASE: Analyze all document search results and technical analysis to extract:
          - Security requirements and compliance standards
@@ -488,11 +476,11 @@ tasks:
       }
       
       IMPORTANT NOTES:
-      - You MUST execute document searches before providing final JSON output
-      - Base all security analysis on actual document content and technical analysis data
-      - If document searches find limited security content, state this in explanations
+      - You MUST use the comprehensive document content and technical analysis provided in your task description
+      - Base all security analysis on the actual document content and technical analysis data provided
+      - If the provided document content has limited security information, state this in explanations
       - Include specific document references in explanations sections
-      - Provide realistic security scores and risk assessments based on actual findings
+      - Provide realistic security scores and risk assessments based on actual findings from the provided content
       - Consider project constraints (timeline, budget, team) in recommendations
     agent: "security_analyst"
     dependencies:

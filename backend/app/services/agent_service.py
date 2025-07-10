@@ -166,15 +166,38 @@ class AgentService:
                 max_tokens=4000
             )
             
-            # Create document search tool
+            # Pre-fetch all relevant document content using batch search
+            # This reduces API calls by getting all content upfront
             document_search_tool = DocumentSearchTool(project_id)
+            
+            # Define key search terms for comprehensive document analysis
+            search_queries = [
+                "requirements specifications functional non-functional",
+                "architecture design system structure patterns",
+                "technology stack frameworks tools libraries",
+                "timeline schedule milestones deadlines budget cost",
+                "security privacy authentication authorization",
+                "performance scalability database API integration"
+            ]
+            
+            logger.info(f"Pre-fetching document content with batch search for project {project_id}")
+            
+            # Get all relevant document content in one operation
+            try:
+                comprehensive_document_content = document_search_tool.batch_search(search_queries, limit_per_query=3)
+                logger.info(f"Batch search completed, content length: {len(comprehensive_document_content)}")
+            except Exception as e:
+                logger.error(f"Batch search failed, falling back to basic search: {e}")
+                # Fallback to basic search if batch fails
+                comprehensive_document_content = document_search_tool._run("project requirements architecture technology", limit=10)
             
             # Load agent configuration
             agent_config = self.config_loader.get_agent_config("technical_analyst")
             if not agent_config:
                 raise ValueError("Technical analyst agent configuration not found")
             
-            # Create the technical agent
+            # Create the technical agent WITHOUT document search tool
+            # Since we've already fetched all document content
             technical_agent = Agent(
                 role=agent_config["role"],
                 goal=agent_config["goal"],
@@ -182,36 +205,39 @@ class AgentService:
                 verbose=True,
                 allow_delegation=False,
                 llm=llm,
-                tools=[document_search_tool]
+                tools=[]  # No tools needed - we provide document content directly
             )
             
-            # Get document previews
+            # Get document previews for fallback
             document_previews = []
             for doc in documents[:5]:  # Limit to first 5 documents
                 preview = f"- {doc.filename}: {doc.content[:200]}..." if hasattr(doc, 'content') and doc.content else f"- {doc.filename}: [No content available]"
                 document_previews.append(preview)
             
-            # Build task description with additional context
+            # Build task description with pre-fetched document content
             task_description = f"""
             Analyze the technical aspects of project {project_id}.
             
             Additional Context from User:
             {additional_context}
             
-            Please incorporate this context into your analysis and ensure your recommendations
-            and assessments take this information into account.
+            COMPREHENSIVE DOCUMENT CONTENT:
+            All relevant project documents have been pre-analyzed and compiled below.
+            Use this information as the foundation for your technical analysis.
             
-            Available documents:
-            {chr(10).join(document_previews)}
+            {comprehensive_document_content}
             
-            Provide a comprehensive technical analysis including:
-            1. Architecture recommendations
-            2. Technology stack suggestions
-            3. Technical challenges and risks
-            4. Implementation timeline
-            5. Resource requirements
+            ANALYSIS REQUIREMENTS:
+            Based on the document content above, provide your analysis in the structured JSON format
+            specified in your configuration. Include:
+            1. Architecture recommendations based on documented requirements
+            2. Technology stack suggestions from identified technologies
+            3. Technical challenges and risks from project complexity
+            4. Implementation timeline respecting documented constraints
+            5. Resource requirements based on project scope
             
-            Make sure to consider the user's additional context in all aspects of your analysis.
+            Make sure to reference specific document content in your explanations and
+            incorporate the user's additional context in all aspects of your analysis.
             """
             
             # Create task
