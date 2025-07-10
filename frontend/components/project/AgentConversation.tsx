@@ -888,6 +888,14 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
       timestamp: new Date().toISOString()
     }]);
 
+    // Reset analysis states if user is requesting a new analysis
+    if (userMessage.toLowerCase().includes('analysis') || userMessage.includes('@technical')) {
+      console.log('🔄 User requesting new analysis - resetting states');
+      setAnalysisSaved(false);
+      setAnalysisComplete(false);
+      // Note: Keep currentAnalysisId for context, but reset completion states
+    }
+
     // Send message based on context
     if (currentAnalysisId) {
       // In analysis context
@@ -901,12 +909,6 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
     } else {
       // General chat
       console.log('Sending chat_message:', userMessage);
-      
-      // Reset analysis saved state in case this triggers a new analysis
-      if (userMessage.toLowerCase().includes('analysis') || userMessage.includes('@technical')) {
-        setAnalysisSaved(false);
-        setAnalysisComplete(false);
-      }
       
       wsRef.current.send(JSON.stringify({
         type: 'chat_message',
