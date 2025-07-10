@@ -87,53 +87,105 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
         }
       }
       
-      // Try to detect structured markdown content
+      // Try to detect structured markdown content (both old and new formats)
       if (messageText.includes('## Analysis Results:') || 
           messageText.includes('### Technical Analysis') ||
           messageText.includes('### Risk Assessment') ||
-          messageText.includes('### Project Plan')) {
+          messageText.includes('### Project Plan') ||
+          messageText.includes('Technical Analysis:') ||
+          messageText.includes('Architecture Overview') ||
+          messageText.includes('Technology Stack')) {
         
         // Parse markdown-formatted analysis into structured data
         const result: any = {};
         
-        // Extract Technical Analysis section
-        const techMatch = messageText.match(/### Technical Analysis([\s\S]*?)(?=###|\n\n|$)/);
+        // Extract Technical Analysis section (handle both ### and plain text formats)
+        let techMatch = messageText.match(/### Technical Analysis([\s\S]*?)(?=###|\n\n|$)/);
+        if (!techMatch) {
+          // Try new format with "Technical Analysis:" header
+          techMatch = messageText.match(/Technical Analysis:([\s\S]*?)(?=Risk Assessment|Project Plan|Recommendations|$)/);
+        }
+        
         if (techMatch) {
           const techContent = techMatch[1];
           result.technical_analysis = {
-            architecture: extractValue(techContent, 'Architecture'),
-            tech_stack: extractTechStack(techContent),
-            complexity_score: extractScore(techContent, 'Complexity'),
-            maintainability_score: extractScore(techContent, 'Maintainability'),
-            scalability_score: extractScore(techContent, 'Scalability'),
-            security_score: extractScore(techContent, 'Security')
+            architecture: extractArchitecture(techContent),
+            tech_stack: extractTechStackFromNewFormat(techContent),
+            complexity_score: extractScoreFromNewFormat(techContent, 'Complexity'),
+            maintainability_score: extractScoreFromNewFormat(techContent, 'Maintainability'),
+            scalability_score: extractScoreFromNewFormat(techContent, 'Scalability'),
+            performance_score: extractScoreFromNewFormat(techContent, 'Performance'),
+            security_score: extractScoreFromNewFormat(techContent, 'Security')
           };
         }
         
         // Extract Risk Assessment section
-        const riskMatch = messageText.match(/### Risk Assessment([\s\S]*?)(?=###|\n\n|$)/);
-        if (riskMatch) {
+        let riskMatch = messageText.match(/### Risk Assessment([\s\S]*?)(?=###|\n\n|$)/);
+        if (!riskMatch) {
+          // For new format, provide default risk assessment based on complexity
+          const complexityScore = extractScoreFromNewFormat(messageText, 'Complexity') || 8;
+          result.risk_assessment = {
+            overall_risk_score: Math.max(1, Math.min(10, complexityScore - 1)),
+            key_risks: [],
+            mitigation_strategies: []
+          };
+        } else {
           const riskContent = riskMatch[1];
           result.risk_assessment = {
             overall_risk_score: extractScore(riskContent, 'Overall Risk Score'),
-            key_risks: extractRisks(riskContent)
+            key_risks: extractRisks(riskContent),
+            mitigation_strategies: []
           };
         }
         
         // Extract Project Plan section
-        const planMatch = messageText.match(/### Project Plan([\s\S]*?)(?=###|\n\n|$)/);
-        if (planMatch) {
+        let planMatch = messageText.match(/### Project Plan([\s\S]*?)(?=###|\n\n|$)/);
+        if (!planMatch) {
+          // Try to extract timeline from the whole message if no formal project plan section
+          const timeline = extractProjectTimeline(messageText);
+          if (timeline) {
+            result.project_plan = {
+              timeline: timeline,
+              estimated_cost: 0,
+              phases: [],
+              milestones: [],
+              resource_requirements: {
+                developers: 0,
+                designers: 0,
+                qa: 0,
+                devops: 0,
+                pm: 1
+              }
+            };
+          }
+        } else {
           const planContent = planMatch[1];
           result.project_plan = {
             timeline: extractValue(planContent, 'Timeline'),
             estimated_cost: extractCost(planContent),
-            phases: extractPhases(planContent)
+            phases: extractPhases(planContent),
+            milestones: [],
+            resource_requirements: {
+              developers: 0,
+              designers: 0,
+              qa: 0,
+              devops: 0,
+              pm: 1
+            }
           };
         }
         
         // Extract Recommendations section
-        const recMatch = messageText.match(/### Recommendations([\s\S]*?)(?=###|\n\n|$)/);
-        if (recMatch) {
+        let recMatch = messageText.match(/### Recommendations([\s\S]*?)(?=###|\n\n|$)/);
+        if (!recMatch) {
+          // For new format, provide default recommendations based on analysis
+          result.recommendations = [
+            "Implement comprehensive testing strategy",
+            "Establish proper monitoring and logging",
+            "Follow security best practices",
+            "Plan for scalability from the start"
+          ];
+        } else {
           result.recommendations = extractRecommendations(recMatch[1]);
         }
         
@@ -232,6 +284,89 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
       });
     }
     return recommendations;
+  };
+
+  // New parsing functions for current agent output format
+  const extractArchitecture = (content: string) => {
+    // Look for "Architecture Overview" section or "Type:" field
+    const typeMatch = content.match(/(?:Architecture Overview|Type):\s*([^\n]+)/);
+    if (typeMatch) {
+      return typeMatch[1].trim();
+    }
+    
+    // Fallback to looking for "architecture" keyword
+    const archMatch = content.match(/architecture[:\s]*([^\n]+)/i);
+    return archMatch ? archMatch[1].trim() : '';
+  };
+
+  const extractTechStackFromNewFormat = (content: string) => {
+    const stack: any = {};
+    
+    // Extract Frontend technologies
+    const frontendMatch = content.match(/Frontend:\s*([\s\S]*?)(?=Backend:|Infrastructure:|$)/);
+    if (frontendMatch) {
+      const frontendContent = frontendMatch[1];
+      const techs = frontendContent.match(/- ([^\n]+)/g);
+      if (techs) {
+        stack.frontend = techs.map(tech => tech.replace(/^- /, '').trim());
+      }
+    }
+    
+    // Extract Backend technologies
+    const backendMatch = content.match(/Backend:\s*([\s\S]*?)(?=Frontend:|Infrastructure:|$)/);
+    if (backendMatch) {
+      const backendContent = backendMatch[1];
+      const techs = backendContent.match(/- ([^\n]+)/g);
+      if (techs) {
+        stack.backend = techs.map(tech => tech.replace(/^- /, '').trim());
+      }
+    }
+    
+    // Extract Infrastructure technologies
+    const infraMatch = content.match(/Infrastructure:\s*([\s\S]*?)(?=Frontend:|Backend:|Technical Considerations:|$)/);
+    if (infraMatch) {
+      const infraContent = infraMatch[1];
+      const techs = infraContent.match(/- ([^\n]+)/g);
+      if (techs) {
+        stack.infrastructure = techs.map(tech => tech.replace(/^- /, '').trim());
+      }
+    }
+    
+    // Extract Tools (if mentioned)
+    const toolsMatch = content.match(/Tools:\s*([\s\S]*?)(?=Frontend:|Backend:|Infrastructure:|$)/);
+    if (toolsMatch) {
+      const toolsContent = toolsMatch[1];
+      const techs = toolsContent.match(/- ([^\n]+)/g);
+      if (techs) {
+        stack.tools = techs.map(tech => tech.replace(/^- /, '').trim());
+      }
+    }
+    
+    return stack;
+  };
+
+  const extractScoreFromNewFormat = (content: string, key: string) => {
+    // Look for "Complexity Rating:", "Maintainability Score:", etc.
+    const patterns = [
+      new RegExp(`${key}\\s*(?:Rating|Score)?:\\s*(\\d+(?:\\.\\d+)?)`),
+      new RegExp(`${key}\\s*(?:Rating|Score)?[:\\s]*(\\d+(?:\\.\\d+)?)/10`),
+      new RegExp(`${key}[:\\s]*(\\d+(?:\\.\\d+)?)`),
+    ];
+    
+    for (const pattern of patterns) {
+      const match = content.match(pattern);
+      if (match) {
+        return parseFloat(match[1]);
+      }
+    }
+    
+    return 0;
+  };
+
+  const extractProjectTimeline = (content: string) => {
+    // Look for "Project Timeline:" pattern
+    const timelineMatch = content.match(/Project Timeline:\s*([^\n]+)/);
+    return timelineMatch ? timelineMatch[1].trim() : '';
   };
 
   // Unified structured content rendering function - used for both agent messages and results
@@ -604,6 +739,55 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
                   planning_context: data.planning_context,
                   will_stop_thinking: !data.is_thinking
                 });
+              }
+              
+              // Check if this is a Technical Analysis message (formatted text from agent)
+              if (data.message && (
+                data.message.includes('Technical Analysis:') || 
+                data.message.includes('Technical Analysis\n') ||
+                data.message.match(/Technical Analysis[:\s]/i) ||
+                (data.message.includes('Architecture Overview') && data.message.includes('Technology Stack'))
+              )) {
+                console.log('🟡 Technical Analysis message detected, parsing structured content:', {
+                  sender: data.sender,
+                  messageLength: data.message.length,
+                  hasAnalysisId: !!data.analysis_id,
+                  currentAnalysisId: currentAnalysisId
+                });
+                
+                // Parse the formatted text into structured data
+                const parsedStructuredData = parseStructuredContent(data.message);
+                
+                if (parsedStructuredData) {
+                  console.log('🟡 Successfully parsed Technical Analysis, activating save button:', {
+                    parsedKeys: Object.keys(parsedStructuredData),
+                    technicalAnalysisKeys: parsedStructuredData.technical_analysis ? Object.keys(parsedStructuredData.technical_analysis) : [],
+                    willActivateSave: true
+                  });
+                  
+                  // Generate analysis ID if not provided
+                  const analysisId = data.analysis_id || `analysis_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                  
+                  // Set analysis states to activate save button
+                  setIsAnalyzing(false);
+                  setAnalysisComplete(true);
+                  setAnalysisSaved(false);
+                  setCurrentAnalysisId(analysisId);
+                  setIsAgentThinking(false);
+                  
+                  // Add the structured data to the message
+                  data.structured_data = parsedStructuredData;
+                  data.analysis_id = analysisId;
+                  
+                  console.log('🟡 Technical Analysis save button should now be active with:', {
+                    analysisComplete: true,
+                    analysisSaved: false,
+                    currentAnalysisId: analysisId,
+                    hasStructuredData: !!parsedStructuredData
+                  });
+                } else {
+                  console.warn('🟡 Failed to parse Technical Analysis message');
+                }
               }
             }
             
