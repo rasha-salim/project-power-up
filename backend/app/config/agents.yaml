@@ -199,22 +199,17 @@ tasks:
     
     After searching, analyze the found content to provide comprehensive technical recommendations based on actual document findings and constraint preservation principles."
     expected_output: |
-      CRITICAL: You MUST use the comprehensive document content provided in your task description. All relevant project documents have been pre-analyzed and provided to you. Do NOT attempt to search for additional information.
+      CRITICAL OUTPUT REQUIREMENTS:
       
-      EXECUTION PROCESS (Follow this order exactly):
+      1. YOU MUST RETURN ONLY VALID JSON - NO OTHER TEXT, NO EXPLANATIONS, NO MARKDOWN
+      2. DO NOT return raw document content or transcripts
+      3. DO NOT include any text before or after the JSON
+      4. Use the comprehensive document content provided in your task description for analysis
+      5. Your response must start with { and end with }
       
-      1. DOCUMENT REVIEW PHASE: Review the comprehensive document content provided in your task description:
-         - All relevant project information including requirements, architecture, technology, timeline, budget, security, performance, database, and API details have been pre-compiled
-         - Use this provided content as the foundation for your analysis
+      MANDATORY JSON STRUCTURE (This exact format is required for system compatibility):
       
-      2. ANALYSIS PHASE: Analyze all document search results to extract:
-         - Specific technologies, frameworks, and tools mentioned
-         - Architecture patterns and system requirements
-         - Timeline constraints and delivery requirements
-         - Budget limitations and resource constraints
-         - Risk factors and technical challenges
-      
-      3. OUTPUT PHASE: After completing document searches and analysis, provide your final response in valid JSON format matching this structure:
+      You must analyze the provided document content and return ONLY this JSON structure:
       
       FOR UPDATE ANALYSIS - PRESERVE EXISTING STRUCTURE:
       - Keep original timeline structure and major milestones
@@ -314,14 +309,74 @@ tasks:
         }
       }
       
-      IMPORTANT NOTES:
-      - You MUST use the comprehensive document content provided in your task description
-      - Base all analysis on the actual document content provided, not assumptions
-      - If the provided document content is limited, state this in explanations
-      - Include specific document references in explanations sections
-      - Provide realistic scores and estimates based on actual project requirements from the provided content
-      - CRITICAL: All resource requirement numbers (developers, designers, qa, devops, pm) MUST be integers (whole numbers), not decimals
-      - Example: Use "developers": 2, not "developers": 2.0
+      
+      CRITICAL VALIDATION REQUIREMENTS:
+      - Your response MUST be valid JSON that starts with { and ends with }
+      - All resource requirement numbers MUST be integers (whole numbers), not decimals
+      - Use actual values from document analysis, not placeholder text
+      - The timeline field should be a readable string like "May 15, 2025 - August 15, 2025" or "12 months"
+      - DO NOT include any text, explanations, or content outside the JSON structure
+      
+      EXAMPLE RESPONSE FORMAT (you must follow this exact structure):
+      {
+        "technical_analysis": {
+          "architecture": "RAG-based LLM system with vector database",
+          "tech_stack": {
+            "frontend": ["TypeScript", "React"],
+            "backend": ["Python", "OpenAI APIs"],
+            "infrastructure": ["AWS", "Vector Database"],
+            "tools": ["GitHub", "Notion", "Slack"]
+          },
+          "complexity_score": 7,
+          "maintainability_score": 8,
+          "scalability_score": 7,
+          "performance_score": 8,
+          "security_score": 9
+        },
+        "risk_assessment": {
+          "overall_risk_score": 6,
+          "key_risks": [
+            {
+              "name": "Data Security",
+              "level": "High",
+              "impact": 9,
+              "probability": 7,
+              "description": "Ensuring proprietary information remains within security perimeter"
+            }
+          ],
+          "mitigation_strategies": ["Implement RAG-based solution rather than custom LLM development"]
+        },
+        "project_plan": {
+          "timeline": "May 15, 2025 - August 15, 2025",
+          "estimated_cost": 25000,
+          "phases": [
+            {
+              "name": "Architecture & Planning",
+              "duration": 2,
+              "description": "System design and technology selection"
+            }
+          ],
+          "milestones": [
+            {
+              "name": "Architecture Design Complete",
+              "date": "May 29, 2025",
+              "status": "upcoming",
+              "description": "System architecture and technology stack finalized"
+            }
+          ],
+          "resource_requirements": {
+            "developers": 2,
+            "designers": 1,
+            "qa": 1,
+            "devops": 1,
+            "pm": 1
+          }
+        },
+        "recommendations": [
+          "Implement RAG-based solution rather than custom LLM development",
+          "Focus on secure data handling and privacy controls"
+        ]
+      }
     agent: "technical_analyst"
     dependencies: []
     context_requirements:

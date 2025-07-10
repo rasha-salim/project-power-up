@@ -49,6 +49,68 @@ class AgentService:
         
         return json.dumps(obj, default=json_serial, **kwargs)
     
+    def _validate_analysis_json(self, result_text: str) -> tuple[bool, dict, str]:
+        """
+        Validate that the agent response is proper JSON with required structure
+        
+        Returns:
+            tuple: (is_valid, parsed_json, error_message)
+        """
+        try:
+            # Clean the result text
+            cleaned_text = result_text.strip()
+            
+            # Check if it starts and ends with braces
+            if not (cleaned_text.startswith('{') and cleaned_text.endswith('}')):
+                return False, {}, "Response is not valid JSON (must start with { and end with })"
+            
+            # Try to parse JSON
+            try:
+                parsed_result = json.loads(cleaned_text)
+            except json.JSONDecodeError as e:
+                return False, {}, f"Invalid JSON format: {str(e)}"
+            
+            # Check for required top-level fields
+            required_fields = ['technical_analysis', 'risk_assessment', 'project_plan', 'recommendations']
+            missing_fields = [field for field in required_fields if field not in parsed_result]
+            
+            if missing_fields:
+                return False, {}, f"Missing required fields: {', '.join(missing_fields)}"
+            
+            # Validate technical_analysis structure
+            tech_analysis = parsed_result.get('technical_analysis', {})
+            required_tech_fields = ['architecture', 'tech_stack']
+            missing_tech_fields = [field for field in required_tech_fields if field not in tech_analysis]
+            
+            if missing_tech_fields:
+                return False, {}, f"Missing technical analysis fields: {', '.join(missing_tech_fields)}"
+            
+            # Validate project_plan structure  
+            project_plan = parsed_result.get('project_plan', {})
+            required_plan_fields = ['timeline', 'estimated_cost', 'resource_requirements']
+            missing_plan_fields = [field for field in required_plan_fields if field not in project_plan]
+            
+            if missing_plan_fields:
+                return False, {}, f"Missing project plan fields: {', '.join(missing_plan_fields)}"
+            
+            # Check if response contains raw document content (indicates agent confusion)
+            if len(cleaned_text) > 10000:  # Very long responses might contain raw docs
+                # Look for patterns that indicate raw document content
+                doc_indicators = [
+                    "- Alex Rivera", "- Jordan Taylor", "- Maya Patel", "- Sarah Chen",  # Meeting transcript names
+                    "Week 1-2:", "Week 3-4:", "Week 5-6:",  # Timeline format from documents
+                    "Confluence", "GitHub", "Slack",  # Common tools mentioned in transcripts
+                    "minutes:", "seconds:",  # Time indicators from transcripts
+                ]
+                
+                if any(indicator in cleaned_text for indicator in doc_indicators):
+                    return False, {}, "Response appears to contain raw document content instead of analysis"
+            
+            return True, parsed_result, ""
+            
+        except Exception as e:
+            return False, {}, f"Validation error: {str(e)}"
+    
     async def start_analysis(self, db: AsyncSession, project_id: str, ws_manager: Optional[WebSocketManager] = None, force: bool = False) -> str:
         """
         Start an agent analysis for a project
@@ -267,44 +329,162 @@ class AgentService:
                     }
                 )
             
-            # Execute the analysis
-            result = crew.kickoff()
+            # Execute the analysis with validation and retry logic
+            max_retries = 2
+            analysis_result = None
             
-            # Convert result to string
-            if hasattr(result, 'raw'):
-                crew_result = result.raw
-            else:
-                crew_result = str(result)
-            
-            logger.info(f"Analysis completed for {analysis_id}")
-            
-            # Try to parse the result as structured JSON data
-            analysis_result = crew_result
-            try:
-                import json
-                if crew_result.strip().startswith('{') and crew_result.strip().endswith('}'):
-                    # Parse as JSON to preserve structure
-                    parsed_result = json.loads(crew_result)
-                    if any(key in parsed_result for key in ['technical_analysis', 'risk_assessment', 'project_plan']):
-                        analysis_result = parsed_result
+            for attempt in range(max_retries + 1):
+                try:
+                    # Execute the analysis
+                    result = crew.kickoff()
+                    
+                    # Convert result to string
+                    if hasattr(result, 'raw'):
+                        crew_result = result.raw
                     else:
-                        analysis_result = crew_result
-            except (json.JSONDecodeError, ValueError):
-                # Keep as string if not valid JSON
-                analysis_result = crew_result
+                        crew_result = str(result)
+                    
+                    logger.info(f"Analysis attempt {attempt + 1} completed for {analysis_id}, result length: {len(crew_result)}")
+                    
+                    # Validate the result
+                    is_valid, parsed_result, error_message = self._validate_analysis_json(crew_result)
+                    
+                    if is_valid:
+                        analysis_result = parsed_result
+                        logger.info(f"Valid JSON analysis received on attempt {attempt + 1}")
+                        break
+                    else:
+                        logger.warning(f"Invalid analysis result on attempt {attempt + 1}: {error_message}")
+                        logger.warning(f"Result preview: {crew_result[:500]}...")
+                        
+                        if attempt < max_retries:
+                            # Retry with stronger instructions
+                            logger.info(f"Retrying analysis with stronger JSON enforcement...")
+                            
+                            # Update task description with stronger JSON enforcement
+                            stronger_task_description = f"""
+                            CRITICAL: Your previous response was invalid. You MUST return ONLY valid JSON.
+                            
+                            ERROR: {error_message}
+                            
+                            DO NOT include any explanatory text, markdown, or content outside the JSON structure.
+                            DO NOT return raw document content or meeting transcripts.
+                            Your response must start with {{ and end with }}
+                            
+                            Analyze the technical aspects of project {project_id}.
+                            
+                            Additional Context from User:
+                            {additional_context}
+                            
+                            COMPREHENSIVE DOCUMENT CONTENT:
+                            {comprehensive_document_content}
+                            
+                            RETURN ONLY THIS JSON STRUCTURE (no other text):
+                            {{
+                                "technical_analysis": {{
+                                    "architecture": "string description",
+                                    "tech_stack": {{
+                                        "frontend": ["array", "of", "technologies"],
+                                        "backend": ["array", "of", "technologies"],
+                                        "infrastructure": ["array", "of", "technologies"],
+                                        "tools": ["array", "of", "tools"]
+                                    }},
+                                    "complexity_score": 7,
+                                    "maintainability_score": 8,
+                                    "scalability_score": 7,
+                                    "performance_score": 8,
+                                    "security_score": 9
+                                }},
+                                "risk_assessment": {{
+                                    "overall_risk_score": 6,
+                                    "key_risks": [
+                                        {{
+                                            "name": "Risk name",
+                                            "level": "High",
+                                            "impact": 9,
+                                            "probability": 7,
+                                            "description": "Risk description"
+                                        }}
+                                    ],
+                                    "mitigation_strategies": ["array", "of", "strategies"]
+                                }},
+                                "project_plan": {{
+                                    "timeline": "{additional_context if 'month' in additional_context.lower() else 'TBD'}",
+                                    "estimated_cost": 25000,
+                                    "phases": [
+                                        {{
+                                            "name": "Phase name",
+                                            "duration": 2,
+                                            "description": "Phase description"
+                                        }}
+                                    ],
+                                    "milestones": [
+                                        {{
+                                            "name": "Milestone name",
+                                            "date": "Date string",
+                                            "status": "upcoming",
+                                            "description": "Milestone description"
+                                        }}
+                                    ],
+                                    "resource_requirements": {{
+                                        "developers": 2,
+                                        "designers": 1,
+                                        "qa": 1,
+                                        "devops": 1,
+                                        "pm": 1
+                                    }}
+                                }},
+                                "recommendations": ["array", "of", "recommendations"]
+                            }}
+                            """
+                            
+                            # Update the task with stronger instructions
+                            task.description = stronger_task_description.strip()
+                        else:
+                            # Final attempt failed, use fallback
+                            logger.error(f"All attempts failed for analysis {analysis_id}")
+                            analysis_result = {
+                                "error": "Analysis validation failed",
+                                "raw_response": crew_result,
+                                "validation_error": error_message,
+                                "analysis_id": analysis_id,
+                                "project_id": project_id
+                            }
+                            break
+                            
+                except Exception as e:
+                    logger.error(f"Analysis execution error on attempt {attempt + 1}: {str(e)}")
+                    if attempt == max_retries:
+                        analysis_result = {
+                            "error": f"Analysis execution failed: {str(e)}",
+                            "analysis_id": analysis_id,
+                            "project_id": project_id
+                        }
+                        break
             
-            # Update pending analysis with result
-            self.pending_analyses[analysis_id] = {
-                "project_id": project_id,
-                "status": "completed",
-                "result": analysis_result if isinstance(analysis_result, dict) else {
-                    "raw_analysis": crew_result,
+            # Prepare final result
+            if isinstance(analysis_result, dict) and "error" not in analysis_result:
+                # Valid structured analysis result
+                final_result = analysis_result
+                status = "completed"
+            else:
+                # Error or fallback result
+                final_result = {
+                    "error": analysis_result.get("error", "Unknown error") if isinstance(analysis_result, dict) else "Analysis failed",
+                    "raw_response": analysis_result.get("raw_response", "") if isinstance(analysis_result, dict) else str(analysis_result),
                     "additional_context": additional_context,
                     "analysis_id": analysis_id,
                     "project_id": project_id,
                     "version": 1,
                     "created_at": datetime.utcnow().isoformat()
-                },
+                }
+                status = "failed"
+
+            # Update pending analysis with result
+            self.pending_analyses[analysis_id] = {
+                "project_id": project_id,
+                "status": status,
+                "result": final_result,
                 "crew": crew,
                 "technical_agent": technical_agent,
                 "document_search_tool": document_search_tool
@@ -312,41 +492,53 @@ class AgentService:
             
             # Send completion message
             if ws_manager:
-                await ws_manager.broadcast(
-                    project_id,
-                    {
-                        "type": "analysis_complete",
-                        "analysis_id": analysis_id,
-                        "result": self.pending_analyses[analysis_id]["result"],
-                        "message": "Analysis complete!",
-                        "show_save_button": True
-                    }
-                )
-                
-                # Send formatted agent message with analysis content
-                # Format the analysis result for display
-                if isinstance(analysis_result, dict):
-                    # If it's structured data, format it properly
-                    from app.utils.message_formatter import MessageFormatter
-                    formatted_message = MessageFormatter.format_technical_analysis(analysis_result)
-                    if additional_context:
-                        formatted_message = f"Here is the previous analysis for this project:\n\n{formatted_message}"
-                    else:
-                        formatted_message = f"Here is the updated analysis for this project:\n\n{formatted_message}"
+                if status == "completed":
+                    await ws_manager.broadcast(
+                        project_id,
+                        {
+                            "type": "analysis_complete",
+                            "analysis_id": analysis_id,
+                            "result": final_result,
+                            "message": "Analysis complete!",
+                            "show_save_button": True
+                        }
+                    )
                 else:
-                    # If it's raw text, format it as a regular response
-                    from app.utils.message_formatter import MessageFormatter
-                    formatted_message = MessageFormatter.format_agent_response(analysis_result)
+                    # Send error message for failed analysis
+                    await ws_manager.broadcast(
+                        project_id,
+                        {
+                            "type": "analysis_failed",
+                            "analysis_id": analysis_id,
+                            "error": final_result.get("error", "Analysis validation failed"),
+                            "message": f"Analysis failed: {final_result.get('error', 'Unknown error')}"
+                        }
+                    )
                 
-                await ws_manager.broadcast(
-                    project_id,
-                    {
-                        "type": "agent_message",
+                # Send formatted agent message with analysis content only for successful analysis
+                if status == "completed":
+                    # Format the analysis result for display
+                    if isinstance(final_result, dict) and "technical_analysis" in final_result:
+                        # If it's structured data, format it properly
+                        from app.utils.message_formatter import MessageFormatter
+                        formatted_message = MessageFormatter.format_technical_analysis(final_result)
+                        if additional_context:
+                            formatted_message = f"Here is the updated analysis for this project:\n\n{formatted_message}"
+                        else:
+                            formatted_message = f"Here is the analysis for this project:\n\n{formatted_message}"
+                    else:
+                        # Fallback message
+                        formatted_message = "Analysis completed successfully. Please check the insights dashboard for detailed results."
+                    
+                    await ws_manager.broadcast(
+                        project_id,
+                        {
+                            "type": "agent_message",
                         "sender": "technical_analyst",
                         "sender_name": "Technical Analysis Agent",
                         "message": formatted_message,
                         "analysis_id": analysis_id,
-                        "structured_data": analysis_result if isinstance(analysis_result, dict) else None
+                        "structured_data": final_result if isinstance(final_result, dict) and "technical_analysis" in final_result else None
                     }
                 )
             
