@@ -1502,21 +1502,76 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
                       structuredData = parseStructuredContent(message.message);
                     }
                     
-                    if (structuredData) {
-                      // Use unified structured rendering for consistent formatting
+                    // Force structured rendering for all agent types to ensure consistent formatting
+                    const isAgentMessage = message.sender === 'technical_agent' || 
+                                         message.sender === 'technical_analyst' ||
+                                         message.sender === 'project_planner' ||
+                                         message.sender === 'planner' ||
+                                         message.sender === 'assistant' ||
+                                         message.sender === 'project_assistant' ||
+                                         message.sender === 'risk_analyst' ||
+                                         message.sender === 'security_analyst' ||
+                                         message.senderName?.includes('Agent') ||
+                                         message.senderName?.includes('Technical') ||
+                                         message.senderName?.includes('Planner') ||
+                                         message.senderName?.includes('Assistant') ||
+                                         message.senderName?.includes('Analysis');
+                    
+                    if (isAgentMessage) {
+                      // Force unified structured rendering for all agent messages to ensure consistent formatting
                       return (
                         <div className="w-full">
-                          <div className="mb-2">Analysis completed successfully!</div>
+                          <div className="mb-2">{structuredData ? 'Analysis completed successfully!' : 'Response received successfully!'}</div>
                           <div className="mt-2 pt-2 border-t border-gray-300">
-                            <div className="text-sm font-semibold mb-3">Analysis Results:</div>
+                            <div className="text-sm font-semibold mb-3">{structuredData ? 'Analysis Results:' : 'Agent Response:'}</div>
                             <div className="bg-white bg-opacity-50 p-3 rounded">
-                              {renderUnifiedStructuredContent(structuredData)}
+                              {structuredData ? renderUnifiedStructuredContent(structuredData) : (
+                                // Force structured format even without structured data
+                                <div className="space-y-4">
+                                  <div>
+                                    <h3 className="font-semibold text-base mb-2 text-gray-900">
+                                      {message.senderName?.includes('Technical') ? 'Technical Analysis' :
+                                       message.senderName?.includes('Planner') ? 'Project Planning Response' :
+                                       message.senderName?.includes('Risk') ? 'Risk Assessment' :
+                                       message.senderName?.includes('Security') ? 'Security Analysis' :
+                                       'Agent Response'}
+                                    </h3>
+                                    <div className="text-sm text-gray-800 space-y-2">
+                                      {message.message.split('\n\n').map((paragraph, idx) => (
+                                        <div key={idx} className="leading-relaxed">
+                                          {paragraph.split('\n').map((line, lineIdx) => {
+                                            // Apply structured formatting to common patterns
+                                            if (line.match(/^\d+\.\s/)) {
+                                              return (
+                                                <div key={lineIdx} className="flex items-start mb-2">
+                                                  <span className="font-medium mr-2 text-gray-700">{line.match(/^\d+\./)?.[0]}</span>
+                                                  <span>{line.replace(/^\d+\.\s/, '')}</span>
+                                                </div>
+                                              );
+                                            } else if (line.includes(':') && !line.includes('http')) {
+                                              const [label, ...value] = line.split(':');
+                                              return (
+                                                <div key={lineIdx} className="mb-1">
+                                                  <span className="font-semibold">{label}:</span> {value.join(':')}
+                                                </div>
+                                              );
+                                            } else if (line.trim()) {
+                                              return <div key={lineIdx} className="mb-1">{line}</div>;
+                                            }
+                                            return null;
+                                          })}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           </div>
                         </div>
                       );
                     } else {
-                      // Fallback to ReactMarkdown for non-structured content
+                      // Fallback to ReactMarkdown for non-analysis content
                       return (
                         <ReactMarkdown 
                           className="prose prose-sm max-w-none text-gray-700 leading-relaxed"
