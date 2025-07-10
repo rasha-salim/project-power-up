@@ -199,17 +199,17 @@ tasks:
     
     After searching, analyze the found content to provide comprehensive technical recommendations based on actual document findings and constraint preservation principles."
     expected_output: |
-      CRITICAL OUTPUT REQUIREMENTS:
+      CRITICAL: YOU MUST RETURN EXACTLY THIS JSON FORMAT - NO DEVIATIONS ALLOWED
       
-      1. YOU MUST RETURN ONLY VALID JSON - NO OTHER TEXT, NO EXPLANATIONS, NO MARKDOWN
-      2. DO NOT return raw document content or transcripts
-      3. DO NOT include any text before or after the JSON
-      4. Use the comprehensive document content provided in your task description for analysis
-      5. Your response must start with { and end with }
+      ABSOLUTE REQUIREMENTS:
+      1. RETURN ONLY VALID JSON - NO TEXT, NO MARKDOWN, NO EXPLANATIONS
+      2. DO NOT create "Technical Analysis Update" format
+      3. DO NOT use Start Date/End Date fields
+      4. DO NOT create "Architecture Overview" sections
+      5. MUST match the original analysis structure EXACTLY
+      6. Your response must start with { and end with }
       
-      MANDATORY JSON STRUCTURE (This exact format is required for system compatibility):
-      
-      You must analyze the provided document content and return ONLY this JSON structure:
+      THIS IS THE ONLY ACCEPTABLE JSON FORMAT (copy this structure exactly):
       
       FOR UPDATE ANALYSIS - PRESERVE EXISTING STRUCTURE:
       - Keep original timeline structure and major milestones
@@ -317,55 +317,78 @@ tasks:
       - The timeline field should be a readable string like "May 15, 2025 - August 15, 2025" or "12 months"
       - DO NOT include any text, explanations, or content outside the JSON structure
       
-      EXAMPLE RESPONSE FORMAT (you must follow this exact structure):
+      EXACT JSON FORMAT REQUIRED (this structure produces the correct frontend display):
       {
         "technical_analysis": {
-          "architecture": "RAG-based LLM system with vector database",
+          "architecture": "Distributed edge-central architecture with PWA support",
           "tech_stack": {
-            "frontend": ["TypeScript", "React"],
-            "backend": ["Python", "OpenAI APIs"],
-            "infrastructure": ["AWS", "Vector Database"],
-            "tools": ["GitHub", "Notion", "Slack"]
+            "frontend": ["React", "ShadCN", "Tailwind CSS", "Framer Motion", "Material UI"],
+            "backend": ["Node.js", "Drizzle ORM", "Supabase"],
+            "infrastructure": ["Vercel", "CDN", "PWA", "SMS Gateway"],
+            "tools": ["NCCN/ESMO APIs", "Translation APIs", "Twilio (for SMS)"]
           },
-          "complexity_score": 7,
-          "maintainability_score": 8,
-          "scalability_score": 7,
-          "performance_score": 8,
-          "security_score": 9
+          "complexity_score": 8,
+          "maintainability_score": 7,
+          "scalability_score": 8,
+          "performance_score": 10,
+          "security_score": 7
         },
         "risk_assessment": {
-          "overall_risk_score": 6,
+          "overall_risk_score": 7,
           "key_risks": [
             {
-              "name": "Data Security",
+              "name": "Connectivity Challenges",
               "level": "High",
-              "impact": 9,
+              "impact": 8,
               "probability": 7,
-              "description": "Ensuring proprietary information remains within security perimeter"
+              "description": "Rural areas with 2G/3G connectivity may face service disruptions"
+            },
+            {
+              "name": "Data Synchronization", 
+              "level": "Medium",
+              "impact": 6,
+              "probability": 5,
+              "description": "Edge-central data sync in poor network conditions"
+            },
+            {
+              "name": "Resource Constraints",
+              "level": "High", 
+              "impact": 7,
+              "probability": 8,
+              "description": "Limited team size for complex feature set"
             }
           ],
-          "mitigation_strategies": ["Implement RAG-based solution rather than custom LLM development"]
+          "mitigation_strategies": [
+            "Implement progressive enhancement for feature rollout",
+            "Prioritize offline-first architecture",
+            "Use automated testing for critical paths"
+          ]
         },
         "project_plan": {
-          "timeline": "May 15, 2025 - August 15, 2025",
-          "estimated_cost": 25000,
+          "timeline": "18 months (March 2024 - September 2025)",
+          "estimated_cost": 1000,
           "phases": [
             {
-              "name": "Architecture & Planning",
-              "duration": 2,
-              "description": "System design and technology selection"
+              "name": "Phase 1 - Core Platform",
+              "duration": 24,
+              "description": "Basic chat interface, guideline integration, offline support"
+            },
+            {
+              "name": "Phase 2 - Enhanced Features", 
+              "duration": 20,
+              "description": "Multilingual support, advanced analytics, EMR integration"
             }
           ],
           "milestones": [
             {
-              "name": "Architecture Design Complete",
-              "date": "May 29, 2025",
-              "status": "upcoming",
-              "description": "System architecture and technology stack finalized"
+              "name": "Core Platform Complete",
+              "date": "March 2025",
+              "status": "upcoming", 
+              "description": "Basic functionality deployed"
             }
           ],
           "resource_requirements": {
-            "developers": 2,
+            "developers": 3,
             "designers": 1,
             "qa": 1,
             "devops": 1,
@@ -373,8 +396,11 @@ tasks:
           }
         },
         "recommendations": [
-          "Implement RAG-based solution rather than custom LLM development",
-          "Focus on secure data handling and privacy controls"
+          "Implement progressive enhancement for feature rollout",
+          "Prioritize offline-first architecture", 
+          "Use automated testing for critical paths",
+          "Implement feature flags for gradual deployment",
+          "Focus on core guideline functionality before adding advanced features"
         ]
       }
     agent: "technical_analyst"

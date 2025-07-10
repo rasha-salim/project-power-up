@@ -93,18 +93,51 @@ class AgentService:
             if missing_plan_fields:
                 return False, {}, f"Missing project plan fields: {', '.join(missing_plan_fields)}"
             
+            # Check for wrong format patterns (indicates agent not following template)
+            wrong_format_indicators = [
+                "Technical Analysis Update",  # Wrong header format
+                "Start Date:",               # Wrong date format  
+                "End Date:",                 # Wrong date format
+                "Architecture Overview:",    # Wrong section name
+                "Primary Framework:",        # Wrong tech stack format
+                "UI Components:",           # Wrong tech stack format
+                "Key Technical Components:", # Wrong section name
+                "Content Ingestion Pipeline:", # Wrong section structure
+            ]
+            
+            if any(indicator in cleaned_text for indicator in wrong_format_indicators):
+                return False, {}, f"Response uses wrong format - detected forbidden patterns. Must use exact JSON structure from template."
+            
+            # Validate tech_stack structure more strictly
+            tech_stack = parsed_result.get('technical_analysis', {}).get('tech_stack', {})
+            required_tech_categories = ['frontend', 'backend', 'infrastructure', 'tools']
+            for category in required_tech_categories:
+                if category not in tech_stack:
+                    return False, {}, f"Missing required tech_stack category: {category}"
+                if not isinstance(tech_stack[category], list):
+                    return False, {}, f"tech_stack.{category} must be an array, not {type(tech_stack[category])}"
+            
+            # Validate scores are present and are numbers
+            tech_analysis = parsed_result.get('technical_analysis', {})
+            required_scores = ['complexity_score', 'maintainability_score', 'scalability_score', 'performance_score', 'security_score']
+            for score in required_scores:
+                if score not in tech_analysis:
+                    return False, {}, f"Missing required score: {score}"
+                if not isinstance(tech_analysis[score], (int, float)):
+                    return False, {}, f"{score} must be a number, not {type(tech_analysis[score])}"
+                if not (1 <= tech_analysis[score] <= 10):
+                    return False, {}, f"{score} must be between 1 and 10, got {tech_analysis[score]}"
+            
+            # Validate risk_assessment structure
+            risk_assessment = parsed_result.get('risk_assessment', {})
+            if 'overall_risk_score' not in risk_assessment:
+                return False, {}, "Missing overall_risk_score in risk_assessment"
+            if 'key_risks' not in risk_assessment or not isinstance(risk_assessment['key_risks'], list):
+                return False, {}, "key_risks must be an array in risk_assessment"
+            
             # Check if response contains raw document content (indicates agent confusion)
-            if len(cleaned_text) > 10000:  # Very long responses might contain raw docs
-                # Look for patterns that indicate raw document content
-                doc_indicators = [
-                    "- Alex Rivera", "- Jordan Taylor", "- Maya Patel", "- Sarah Chen",  # Meeting transcript names
-                    "Week 1-2:", "Week 3-4:", "Week 5-6:",  # Timeline format from documents
-                    "Confluence", "GitHub", "Slack",  # Common tools mentioned in transcripts
-                    "minutes:", "seconds:",  # Time indicators from transcripts
-                ]
-                
-                if any(indicator in cleaned_text for indicator in doc_indicators):
-                    return False, {}, "Response appears to contain raw document content instead of analysis"
+            if len(cleaned_text) > 15000:  # Very long responses might contain raw docs
+                return False, {}, "Response too long - likely contains raw document content instead of structured analysis"
             
             return True, parsed_result, ""
             
