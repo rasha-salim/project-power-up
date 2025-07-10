@@ -539,6 +539,16 @@ class AgentCommunicationService:
             # Send final response
             if ws_manager:
                 try:
+                    # Check if we parsed structured data for preservation
+                    structured_data = None
+                    if response_text.strip().startswith('{') and response_text.strip().endswith('}'):
+                        try:
+                            parsed_data = json.loads(response_text)
+                            if any(key in parsed_data for key in ['technical_analysis', 'risk_assessment', 'project_plan']):
+                                structured_data = parsed_data
+                        except json.JSONDecodeError:
+                            pass
+
                     await ws_manager.broadcast(
                         project_id,
                         {
@@ -547,7 +557,8 @@ class AgentCommunicationService:
                             "sender_name": "Technical Analyst",
                             "message": formatted_response,
                             "is_thinking": False,
-                            "analysis_id": existing_analysis_id  # Include analysis_id to prevent filtering
+                            "analysis_id": existing_analysis_id,  # Include analysis_id to prevent filtering
+                            "structured_data": structured_data  # Include structured data if available
                         }
                     )
                     logger.info(f"Successfully sent technical agent response via WebSocket")

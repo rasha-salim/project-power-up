@@ -13,6 +13,7 @@ interface Message {
   result?: any;
   message_id?: string; // Server-generated unique ID
   isLoading?: boolean; // Flag to indicate loading state
+  structured_data?: any; // Structured analysis data from backend
 }
 
 interface AgentInfo {
@@ -587,6 +588,16 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
                 setIsAgentThinking(false);
               }
               
+              // Check if this is a new analysis with structured data
+              if (data.structured_data && data.analysis_id) {
+                console.log('🟡 New structured analysis detected, activating save button');
+                setAnalysisComplete(true);
+                setAnalysisSaved(false);  // Reset saved state for new analysis
+                if (!currentAnalysisId) {
+                  setCurrentAnalysisId(data.analysis_id);
+                }
+              }
+              
               setMessages(prev => [...prev, {
                 id: generateMessageId(),
                 type: 'agent',
@@ -594,7 +605,8 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
                 senderName: data.sender_name || 'Agent',
                 message: data.message || '',
                 timestamp: new Date().toISOString(),
-                message_id: data.message_id
+                message_id: data.message_id,
+                structured_data: data.structured_data  // Include structured data if available
               }]);
             } else {
               setMessages(prev => [...prev, {
@@ -1471,8 +1483,13 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
               <div className="whitespace-pre-wrap flex items-center gap-2">
                 {message.type === 'agent' ? (
                   (() => {
-                    // Try to parse structured content from agent messages
-                    const structuredData = parseStructuredContent(message.message);
+                    // First check if we have structured data directly from backend
+                    let structuredData = message.structured_data;
+                    
+                    // If no structured data, try to parse from message text
+                    if (!structuredData) {
+                      structuredData = parseStructuredContent(message.message);
+                    }
                     
                     if (structuredData) {
                       // Render structured analysis using exact same styling as message.result

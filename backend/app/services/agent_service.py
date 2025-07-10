@@ -319,7 +319,8 @@ class AgentService:
                         "sender": "technical_analyst",
                         "sender_name": "Technical Analysis Agent",
                         "message": formatted_message,
-                        "analysis_id": analysis_id
+                        "analysis_id": analysis_id,
+                        "structured_data": analysis_result if isinstance(analysis_result, dict) else None
                     }
                 )
             
