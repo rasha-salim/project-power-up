@@ -1331,7 +1331,7 @@ export default function AgentConversation({ projectId, onAnalysisComplete, exist
                             if (phases.length > 2) {
                               milestones.push({
                                 name: "Core Features Complete",
-                                date: `Week ${phases.slice(0, 2).reduce((sum, p) => sum + p.duration, 0)}`,
+                                date: `Week ${phases.slice(0, 2).reduce((sum: number, p: any) => sum + p.duration, 0)}`,
                                 status: "upcoming", 
                                 description: "All core functionality implemented and tested",
                                 priority: "High"
@@ -1340,7 +1340,7 @@ export default function AgentConversation({ projectId, onAnalysisComplete, exist
                             
                             milestones.push({
                               name: "Ready for Launch",
-                              date: `Week ${phases.reduce((sum, p) => sum + p.duration, 0)}`,
+                              date: `Week ${phases.reduce((sum: number, p: any) => sum + p.duration, 0)}`,
                               status: "upcoming",
                               description: "System tested and ready for production deployment",
                               priority: "Critical"
