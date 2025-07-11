@@ -1821,9 +1821,40 @@ export default function AgentConversation({ projectId, onAnalysisComplete, exist
                     // First check if we have structured data directly from backend
                     let structuredData = message.structured_data;
                     
+                    // Debug logging for message rendering
+                    console.log('🎨 Rendering message:', {
+                      messageId: message.id,
+                      sender: message.sender,
+                      senderName: message.senderName,
+                      hasStructuredData: !!structuredData,
+                      structuredDataKeys: structuredData ? Object.keys(structuredData) : [],
+                      messageLength: message.message?.length,
+                      messagePreview: message.message?.substring(0, 100) + '...',
+                      containsJsonTechnicalAnalysis: message.message?.includes('"technical_analysis"')
+                    });
+                    
                     // If no structured data, try to parse from message text
                     if (!structuredData) {
                       structuredData = parseStructuredContent(message.message);
+                      console.log('🎨 Parsed structured data from message:', {
+                        success: !!structuredData,
+                        keys: structuredData ? Object.keys(structuredData) : []
+                      });
+                    }
+                    
+                    // FORCE: If message contains JSON technical analysis but no structured data, extract it
+                    if (!structuredData && message.message?.includes('"technical_analysis"')) {
+                      try {
+                        const startIndex = message.message.indexOf('{');
+                        const endIndex = message.message.lastIndexOf('}');
+                        if (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
+                          const jsonPart = message.message.substring(startIndex, endIndex + 1);
+                          structuredData = JSON.parse(jsonPart);
+                          console.log('🎨 FORCE: Extracted JSON for rendering:', Object.keys(structuredData));
+                        }
+                      } catch (e) {
+                        console.warn('🎨 FORCE: JSON extraction failed for rendering');
+                      }
                     }
                     
                     // Force structured rendering for all agent types to ensure consistent formatting
