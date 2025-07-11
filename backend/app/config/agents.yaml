@@ -14,8 +14,11 @@ agents:
     UNIFIED WORKFLOW - YOU MUST FOLLOW THIS EXACT PROCESS:
     1. Review the comprehensive document content provided in your task description
     2. Analyze the provided document content and any user context
-    3. Provide your technical analysis in the specified JSON format
-    4. Integrate user context naturally into recommendations and planning
+    3. Extract key technical details: architecture, tech stack, complexity, risks
+    4. Create structured phases with clear durations (in weeks)
+    5. Generate specific, actionable recommendations
+    6. CRITICAL: Format output EXACTLY as shown in the JSON template
+    7. Ensure all sections follow the precise structure and naming conventions
     
     You have access to document search tools that can find uploaded project documents. You MUST use these tools BEFORE making any conclusions about document availability. DO NOT assume documents are missing without first attempting to search for them using your tools.
     
@@ -191,8 +194,12 @@ tasks:
       2. DO NOT create "Technical Analysis Update" format
       3. DO NOT use Start Date/End Date fields
       4. DO NOT create "Architecture Overview" sections
-      5. MUST match the original analysis structure EXACTLY
+      5. MUST match the EXACT structure shown in the example below
       6. Your response must start with { and end with }
+      7. CRITICAL: Follow the EXACT format for displaying structured analysis
+      8. Use clear, concise descriptions that match the example style
+      9. Ensure all scores are integers from 1-10
+      10. Timeline format: "Month Day, Year - Month Day, Year" (e.g., "May 15, 2025 - August 15, 2025")
       
       THIS IS THE ONLY ACCEPTABLE JSON FORMAT (copy this structure exactly):
       
@@ -287,87 +294,127 @@ tasks:
       EXACT JSON FORMAT REQUIRED (this structure produces the correct frontend display):
       {
         "technical_analysis": {
-          "architecture": "Distributed edge-central architecture with PWA support",
+          "architecture": "RAG-based LLM system with vector database",
           "tech_stack": {
-            "frontend": ["React", "ShadCN", "Tailwind CSS", "Framer Motion", "Material UI"],
-            "backend": ["Node.js", "Drizzle ORM", "Supabase"],
-            "infrastructure": ["Vercel", "CDN", "PWA", "SMS Gateway"],
-            "tools": ["NCCN/ESMO APIs", "Translation APIs", "Twilio (for SMS)"]
+            "frontend": ["TypeScript", "React"],
+            "backend": ["Python", "OpenAI APIs"],
+            "infrastructure": ["AWS", "Vector Database (Pinecone/Weaviate)"],
+            "tools": ["GitHub", "Notion", "Slack", "Google Drive"]
           },
-          "complexity_score": 8,
-          "maintainability_score": 7,
-          "scalability_score": 8,
-          "performance_score": 10,
-          "security_score": 7
+          "complexity_score": 7,
+          "maintainability_score": 8,
+          "scalability_score": 7,
+          "performance_score": 8,
+          "security_score": 9
         },
         "risk_assessment": {
-          "overall_risk_score": 7,
+          "overall_risk_score": 6,
           "key_risks": [
             {
-              "name": "Connectivity Challenges",
+              "name": "Data Security",
               "level": "High",
-              "impact": 8,
+              "impact": 9,
               "probability": 7,
-              "description": "Rural areas with 2G/3G connectivity may face service disruptions"
+              "description": "Ensuring proprietary information remains within security perimeter"
             },
             {
-              "name": "Data Synchronization", 
+              "name": "Performance", 
               "level": "Medium",
               "impact": 6,
               "probability": 5,
-              "description": "Edge-central data sync in poor network conditions"
+              "description": "Meeting 3-second response latency requirement"
             },
             {
-              "name": "Resource Constraints",
-              "level": "High", 
-              "impact": 7,
-              "probability": 8,
-              "description": "Limited team size for complex feature set"
+              "name": "Integration Complexity",
+              "level": "Medium", 
+              "impact": 5,
+              "probability": 6,
+              "description": "Complex integration with multiple existing systems"
             }
           ],
           "mitigation_strategies": [
-            "Implement progressive enhancement for feature rollout",
-            "Prioritize offline-first architecture",
-            "Use automated testing for critical paths"
+            "Implement RAG-based solution rather than custom LLM development",
+            "Focus on secure data handling and privacy controls",
+            "Prioritize integration with existing development tools"
           ]
         },
         "project_plan": {
-          "timeline": "18 months (March 2024 - September 2025)",
-          "estimated_cost": 1000,
+          "timeline": "May 15, 2025 - August 15, 2025",
+          "estimated_cost": 25000,
           "phases": [
             {
-              "name": "Phase 1 - Core Platform",
-              "duration": 24,
-              "description": "Basic chat interface, guideline integration, offline support"
+              "name": "Architecture & Planning",
+              "duration": 2,
+              "progress": 0,
+              "description": "System design and technology selection"
             },
             {
-              "name": "Phase 2 - Enhanced Features", 
-              "duration": 20,
-              "description": "Multilingual support, advanced analytics, EMR integration"
+              "name": "Data Integration", 
+              "duration": 3,
+              "progress": 0,
+              "description": "Integration with existing systems and data sources"
+            },
+            {
+              "name": "Development & Testing", 
+              "duration": 4,
+              "progress": 0,
+              "description": "Core functionality implementation and testing"
+            },
+            {
+              "name": "Deployment & Training", 
+              "duration": 3,
+              "progress": 0,
+              "description": "System deployment and user training"
             }
           ],
           "milestones": [
             {
-              "name": "Core Platform Complete",
-              "date": "March 2025",
+              "name": "Architecture Complete",
+              "date": "May 29, 2025",
               "status": "upcoming", 
-              "description": "Basic functionality deployed"
+              "description": "System design finalized",
+              "priority": "High"
+            },
+            {
+              "name": "Integration Complete",
+              "date": "June 19, 2025",
+              "status": "upcoming", 
+              "description": "All system integrations working",
+              "priority": "High"
             }
           ],
           "resource_requirements": {
-            "developers": 3,
+            "developers": 2,
             "designers": 1,
             "qa": 1,
             "devops": 1,
             "pm": 1
-          }
+          },
+          "effort_distribution": [
+            {
+              "component": "Backend Development",
+              "effort": 40
+            },
+            {
+              "component": "Frontend Development",
+              "effort": 30
+            },
+            {
+              "component": "Integration",
+              "effort": 20
+            },
+            {
+              "component": "Testing & Deployment",
+              "effort": 10
+            }
+          ]
         },
         "recommendations": [
-          "Implement progressive enhancement for feature rollout",
-          "Prioritize offline-first architecture", 
-          "Use automated testing for critical paths",
-          "Implement feature flags for gradual deployment",
-          "Focus on core guideline functionality before adding advanced features"
+          "Implement RAG-based solution rather than custom LLM development",
+          "Focus on secure data handling and privacy controls", 
+          "Prioritize integration with existing development tools",
+          "Implement robust monitoring for performance requirements",
+          "Create comprehensive documentation for maintainability"
         ]
       }
     agent: "technical_analyst"

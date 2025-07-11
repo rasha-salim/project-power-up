@@ -96,6 +96,33 @@ class AnalysisExecutionService:
             except json.JSONDecodeError as e:
                 return False, None, f"Invalid JSON format: {str(e)}"
             
+            # Validate required structure sections
+            required_sections = ["technical_analysis", "risk_assessment", "project_plan", "recommendations"]
+            missing_sections = [section for section in required_sections if section not in parsed_json]
+            if missing_sections:
+                return False, None, f"Missing required sections: {', '.join(missing_sections)}. Must include all: {', '.join(required_sections)}"
+            
+            # Validate technical_analysis subsections
+            tech_analysis = parsed_json.get("technical_analysis", {})
+            required_tech_fields = ["architecture", "tech_stack", "complexity_score", "maintainability_score", "scalability_score", "security_score"]
+            missing_tech_fields = [field for field in required_tech_fields if field not in tech_analysis]
+            if missing_tech_fields:
+                return False, None, f"Missing technical_analysis fields: {', '.join(missing_tech_fields)}"
+            
+            # Validate tech_stack structure
+            tech_stack = tech_analysis.get("tech_stack", {})
+            required_stack_fields = ["frontend", "backend", "infrastructure", "tools"]
+            missing_stack_fields = [field for field in required_stack_fields if field not in tech_stack]
+            if missing_stack_fields:
+                return False, None, f"Missing tech_stack fields: {', '.join(missing_stack_fields)}"
+            
+            # Validate project_plan structure
+            project_plan = parsed_json.get("project_plan", {})
+            required_plan_fields = ["timeline", "estimated_cost", "phases"]
+            missing_plan_fields = [field for field in required_plan_fields if field not in project_plan]
+            if missing_plan_fields:
+                return False, None, f"Missing project_plan fields: {', '.join(missing_plan_fields)}"
+            
             # Add required fields for ProjectAnalysis model
             analysis_data = {
                 "analysis_id": analysis_id,
@@ -1315,10 +1342,14 @@ class AnalysisExecutionService:
         # Build analysis mode section - unified approach for all analysis requests
         analysis_mode_section = """
         
-        📋 ANALYSIS MODE: UNIFIED
+        📋 ANALYSIS MODE: UNIFIED STRUCTURED FORMAT
         - Always create fresh, comprehensive analysis based on project data
         - Respect all project constraints listed above
-        - Provide consistent output structure regardless of previous analysis state
+        - CRITICAL: Follow EXACT JSON structure as specified in agents.yaml
+        - Use clear, concise format matching the required template
+        - Structure: Technical Analysis → Risk Assessment → Project Plan → Recommendations
+        - Ensure proper phase naming with durations in weeks
+        - Timeline format: "Month Day, Year - Month Day, Year"
         """
         
         # Build user context section
