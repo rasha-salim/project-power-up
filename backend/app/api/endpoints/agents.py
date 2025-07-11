@@ -6,7 +6,7 @@ from app.db.init_db_simple import get_async_db
 from app.services.agent_service_v2 import AgentServiceV2
 from app.models.agent import AgentResponse, AgentTask
 from app.core.agent_registry import agent_registry, AgentInfo
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -27,30 +27,44 @@ class AgentInfoResponse(BaseModel):
     color: Optional[str] = None
     is_available: bool
 
+class AnalysisRequest(BaseModel):
+    """Request model for starting analysis"""
+    user_context: Optional[str] = Field(None, description="Optional user context for the analysis")
+
 @router.post("/analysis/{project_id}", response_model=Dict[str, Any])
 async def start_analysis(
     project_id: str,
-    background_tasks: BackgroundTasks,
+    request: AnalysisRequest = AnalysisRequest(),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
     db: AsyncSession = Depends(get_async_db)
 ):
     """
-    Start a project analysis using the agent implementation
+    Start a project analysis using the unified agent implementation
+    
+    - **project_id**: ID of the project to analyze
+    - **user_context**: Optional user context to include in the analysis
     """
     try:
-        logger.info(f"Starting analysis for project {project_id}")
+        logger.info(f"Starting analysis for project {project_id} with user_context: {bool(request.user_context)}")
         
         # Import WebSocketManager here to avoid circular imports
         from app.services.websocket_manager import WebSocketManager
         ws_manager = WebSocketManager()
         
-        # Start analysis with WebSocket manager for real-time updates
-        analysis_id = await agent_service.execute_analysis_with_context(project_id, db, ws_manager)
+        # Start simplified unified analysis
+        analysis_id = await agent_service.execute_analysis(
+            project_id=project_id, 
+            db=db, 
+            ws_manager=ws_manager,
+            user_context=request.user_context
+        )
         
         return {
             "analysis_id": analysis_id,
             "project_id": project_id,
             "status": "started",
-            "message": "Analysis started successfully"
+            "message": "Analysis started successfully",
+            "has_user_context": bool(request.user_context)
         }
         
     except Exception as e:

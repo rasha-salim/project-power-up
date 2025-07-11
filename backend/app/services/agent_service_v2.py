@@ -36,25 +36,21 @@ class AgentServiceV2:
         
         logger.info("AgentServiceV2 initialized with focused services")
     
-    async def execute_analysis_with_context(
+    async def execute_analysis(
         self, 
         project_id: str, 
         db: AsyncSession, 
-        ws_manager: Optional[WebSocketManager] = None, 
-        force: bool = False,
-        additional_context: str = "",
-        existing_analysis_id: Optional[str] = None
+        ws_manager: Optional[WebSocketManager] = None,
+        user_context: Optional[str] = None
     ) -> str:
         """
-        Execute analysis with enhanced error handling and state management
+        Execute unified analysis flow - always uses the same process regardless of project state
         
         Args:
             project_id: ID of the project to analyze
             db: Database session
             ws_manager: WebSocket manager for real-time updates
-            force: Whether to force new analysis even if one exists
-            additional_context: Additional context for the analysis
-            existing_analysis_id: ID of existing analysis for incremental updates
+            user_context: Optional user context - if None, analysis proceeds with project data only
             
         Returns:
             str: Analysis ID
@@ -63,47 +59,9 @@ class AgentServiceV2:
             ValueError: If project is not found or invalid
             RuntimeError: If analysis execution fails
         """
-        # Handle incremental analysis scenarios
-        if existing_analysis_id:
-            # Check if existing analysis exists in memory or database
-            existing_analysis = self.analysis_manager.get_pending_analysis(existing_analysis_id)
-            if not existing_analysis:
-                # Try to get from project insights/database
-                from app.services.project_service import ProjectService
-                project_service = ProjectService()
-                project = await project_service.get_project(db, project_id)
-                if project and project.insights:
-                    logger.info(f"Found existing analysis in project insights for incremental update")
-                    # Store it as pending for reference
-                    self.analysis_manager.store_pending_analysis(
-                        existing_analysis_id, project_id, project.insights
-                    )
-                else:
-                    logger.warning(f"Existing analysis {existing_analysis_id} not found, treating as new analysis")
-            
-            # Generate new analysis ID for the incremental analysis
-            analysis_id = str(uuid.uuid4())
-            logger.info(f"Starting incremental analysis {analysis_id} based on existing analysis {existing_analysis_id}")
-            
-            # Enhance additional context for incremental analysis (simplified to avoid agent confusion)
-            additional_context = f"Update analysis with: {additional_context}"
-            
-            # Send notification about incremental analysis starting
-            if ws_manager:
-                await ws_manager.broadcast(
-                    project_id,
-                    {
-                        "type": "incremental_analysis_started",
-                        "analysis_id": analysis_id,
-                        "base_analysis_id": existing_analysis_id,
-                        "message": "🔄 Starting incremental analysis with new context...",
-                        "new_context": additional_context
-                    }
-                )
-        else:
-            # Generate new analysis ID for new analysis
-            analysis_id = str(uuid.uuid4())
-            logger.info(f"Starting new analysis {analysis_id} for project {project_id}")
+        # Generate new analysis ID for this execution
+        analysis_id = str(uuid.uuid4())
+        logger.info(f"Starting analysis {analysis_id} for project {project_id} with user_context: {bool(user_context)}")
         
         try:
             logger.info(f"Starting analysis execution for project {project_id} (ID: {analysis_id})")
@@ -125,37 +83,21 @@ class AgentServiceV2:
                     )
                 raise ValueError(error_msg)
             
-            # Check if analysis is already running for this project
+            # Cancel any existing running tasks for this project (always force new analysis)
             running_analyses = [
                 aid for aid, task in self.analysis_manager.running_tasks.items()
                 if not task.done()
             ]
             
-            if running_analyses and not force:
-                error_msg = f"Analysis already running for project {project_id}: {running_analyses[0]}"
-                logger.warning(error_msg)
-                if ws_manager:
-                    await ws_manager.broadcast(
-                        project_id,
-                        {
-                            "type": "analysis_status",
-                            "status": "already_running",
-                            "analysis_id": running_analyses[0],
-                            "message": "⚠️ Analysis is already in progress for this project"
-                        }
-                    )
-                return running_analyses[0]
-            
-            # Cancel any existing running tasks if forced
-            if force and running_analyses:
-                logger.info(f"Force analysis requested - cancelling {len(running_analyses)} running tasks")
+            if running_analyses:
+                logger.info(f"Cancelling {len(running_analyses)} running tasks for new analysis")
                 for existing_analysis_id in running_analyses:
                     await self.cancel_analysis(existing_analysis_id)
             
             # Create and start analysis task
             task = asyncio.create_task(
                 self._execute_analysis_task(
-                    analysis_id, project_id, db, ws_manager, force, additional_context, existing_analysis_id
+                    analysis_id, project_id, db, ws_manager, user_context
                 )
             )
             
@@ -206,31 +148,53 @@ class AgentServiceV2:
             
             raise RuntimeError(f"Analysis execution failed: {str(e)}")
     
+    # Backward compatibility method
+    async def execute_analysis_with_context(
+        self, 
+        project_id: str, 
+        db: AsyncSession, 
+        ws_manager: Optional[WebSocketManager] = None, 
+        force: bool = False,
+        additional_context: str = "",
+        existing_analysis_id: Optional[str] = None
+    ) -> str:
+        """
+        Backward compatibility wrapper - calls the new simplified execute_analysis method
+        
+        Args:
+            project_id: ID of the project to analyze
+            db: Database session
+            ws_manager: WebSocket manager for real-time updates
+            force: Ignored - analysis always runs fresh
+            additional_context: User context for the analysis
+            existing_analysis_id: Ignored - no special incremental handling
+            
+        Returns:
+            str: Analysis ID
+        """
+        logger.info(f"Legacy execute_analysis_with_context called - redirecting to simplified execute_analysis")
+        return await self.execute_analysis(
+            project_id=project_id,
+            db=db, 
+            ws_manager=ws_manager,
+            user_context=additional_context if additional_context else None
+        )
+    
     async def _execute_analysis_task(
         self, 
         analysis_id: str, 
         project_id: str, 
         db: AsyncSession, 
         ws_manager: Optional[WebSocketManager], 
-        force: bool,
-        additional_context: str,
-        existing_analysis_id: Optional[str] = None
+        user_context: Optional[str]
     ) -> None:
-        """Internal task for executing analysis with comprehensive error handling"""
+        """Internal task for executing unified analysis flow"""
         try:
             logger.info(f"Starting analysis task {analysis_id} for project {project_id}")
             
-            # Get existing analysis context if this is an incremental update
-            existing_context = None
-            if existing_analysis_id:
-                existing_analysis = self.analysis_manager.get_pending_analysis(existing_analysis_id)
-                if existing_analysis:
-                    existing_context = existing_analysis.get('result')
-                    logger.info(f"Found existing analysis context for incremental update")
-            
-            # Execute analysis using execution service
+            # Execute analysis using execution service with simplified parameters
             result = await self.execution_service.execute_analysis(
-                analysis_id, project_id, db, ws_manager, force, additional_context, existing_context
+                analysis_id, project_id, db, ws_manager, user_context
             )
             
             # Store result in management service
@@ -332,43 +296,30 @@ class AgentServiceV2:
                 existing_analysis_id = result.get("existing_analysis_id")
                 additional_context = result.get("message", "")
                 
-                if existing_analysis_id and request_type in ['update', 'update_with_context']:
-                    # Execute incremental analysis with existing context
-                    logger.info(f"Executing incremental {request_type} analysis based on existing analysis {existing_analysis_id}")
-                    analysis_id = await self.execute_analysis_with_context(
-                        project_id=project_id,
-                        db=db,
-                        ws_manager=ws_manager,
-                        force=True,  # Force new analysis even if one exists
-                        additional_context=additional_context,
-                        existing_analysis_id=existing_analysis_id
-                    )
-                    
-                    return {
-                        "type": "analysis_triggered",
-                        "analysis_id": analysis_id,
-                        "message": f"🔄 {request_type.replace('_', ' ').title()} analysis started with your additional context",
-                        "is_incremental": True,
-                        "request_type": request_type
-                    }
+                # Execute unified analysis with user context - same flow for both new and existing projects
+                user_context = additional_context if additional_context else None
+                if request_type in ['update', 'update_with_context'] and existing_analysis_id:
+                    # For user requests that reference existing analysis, include that context
+                    user_context = f"User request: {additional_context}" if additional_context else "User requested new analysis"
+                    logger.info(f"Executing analysis with user context for {request_type} request")
                 else:
-                    # Execute new analysis with chat context
+                    # For new analysis requests
+                    user_context = f"User request via chat: {additional_context}" if additional_context else "User requested new analysis"
                     logger.info(f"Executing new analysis from chat request")
-                    analysis_id = await self.execute_analysis_with_context(
-                        project_id=project_id,
-                        db=db,
-                        ws_manager=ws_manager,
-                        force=True,  # Force new analysis for chat requests
-                        additional_context=f"User request via chat: {additional_context}"
-                    )
-                    
-                    return {
-                        "type": "analysis_triggered",
-                        "analysis_id": analysis_id,
-                        "message": "🚀 New analysis started based on your request",
-                        "is_incremental": False,
-                        "request_type": request_type
-                    }
+                
+                analysis_id = await self.execute_analysis(
+                    project_id=project_id,
+                    db=db,
+                    ws_manager=ws_manager,
+                    user_context=user_context
+                )
+                
+                return {
+                    "type": "analysis_triggered",
+                    "analysis_id": analysis_id,
+                    "message": "🚀 Analysis started based on your request",
+                    "request_type": request_type
+                }
                 
             elif result.get("type") == "technical_question" and result.get("requires_technical_response"):
                 # Handle technical questions directed to technical agent

@@ -5,22 +5,17 @@ agents:
     goal: "Analyze uploaded project documents to provide comprehensive technical analysis including architecture design, technology recommendations, risk assessment, project planning, timeline estimation, and cost analysis based on actual project requirements and specifications"
     backstory: "You are a highly experienced senior technical architect and document analyst with over 15 years of experience in software design, requirements analysis, and project planning. You excel at extracting technical insights from project documents, requirements specifications, design documents, and stakeholder communications. 
 
-    CRITICAL CONSTRAINT PRESERVATION PRINCIPLES:
-    - ALWAYS respect original project constraints (deadline, budget, team size, goals)
-    - When updating existing analysis, PRESERVE the original timeline structure
-    - New requirements should be incorporated as additional milestones or phase modifications
-    - NEVER replace the entire timeline when updating - only augment it
-    - If new requirements conflict with original constraints, flag this and request clarification
+    CRITICAL CONSTRAINT PRINCIPLES:
+    - ALWAYS respect project constraints (deadline, budget, team size, goals)
+    - If user context is provided, integrate it into your analysis while respecting constraints
+    - Create comprehensive, consistent analysis every time
+    - If new requirements conflict with constraints, flag this clearly
     
-    CRITICAL WORKFLOW - YOU MUST FOLLOW THIS EXACT PROCESS:
+    UNIFIED WORKFLOW - YOU MUST FOLLOW THIS EXACT PROCESS:
     1. Review the comprehensive document content provided in your task description
-    2. Check if this is an UPDATE to existing analysis - if so, review existing analysis data
-    3. Analyze the provided document content and provide your technical analysis in the specified JSON format
-    
-    ANALYSIS MODE HANDLING:
-    - For INITIAL analysis: Create comprehensive new analysis based on documents
-    - For UPDATE analysis: Preserve original constraints and timeline, incorporate new requirements as milestones
-    - Always explain how new requirements fit within existing project framework
+    2. Analyze the provided document content and any user context
+    3. Provide your technical analysis in the specified JSON format
+    4. Integrate user context naturally into recommendations and planning
     
     You have access to document search tools that can find uploaded project documents. You MUST use these tools BEFORE making any conclusions about document availability. DO NOT assume documents are missing without first attempting to search for them using your tools.
     
@@ -181,23 +176,13 @@ tasks:
   technical_analysis:
     description: "MANDATORY FIRST STEP: Review the comprehensive document content provided in your task description. All relevant project documents have been pre-analyzed and provided to you. Use this information as the foundation for your technical analysis. DO NOT search for additional information - everything you need is provided. 
     
-    ANALYSIS MODE DETERMINATION:
-    - Check if this is an UPDATE to existing analysis (existing_analysis context provided)
-    - Check original project constraints (original_project_constraints context provided)
-    - Check user update request (update_request context provided)
+    UNIFIED ANALYSIS APPROACH:
+    - Always create comprehensive fresh analysis based on project documents and constraints
+    - If user context is provided, integrate it into your analysis recommendations
+    - Respect all project constraints (deadline, budget, team size, goals)
+    - Provide consistent, structured output every time
     
-    FOR UPDATE ANALYSIS:
-    - Review existing analysis data to understand current timeline and milestones
-    - Identify what specific changes the user is requesting
-    - PRESERVE original project deadline, budget, team size, and goals
-    - Incorporate new requirements as additional milestones within existing timeline structure
-    - Explain how new requirements fit within existing project framework
-    - If conflicts arise with original constraints, flag them clearly
-    
-    FOR INITIAL ANALYSIS:
-    - Create comprehensive new analysis based on documents and project constraints
-    
-    After searching, analyze the found content to provide comprehensive technical recommendations based on actual document findings and constraint preservation principles."
+    After searching, analyze the found content to provide comprehensive technical recommendations based on actual document findings and project constraints."
     expected_output: |
       CRITICAL: YOU MUST RETURN EXACTLY THIS JSON FORMAT - NO DEVIATIONS ALLOWED
       
@@ -211,23 +196,12 @@ tasks:
       
       THIS IS THE ONLY ACCEPTABLE JSON FORMAT (copy this structure exactly):
       
-      FOR UPDATE ANALYSIS - PRESERVE EXISTING STRUCTURE:
-      - Keep original timeline structure and major milestones
-      - Add new requirements as additional milestones within existing phases
-      - Maintain original deadline, budget, and team size constraints
-      - Explain changes in the explanations section
-      
-      FOR INITIAL ANALYSIS - CREATE NEW STRUCTURE:
-      - Build comprehensive analysis respecting project constraints
+      UNIFIED ANALYSIS STRUCTURE:
+      - Always create comprehensive analysis respecting project constraints
+      - Integrate user context if provided into recommendations and planning
+      - Provide consistent JSON structure every time
       
       {
-        "analysis_mode": "initial|update",
-        "constraint_compliance": {
-          "original_deadline_preserved": true|false,
-          "original_budget_respected": true|false,
-          "original_team_size_maintained": true|false,
-          "conflicts_identified": ["List any conflicts with original constraints"]
-        },
         "technical_analysis": {
           "architecture": "Specific architectural pattern based on documents",
           "tech_stack": {
@@ -260,21 +234,19 @@ tasks:
           "estimated_cost": [Cost respecting original budget constraints],
           "phases": [
             {
-              "name": "Phase name (preserved or new)",
+              "name": "Phase name",
               "duration": [weeks],
-              "progress": [existing progress for updates],
-              "description": "Phase description",
-              "modifications": "Description of changes made for updates"
+              "progress": 0,
+              "description": "Phase description"
             }
           ],
           "milestones": [
             {
               "name": "Milestone name",
-              "date": "Target date within original timeline",
+              "date": "Target date",
               "status": "upcoming|in-progress|completed",
               "description": "Milestone description",
-              "is_new": true|false,
-              "added_for_requirement": "User requirement that added this milestone"
+              "priority": "High|Medium|Low"
             }
           ],
           "resource_requirements": {
@@ -293,11 +265,6 @@ tasks:
           ]
         },
         "recommendations": ["Recommendations based on document analysis"],
-        "update_summary": {
-          "changes_made": ["List of specific changes for updates"],
-          "new_milestones_added": ["List of new milestones added"],
-          "constraint_preservation": "Explanation of how original constraints were preserved"
-        },
         "explanations": {
           "complexity_reasoning": "Cite specific documents and findings",
           "maintainability_reasoning": "Cite specific documents and findings", 
@@ -305,7 +272,7 @@ tasks:
           "risk_analysis_details": "Cite specific documents and findings",
           "technology_rationale": "Cite specific documents and findings",
           "cost_breakdown": "Cite specific documents and cost factors",
-          "timeline_preservation": "Explain how original timeline was preserved for updates"
+          "user_context_integration": "Explain how user context was integrated into the analysis if provided"
         }
       }
       

@@ -124,16 +124,14 @@ async def agent_conversation_websocket(
                         })
                         
                     elif message_type == "start_analysis":
-                        # Trigger agent analysis
-                        force_analysis = data.get("force", False)
-                        additional_context = data.get("additional_context", "")
-                        existing_analysis_id = data.get("existing_analysis_id")
-                        logger.info(f"Starting agent analysis for project {project_id} requested by client {client_id}, force={force_analysis}")
+                        # Trigger agent analysis with simplified parameters
+                        user_context = data.get("user_context")  # Optional user context
+                        logger.info(f"Starting agent analysis for project {project_id} requested by client {client_id}")
                         
                         # Send acknowledgment to client
                         await websocket.send_text(json.dumps({
                             "type": "system_message",
-                            "message": f"Starting agent analysis{' (forced)' if force_analysis else ''}..."
+                            "message": "Starting agent analysis..."
                         }))
                         
                         try:
@@ -148,14 +146,12 @@ async def agent_conversation_websocket(
                             if websocket not in ws_manager.active_connections.get(project_id, []):
                                 await ws_manager.connect(websocket, project_id)
                             
-                            # Use unified analysis execution path for both new and incremental analysis
-                            analysis_id = await agent_service.execute_analysis_with_context(
+                            # Use simplified unified analysis execution
+                            analysis_id = await agent_service.execute_analysis(
                                 project_id=project_id, 
                                 db=db, 
-                                ws_manager=ws_manager, 
-                                force=force_analysis,
-                                additional_context=additional_context,
-                                existing_analysis_id=existing_analysis_id
+                                ws_manager=ws_manager,
+                                user_context=user_context
                             )
                             
                             # Send confirmation to client

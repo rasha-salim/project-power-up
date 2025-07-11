@@ -356,22 +356,18 @@ class AnalysisExecutionService:
         analysis_id: str, 
         project_id: str, 
         db: AsyncSession, 
-        ws_manager: Optional[WebSocketManager] = None, 
-        force: bool = False,
-        additional_context: str = "",
-        existing_context: Optional[Any] = None
+        ws_manager: Optional[WebSocketManager] = None,
+        user_context: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Execute technical analysis for a project
+        Execute unified technical analysis for a project
         
         Args:
             analysis_id: Unique ID for this analysis
             project_id: ID of the project to analyze
             db: Database session
             ws_manager: WebSocket manager for real-time updates
-            force: Whether to force new analysis even if one exists
-            additional_context: Additional context from user
-            existing_context: Existing analysis context for incremental updates
+            user_context: Optional user context for the analysis
             
         Returns:
             Dict with analysis results
@@ -422,59 +418,8 @@ class AnalysisExecutionService:
                         }
                     )
                 
-                # Check for existing analysis if not forced
-                if not force:
-                    existing_analysis = await self._check_existing_analysis(db, project_id)
-                    if existing_analysis:
-                        logger.info(f"Found existing analysis for project {project_id}")
-                        if ws_manager:
-                            # Include the actual analysis data in the completion message
-                            await ws_manager.broadcast(
-                                project_id,
-                                {
-                                    "type": "analysis_complete",
-                                    "analysis_id": analysis_id,
-                                    "result": {
-                                        "technical_analysis": existing_analysis.technical_analysis,
-                                        "completed_at": str(existing_analysis.created_at)
-                                    },
-                                    "message": "Using existing analysis results",
-                                    "message_id": str(uuid.uuid4())
-                                }
-                            )
-                            
-                            # Also send the formatted analysis content as an agent message
-                            try:
-                                from app.services.analysis_helper import AnalysisDataHelper
-                                formatted_message = AnalysisDataHelper.format_analysis_summary(existing_analysis)
-                                
-                                await ws_manager.broadcast(
-                                    project_id,
-                                    {
-                                        "type": "agent_message",
-                                        "sender": "technical_agent",
-                                        "sender_name": "Technical Analysis Agent",
-                                        "message": formatted_message,
-                                        "analysis_id": analysis_id,
-                                        "message_id": str(uuid.uuid4())
-                                    }
-                                )
-                                logger.info(f"Successfully sent existing analysis content as agent_message")
-                            except Exception as e:
-                                logger.error(f"Failed to format existing analysis: {e}")
-                                # Send raw analysis as fallback
-                                await ws_manager.broadcast(
-                                    project_id,
-                                    {
-                                        "type": "agent_message",
-                                        "sender": "technical_agent", 
-                                        "sender_name": "Technical Analysis Agent",
-                                        "message": str(existing_analysis.technical_analysis),
-                                        "analysis_id": analysis_id,
-                                        "message_id": str(uuid.uuid4())
-                                    }
-                                )
-                        return {"status": "existing", "analysis": existing_analysis}
+                # Unified approach: Always execute fresh analysis, no existing analysis checks
+                logger.info(f"Starting fresh analysis execution for project {project_id} (unified approach)")
                 
                 # Create technical analysis agent with error handling
                 try:
@@ -523,8 +468,7 @@ class AnalysisExecutionService:
                 print(f"FORCING DOCUMENT SEARCH BEFORE AGENT EXECUTION")
                 forced_search_results = await self._force_document_search(project_id)
                 
-                # Get existing analysis context for updates
-                existing_analysis_context = self._get_existing_analysis_context(db, project_id)
+                # Simplified unified approach - no existing analysis context needed
                 
                 # Build task description with document information, forced search results, and existing analysis context
                 # Include constraint violation feedback for retry attempts
@@ -555,11 +499,10 @@ class AnalysisExecutionService:
                 
                 task_description = self._build_task_description(
                     project, 
-                    additional_context, 
+                    user_context or "", 
                     document_status, 
                     document_preview, 
                     forced_search_results,
-                    existing_analysis_context,
                     constraint_violation_feedback
                 )
                 
@@ -614,11 +557,11 @@ class AnalysisExecutionService:
                 except asyncio.TimeoutError:
                     raise TimeoutError("Analysis execution timed out after 5 minutes")
                 
-                # Debug logging for incremental analysis
-                if additional_context and "Update analysis with:" in additional_context:
-                    logger.info(f"🔍 INCREMENTAL ANALYSIS DEBUG:")
+                # Debug logging for analysis with user context
+                if user_context:
+                    logger.info(f"🔍 ANALYSIS WITH USER CONTEXT DEBUG:")
                     logger.info(f"   - Analysis ID: {analysis_id}")
-                    logger.info(f"   - Additional context: {additional_context}")
+                    logger.info(f"   - User context: {user_context}")
                     logger.info(f"   - Raw crew output length: {len(crew_output)} chars")
                     logger.info(f"   - Raw crew output preview: {crew_output[:500]}...")
                     logger.info(f"   - Raw crew output ending: ...{crew_output[-200:]}")
@@ -630,10 +573,11 @@ class AnalysisExecutionService:
                 
                 if not is_valid:
                     logger.error(f"Analysis validation failed: {validation_error}")
-                    # Debug: Log the raw output that failed validation for incremental analysis
-                    if additional_context and "Update analysis with:" in additional_context:
-                        logger.error(f"🔍 INCREMENTAL VALIDATION FAILURE:")
+                    # Debug: Log the raw output that failed validation with user context
+                    if user_context:
+                        logger.error(f"🔍 USER CONTEXT VALIDATION FAILURE:")
                         logger.error(f"   - Validation error: {validation_error}")
+                        logger.error(f"   - User context: {user_context}")
                         logger.error(f"   - Raw output that failed: {crew_output}")
                     
                     # Check if this is a JSON format issue (agent returned formatted text)
@@ -697,7 +641,7 @@ class AnalysisExecutionService:
                     try:
                         analysis_dict = structured_analysis.model_dump(mode='json')
                         validation_result = self._validate_constraint_compliance(
-                            project, analysis_dict, existing_analysis_context
+                            project, analysis_dict, None  # Simplified - no existing analysis context
                         )
                         
                         if not validation_result["is_valid"]:
@@ -1289,8 +1233,8 @@ class AnalysisExecutionService:
             logger.warning(f"Could not retrieve existing analysis for context: {e}")
             return None
 
-    def _build_task_description(self, project: Project, additional_context: str = "", document_status: Dict[str, Any] = None, document_preview: str = "", forced_search_results: str = "", existing_analysis: Optional[Dict[str, Any]] = None, constraint_violation_feedback: str = "") -> str:
-        """Build task description for analysis with document search instructions"""
+    def _build_task_description(self, project: Project, user_context: str = "", document_status: Dict[str, Any] = None, document_preview: str = "", forced_search_results: str = "", constraint_violation_feedback: str = "") -> str:
+        """Build unified task description for analysis with optional user context"""
         
         # Prepare document status information
         doc_info = ""
@@ -1368,51 +1312,29 @@ class AnalysisExecutionService:
         logger.info(f"   - Deadline: {getattr(project, 'deadline', 'Not specified')}")
         logger.info(f"   - Goal: {getattr(project, 'goal', 'Not specified')}")
         
-        # Build existing analysis context section
-        existing_context_section = ""
-        if existing_analysis:
-            existing_timeline = existing_analysis.get('project_plan', {}).get('timeline', 'Not found')
-            existing_phases = existing_analysis.get('project_plan', {}).get('phases', [])
-            existing_milestones = existing_analysis.get('project_plan', {}).get('milestones', [])
-            
-            existing_context_section = f"""
+        # Build analysis mode section - unified approach for all analysis requests
+        analysis_mode_section = """
         
-        📋 EXISTING ANALYSIS CONTEXT (UPDATE MODE):
-        - Current Timeline: {existing_timeline}
-        - Existing Phases: {len(existing_phases)} phases defined
-        - Existing Milestones: {len(existing_milestones)} milestones
-        - Analysis Mode: UPDATE (preserve existing structure)
-        
-        🔄 UPDATE INSTRUCTIONS:
-        - PRESERVE the existing timeline structure and major milestones
-        - ADD new requirements as additional milestones within existing phases
-        - DO NOT replace the entire timeline - only augment it
-        - Explain how new requirements fit within the existing framework
-        - If conflicts arise with original constraints, flag them clearly
-        """
-        else:
-            existing_context_section = f"""
-        
-        📋 ANALYSIS MODE: INITIAL
-        - This is a new analysis - create comprehensive structure
+        📋 ANALYSIS MODE: UNIFIED
+        - Always create fresh, comprehensive analysis based on project data
         - Respect all project constraints listed above
+        - Provide consistent output structure regardless of previous analysis state
         """
         
-        # Build user requirements context section
+        # Build user context section
         user_context_section = ""
-        if additional_context:
+        if user_context:
             user_context_section = f"""
         
-        🔥 CRITICAL USER REQUIREMENTS - MUST ADDRESS IN ANALYSIS:
-        {additional_context}
+        🔥 USER CONTEXT - INCORPORATE INTO ANALYSIS:
+        {user_context}
         
-        ⚠️ IMPORTANT: The above requirements MUST be prominently reflected in your analysis output.
-        For UPDATE mode: Incorporate these as new milestones within existing timeline.
-        For INITIAL mode: Build comprehensive analysis including these requirements.
+        ⚠️ IMPORTANT: The above context should be integrated into your comprehensive analysis.
+        Consider this context when making recommendations and planning decisions.
         """
         
         base_description = f"""
-        Analyze the project '{project.name}' and provide a comprehensive technical analysis based on the uploaded project documents.{project_brief_section}{constraint_section}{constraint_violation_feedback}{existing_context_section}{user_context_section}
+        Analyze the project '{project.name}' and provide a comprehensive technical analysis based on the uploaded project documents.{project_brief_section}{constraint_section}{constraint_violation_feedback}{analysis_mode_section}{user_context_section}
         
         Project Details:
         - Name: {project.name}
