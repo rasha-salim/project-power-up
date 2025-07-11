@@ -105,6 +105,32 @@ export default function AgentConversation({ projectId, onAnalysisComplete, exist
         }
       }
       
+      // Try to extract JSON from within text (e.g., "Technical Analysis\n{JSON}")
+      if (messageText.includes('{') && messageText.includes('}') && messageText.includes('"technical_analysis"')) {
+        try {
+          const startIndex = messageText.indexOf('{');
+          const endIndex = messageText.lastIndexOf('}');
+          if (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
+            const jsonPart = messageText.substring(startIndex, endIndex + 1);
+            const parsed = JSON.parse(jsonPart);
+            console.log('🟢 Successfully extracted and parsed embedded JSON:', {
+              hasTA: !!parsed.technical_analysis,
+              hasRA: !!parsed.risk_assessment,
+              hasPP: !!parsed.project_plan,
+              hasRec: !!parsed.recommendations,
+              topLevelKeys: Object.keys(parsed)
+            });
+            
+            if (parsed.technical_analysis || parsed.risk_assessment || parsed.project_plan || parsed.recommendations) {
+              return parsed;
+            }
+          }
+        } catch (jsonError) {
+          console.warn('🟡 Embedded JSON parse error:', jsonError);
+          // Continue to markdown parsing
+        }
+      }
+      
       // Try to detect structured markdown content (both old and new formats)
       if (messageText.includes('## Analysis Results:') || 
           messageText.includes('### Technical Analysis') ||
@@ -808,13 +834,27 @@ export default function AgentConversation({ projectId, onAnalysisComplete, exist
                 } else if (hasJsonInMessage) {
                   // Extract JSON from within the message
                   try {
-                    const jsonMatch = data.message.match(/\{[\s\S]*\}/);
+                    // Try multiple regex patterns to extract JSON
+                    let jsonMatch = data.message.match(/\{[\s\S]*\}/);
+                    
+                    // If the first regex doesn't work, try finding JSON between braces more carefully
+                    if (!jsonMatch) {
+                      const startIndex = data.message.indexOf('{');
+                      const endIndex = data.message.lastIndexOf('}');
+                      if (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
+                        jsonMatch = [data.message.substring(startIndex, endIndex + 1)];
+                      }
+                    }
+                    
                     if (jsonMatch) {
+                      console.log('🔍 Attempting to parse extracted JSON:', jsonMatch[0].substring(0, 100) + '...');
                       parsedStructuredData = JSON.parse(jsonMatch[0]);
                       console.log('🟢 Extracted JSON parse successful:', Object.keys(parsedStructuredData));
+                    } else {
+                      console.warn('🟡 No JSON found in message');
                     }
                   } catch (e) {
-                    console.warn('🟡 JSON extraction failed, trying parseStructuredContent');
+                    console.warn('🟡 JSON extraction failed:', e.message);
                     parsedStructuredData = parseStructuredContent(data.message);
                   }
                 } else {
