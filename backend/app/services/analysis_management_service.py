@@ -56,6 +56,8 @@ class AnalysisManagementService:
             "timestamp": datetime.utcnow().isoformat()
         }
         logger.info(f"Stored pending analysis {analysis_id} for project {project_id} (version {version})")
+        logger.debug(f"Total pending analyses: {len(self.pending_analyses)}")
+        logger.debug(f"All pending analysis IDs: {list(self.pending_analyses.keys())}")
     
     def get_pending_analysis(self, analysis_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -67,7 +69,16 @@ class AnalysisManagementService:
         Returns:
             Dict with analysis data or None if not found
         """
-        return self.pending_analyses.get(analysis_id)
+        logger.debug(f"Looking for analysis {analysis_id} in pending analyses")
+        logger.debug(f"Available analysis IDs: {list(self.pending_analyses.keys())}")
+        
+        result = self.pending_analyses.get(analysis_id)
+        if result:
+            logger.debug(f"Found analysis {analysis_id}")
+        else:
+            logger.warning(f"Analysis {analysis_id} not found in pending analyses")
+        
+        return result
     
     def update_pending_analysis(
         self, 
@@ -125,7 +136,10 @@ class AnalysisManagementService:
         if analysis_id in self.pending_analyses:
             del self.pending_analyses[analysis_id]
             logger.info(f"Removed pending analysis {analysis_id}")
+            logger.debug(f"Remaining pending analyses: {len(self.pending_analyses)}")
+            logger.debug(f"Remaining analysis IDs: {list(self.pending_analyses.keys())}")
             return True
+        logger.warning(f"Attempted to remove analysis {analysis_id} but it was not found")
         return False
     
     def list_pending_analyses(self) -> Dict[str, Dict[str, Any]]:
@@ -202,8 +216,12 @@ class AnalysisManagementService:
             project_service = ProjectService()
             logger.info(f"Attempting to save insights to project {project_id}")
             logger.info(f"Insights data size: {len(str(insights_data))} characters")
+            logger.debug(f"Database session type: {type(db)}")
+            logger.debug(f"Database session is active: {hasattr(db, '_connection') and db._connection is not None}")
+            
             await project_service.store_project_insights(db, project_id, insights_data)
             logger.info(f"Successfully saved insights to project {project_id}")
+            logger.info("Database transaction should be automatically committed via async context manager")
             
             # Send success message via WebSocket
             if ws_manager:
@@ -225,6 +243,15 @@ class AnalysisManagementService:
             
         except Exception as e:
             logger.error(f"Error saving analysis {analysis_id}: {str(e)}")
+            logger.error(f"Exception type: {type(e).__name__}")
+            logger.error(f"Exception details: {e}")
+            
+            # Check if it's a database-related error
+            if "database" in str(e).lower() or "transaction" in str(e).lower():
+                logger.error("Database transaction error detected - check connection and session management")
+            
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
             
             # Send error message via WebSocket
             if ws_manager:

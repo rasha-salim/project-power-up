@@ -115,6 +115,36 @@ async def get_async_db() -> AsyncGenerator[AsyncSession, None]:
         async for session in AsyncSessionLocal():
             yield session
 
+class AsyncDatabaseContextManager:
+    """Simple async context manager that uses the existing get_async_db generator"""
+    def __init__(self):
+        self.db_generator = None
+        self.session = None
+    
+    async def __aenter__(self):
+        """Get database session from generator"""
+        self.db_generator = get_async_db()
+        self.session = await self.db_generator.__anext__()
+        return self.session
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Let the generator handle cleanup"""
+        if self.db_generator:
+            try:
+                await self.db_generator.__anext__()
+            except StopAsyncIteration:
+                # This is expected when the generator is exhausted
+                pass
+            except Exception as cleanup_error:
+                logger.error(f"Error during database session cleanup: {cleanup_error}")
+        
+        self.session = None
+        self.db_generator = None
+
+def get_db_context():
+    """Get database session as async context manager"""
+    return AsyncDatabaseContextManager()
+
 def get_chroma_client():
     """Get a ChromaDB client for vector storage"""
     global chroma_client

@@ -198,18 +198,49 @@ class AgentServiceV2:
             )
             
             # Store result in management service
+            logger.info(f"🔍 Analysis {analysis_id} execution result: {result.get('status', 'unknown')}")
+            logger.info(f"🔍 Analysis result keys: {list(result.keys()) if isinstance(result, dict) else 'not dict'}")
+            
             if result["status"] in ["completed", "existing"]:
                 analysis_data = result.get("structured_analysis") or result.get("analysis")
+                logger.info(f"🔍 Analysis data extracted: {bool(analysis_data)}")
+                logger.info(f"🔍 Analysis data type: {type(analysis_data)}")
+                
                 if analysis_data:
                     self.analysis_manager.store_pending_analysis(
                         analysis_id, project_id, analysis_data
                     )
-                    logger.info(f"Analysis {analysis_id} completed and stored successfully")
+                    logger.info(f"✅ Analysis {analysis_id} completed and stored successfully")
+                    
+                    # Send analysis complete message to frontend
+                    if ws_manager:
+                        logger.info(f"🚀 Sending analysis_complete message for analysis {analysis_id}")
+                        await ws_manager.broadcast(
+                            project_id,
+                            {
+                                "type": "analysis_complete",
+                                "analysis_id": analysis_id,
+                                "result": analysis_data,
+                                "message": "Analysis completed successfully. You can now save it by typing 'save the analysis'.",
+                                "status": "completed"
+                            }
+                        )
+                        logger.info(f"✅ Successfully sent analysis_complete message for analysis {analysis_id}")
+                    else:
+                        logger.warning(f"⚠️ No WebSocket manager available to send analysis_complete for {analysis_id}")
+                else:
+                    logger.warning(f"⚠️ No analysis data found in result for analysis {analysis_id}")
             else:
-                logger.warning(f"Analysis {analysis_id} completed with unexpected status: {result['status']}")
+                logger.warning(f"❌ Analysis {analysis_id} completed with unexpected status: {result['status']}")
+            
+            # Clean up running task
+            self.analysis_manager.remove_running_task(analysis_id)
             
         except Exception as e:
             logger.error(f"Analysis task {analysis_id} failed: {str(e)}")
+            
+            # Clean up running task
+            self.analysis_manager.remove_running_task(analysis_id)
             
             # Notify about failure via WebSocket
             if ws_manager:
@@ -501,12 +532,23 @@ class AgentServiceV2:
             pending_analysis = self.analysis_manager.get_pending_analysis(analysis_id)
             if not pending_analysis:
                 logger.error(f"Analysis {analysis_id} not found in pending analyses")
+                # Log available analyses for debugging
+                available_analyses = list(self.analysis_manager.list_pending_analyses().keys())
+                logger.error(f"Available pending analyses: {available_analyses}")
+                
                 if ws_manager:
+                    # Try to get project_id from available analyses or use 'unknown'
+                    project_id = 'unknown'
+                    for avail_id, avail_data in self.analysis_manager.list_pending_analyses().items():
+                        if isinstance(avail_data, dict) and 'project_id' in avail_data:
+                            project_id = avail_data['project_id']
+                            break
+                    
                     await ws_manager.broadcast(
-                        'unknown',
+                        project_id,
                         {
                             "type": "error",
-                            "message": "❌ Analysis not found or already saved"
+                            "message": f"❌ Analysis {analysis_id} not found in pending analyses. Available: {len(available_analyses)} analyses"
                         }
                     )
                 return False

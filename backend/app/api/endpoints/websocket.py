@@ -137,29 +137,28 @@ async def agent_conversation_websocket(
                         try:
                             # Import dependencies here to avoid circular imports
                             from sqlalchemy.ext.asyncio import AsyncSession
-                            from app.db.init_db_simple import get_async_db
+                            from app.db.init_db_simple import get_db_context
                             
-                            # Get database session
-                            db = await anext(get_async_db().__aiter__())
-                            
-                            # Register the current connection if not already registered
-                            if websocket not in ws_manager.active_connections.get(project_id, []):
-                                await ws_manager.connect(websocket, project_id)
-                            
-                            # Use simplified unified analysis execution
-                            analysis_id = await agent_service.execute_analysis(
-                                project_id=project_id, 
-                                db=db, 
-                                ws_manager=ws_manager,
-                                user_context=user_context
-                            )
-                            
-                            # Send confirmation to client
-                            await websocket.send_text(json.dumps({
-                                "type": "analysis_started",
-                                "analysis_id": analysis_id,
-                                "message": "Agent analysis started successfully"
-                            }))
+                            # Use proper async context manager for database session
+                            async with get_db_context() as db:
+                                # Register the current connection if not already registered
+                                if websocket not in ws_manager.active_connections.get(project_id, []):
+                                    await ws_manager.connect(websocket, project_id)
+                                
+                                # Use simplified unified analysis execution
+                                analysis_id = await agent_service.execute_analysis(
+                                    project_id=project_id, 
+                                    db=db, 
+                                    ws_manager=ws_manager,
+                                    user_context=user_context
+                                )
+                                
+                                # Send confirmation to client
+                                await websocket.send_text(json.dumps({
+                                    "type": "analysis_started",
+                                    "analysis_id": analysis_id,
+                                    "message": "Agent analysis started successfully"
+                                }))
                             
                         except Exception as e:
                             logger.error(f"Error starting analysis: {str(e)}")
@@ -220,21 +219,20 @@ async def agent_conversation_websocket(
                         try:
                             # Import dependencies
                             from sqlalchemy.ext.asyncio import AsyncSession
-                            from app.db.init_db_simple import get_async_db
+                            from app.db.init_db_simple import get_db_context
                             
-                            # Get database session
-                            db = await anext(get_async_db().__aiter__())
-                            
-                            # Register the current connection if not already registered
-                            if websocket not in ws_manager.active_connections.get(project_id, []):
-                                await ws_manager.connect(websocket, project_id)
-                            
-                            # Handle the question using the new unified handler
-                            response = await agent_service.handle_user_message(
-                                db, project_id, question, analysis_id, ws_manager
-                            )
-                            
-                            # The response is already sent via WebSocket by the handler
+                            # Use proper async context manager for database session
+                            async with get_db_context() as db:
+                                # Register the current connection if not already registered
+                                if websocket not in ws_manager.active_connections.get(project_id, []):
+                                    await ws_manager.connect(websocket, project_id)
+                                
+                                # Handle the question using the new unified handler
+                                response = await agent_service.handle_user_message(
+                                    db, project_id, question, analysis_id, ws_manager
+                                )
+                                
+                                # The response is already sent via WebSocket by the handler
                             
                         except Exception as e:
                             logger.error(f"Error handling user question: {str(e)}")
@@ -248,23 +246,35 @@ async def agent_conversation_websocket(
                         logger.info(f"Received chat message from project {project_id}: {message_text}")
                         
                         try:
-                            # Get database session
+                            # Import dependencies
                             from sqlalchemy.ext.asyncio import AsyncSession
-                            from app.db.init_db_simple import get_async_db
-                            db = await anext(get_async_db().__aiter__())
+                            from app.db.init_db_simple import get_db_context
                             
-                            # Register the current connection if not already registered
-                            if websocket not in ws_manager.active_connections.get(project_id, []):
-                                await ws_manager.connect(websocket, project_id)
-                            
-                            logger.debug(f"Calling handle_user_message for project {project_id}")
-                            # Handle the message using the new unified handler
-                            response = await agent_service.handle_user_message(
-                                db, project_id, message_text, None, ws_manager
-                            )
-                            logger.debug(f"handle_user_message returned: {response}")
-                            
-                            # The response is already sent via WebSocket by the handler
+                            # Use proper async context manager for database session
+                            async with get_db_context() as db:
+                                # Register the current connection if not already registered
+                                if websocket not in ws_manager.active_connections.get(project_id, []):
+                                    await ws_manager.connect(websocket, project_id)
+                                
+                                logger.debug(f"Calling handle_user_message for project {project_id}")
+                                # Handle the message using the new unified handler
+                                response = await agent_service.handle_user_message(
+                                    db, project_id, message_text, None, ws_manager
+                                )
+                                logger.debug(f"handle_user_message returned: {response}")
+                                
+                                # Handle specific response types that need WebSocket messages
+                                if response and isinstance(response, dict):
+                                    if response.get("type") == "analysis_triggered":
+                                        # Send analysis started confirmation
+                                        await websocket.send_text(json.dumps({
+                                            "type": "analysis_started",
+                                            "analysis_id": response.get("analysis_id"),
+                                            "message": response.get("message", "Analysis started"),
+                                            "request_type": response.get("request_type", "chat")
+                                        }))
+                                        logger.info(f"Sent analysis_started message for analysis {response.get('analysis_id')}")
+                                    # Other response types are handled by the services via WebSocket manager
                             
                         except Exception as e:
                             logger.error(f"Error handling chat message: {str(e)}")
@@ -292,34 +302,34 @@ async def agent_conversation_websocket(
                             
                             # Import dependencies
                             from sqlalchemy.ext.asyncio import AsyncSession
-                            from app.db.init_db_simple import get_async_db
+                            from app.db.init_db_simple import get_db_context
                             
-                            # Get database session
-                            db = await anext(get_async_db().__aiter__())
-                            logger.info("Database session obtained successfully")
-                            
-                            # Register the current connection if not already registered
-                            if websocket not in ws_manager.active_connections.get(project_id, []):
-                                await ws_manager.connect(websocket, project_id)
-                                logger.info(f"WebSocket registered for project {project_id}")
-                            
-                            # Confirm and save
-                            logger.info(f"Calling confirm_and_save_analysis for {analysis_id}")
-                            success = await agent_service.confirm_and_save_analysis(db, analysis_id, ws_manager)
-                            
-                            if success:
-                                logger.info(f"Analysis {analysis_id} saved successfully")
-                                await websocket.send_text(json.dumps({
-                                    "type": "analysis_saved",
-                                    "analysis_id": analysis_id,
-                                    "message": "Analysis saved successfully"
-                                }))
-                            else:
-                                logger.error(f"Failed to save analysis {analysis_id}")
-                                await websocket.send_text(json.dumps({
-                                    "type": "error",
-                                    "message": "Failed to save analysis - check server logs for details"
-                                }))
+                            # Use proper async context manager for database session
+                            async with get_db_context() as db:
+                                logger.info("Database session obtained successfully")
+                                
+                                # Register the current connection if not already registered
+                                if websocket not in ws_manager.active_connections.get(project_id, []):
+                                    await ws_manager.connect(websocket, project_id)
+                                    logger.info(f"WebSocket registered for project {project_id}")
+                                
+                                # Confirm and save
+                                logger.info(f"Calling confirm_and_save_analysis for {analysis_id}")
+                                success = await agent_service.confirm_and_save_analysis(db, analysis_id, ws_manager)
+                                
+                                if success:
+                                    logger.info(f"Analysis {analysis_id} saved successfully")
+                                    await websocket.send_text(json.dumps({
+                                        "type": "analysis_saved",
+                                        "analysis_id": analysis_id,
+                                        "message": "Analysis saved successfully"
+                                    }))
+                                else:
+                                    logger.error(f"Failed to save analysis {analysis_id}")
+                                    await websocket.send_text(json.dumps({
+                                        "type": "error",
+                                        "message": "Failed to save analysis - check server logs for details"
+                                    }))
                             
                         except Exception as e:
                             logger.error(f"Error confirming analysis: {str(e)}")
@@ -345,25 +355,24 @@ async def agent_conversation_websocket(
                         try:
                             # Import dependencies
                             from sqlalchemy.ext.asyncio import AsyncSession
-                            from app.db.init_db_simple import get_async_db
+                            from app.db.init_db_simple import get_db_context
                             
-                            # Get database session
-                            db = await anext(get_async_db().__aiter__())
-                            
-                            # Register the current connection if not already registered
-                            if websocket not in ws_manager.active_connections.get(project_id, []):
-                                await ws_manager.connect(websocket, project_id)
-                            
-                            # Regenerate analysis with feedback
-                            success = await agent_service.regenerate_analysis_with_feedback(
-                                db, analysis_id, user_feedback, ws_manager
-                            )
-                            
-                            if not success:
-                                await websocket.send_text(json.dumps({
-                                    "type": "error",
-                                    "message": "Failed to regenerate analysis"
-                                }))
+                            # Use proper async context manager for database session
+                            async with get_db_context() as db:
+                                # Register the current connection if not already registered
+                                if websocket not in ws_manager.active_connections.get(project_id, []):
+                                    await ws_manager.connect(websocket, project_id)
+                                
+                                # Regenerate analysis with feedback
+                                success = await agent_service.regenerate_analysis_with_feedback(
+                                    db, analysis_id, user_feedback, ws_manager
+                                )
+                                
+                                if not success:
+                                    await websocket.send_text(json.dumps({
+                                        "type": "error",
+                                        "message": "Failed to regenerate analysis"
+                                    }))
                             
                         except Exception as e:
                             logger.error(f"Error regenerating analysis: {str(e)}")
@@ -379,31 +388,30 @@ async def agent_conversation_websocket(
                         try:
                             # Import dependencies
                             from sqlalchemy.ext.asyncio import AsyncSession
-                            from app.db.init_db_simple import get_async_db
+                            from app.db.init_db_simple import get_db_context
                             
-                            # Get database session
-                            db = await anext(get_async_db().__aiter__())
-                            
-                            # Stop any running agent conversations by canceling running tasks
-                            # We'll use the agent service to stop all running tasks for this project
-                            stopped_tasks = []
-                            
-                            # Get all running analyses for this project and cancel them
-                            for analysis_id, task in list(agent_service.analysis_manager.running_tasks.items()):
-                                if not task.done():
-                                    # Get the analysis data to check if it belongs to this project
-                                    pending_analysis = agent_service.analysis_manager.get_pending_analysis(analysis_id)
-                                    if pending_analysis and pending_analysis.get('project_id') == project_id:
-                                        success = await agent_service.cancel_analysis(analysis_id)
-                                        if success:
-                                            stopped_tasks.append(analysis_id)
-                                            logger.info(f"Cancelled analysis task {analysis_id} for project {project_id}")
-                            
-                            # Send confirmation back to the client
-                            stop_message = {
-                                "type": "conversation_stopped",
-                                "message": "🛑 Conversation stopped successfully",
-                                "stopped_tasks": stopped_tasks
+                            # Use proper async context manager for database session
+                            async with get_db_context() as db:
+                                # Stop any running agent conversations by canceling running tasks
+                                # We'll use the agent service to stop all running tasks for this project
+                                stopped_tasks = []
+                                
+                                # Get all running analyses for this project and cancel them
+                                for analysis_id, task in list(agent_service.analysis_manager.running_tasks.items()):
+                                    if not task.done():
+                                        # Get the analysis data to check if it belongs to this project
+                                        pending_analysis = agent_service.analysis_manager.get_pending_analysis(analysis_id)
+                                        if pending_analysis and pending_analysis.get('project_id') == project_id:
+                                            success = await agent_service.cancel_analysis(analysis_id)
+                                            if success:
+                                                stopped_tasks.append(analysis_id)
+                                                logger.info(f"Cancelled analysis task {analysis_id} for project {project_id}")
+                                
+                                # Send confirmation back to the client
+                                stop_message = {
+                                    "type": "conversation_stopped",
+                                    "message": "🛑 Conversation stopped successfully",
+                                    "stopped_tasks": stopped_tasks
                             }
                             await websocket.send_text(json.dumps(stop_message))
                             

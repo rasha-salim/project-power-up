@@ -495,7 +495,10 @@ class AnalysisExecutionService:
                 print(f"FORCING DOCUMENT SEARCH BEFORE AGENT EXECUTION")
                 forced_search_results = await self._force_document_search(project_id)
                 
-                # Simplified unified approach - no existing analysis context needed
+                # TEMPORARILY DISABLED: Get existing analysis context for update mode
+                # This was causing database session conflicts
+                existing_analysis = None
+                logger.info(f"Existing analysis context disabled to prevent database conflicts")
                 
                 # Build task description with document information, forced search results, and existing analysis context
                 # Include constraint violation feedback for retry attempts
@@ -530,7 +533,8 @@ class AnalysisExecutionService:
                     document_status, 
                     document_preview, 
                     forced_search_results,
-                    constraint_violation_feedback
+                    constraint_violation_feedback,
+                    existing_analysis
                 )
                 
                 # Create analysis task
@@ -1243,24 +1247,30 @@ class AnalysisExecutionService:
             logger.warning(f"Error getting document preview: {e}")
             return "Document preview unavailable"
     
-    def _get_existing_analysis_context(self, db, project_id: str) -> Optional[Dict[str, Any]]:
+    async def _get_existing_analysis_context(self, db: AsyncSession, project_id: str) -> Optional[Dict[str, Any]]:
         """Get existing analysis data for update context"""
         try:
             from app.db.models import Analysis
-            existing_analysis = db.query(Analysis).filter(
+            from sqlalchemy import select
+            
+            # Use async query syntax
+            query = select(Analysis).where(
                 Analysis.project_id == project_id
-            ).order_by(Analysis.created_at.desc()).first()
+            ).order_by(Analysis.created_at.desc()).limit(1)
+            
+            result = await db.execute(query)
+            existing_analysis = result.scalars().first()
             
             if existing_analysis:
                 import json
-                result = json.loads(existing_analysis.result) if isinstance(existing_analysis.result, str) else existing_analysis.result
-                return result
+                analysis_result = json.loads(existing_analysis.result) if isinstance(existing_analysis.result, str) else existing_analysis.result
+                return analysis_result
             return None
         except Exception as e:
             logger.warning(f"Could not retrieve existing analysis for context: {e}")
             return None
 
-    def _build_task_description(self, project: Project, user_context: str = "", document_status: Dict[str, Any] = None, document_preview: str = "", forced_search_results: str = "", constraint_violation_feedback: str = "") -> str:
+    def _build_task_description(self, project: Project, user_context: str = "", document_status: Dict[str, Any] = None, document_preview: str = "", forced_search_results: str = "", constraint_violation_feedback: str = "", existing_analysis: Optional[Dict[str, Any]] = None) -> str:
         """Build unified task description for analysis with optional user context"""
         
         # Prepare document status information

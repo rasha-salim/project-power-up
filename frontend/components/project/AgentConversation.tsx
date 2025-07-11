@@ -47,7 +47,7 @@ export default function AgentConversation({ projectId, onAnalysisComplete, exist
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [showAgentSuggestions, setShowAgentSuggestions] = useState(false);
   const [agentSearchTerm, setAgentSearchTerm] = useState('');
-  const [analysisSaved, setAnalysisSaved] = useState(false);  
+  
   const [analysisProgress, setAnalysisProgress] = useState<string>('');
   const [analysisError, setAnalysisError] = useState<{
     message: string;
@@ -564,37 +564,6 @@ export default function AgentConversation({ projectId, onAnalysisComplete, exist
     });
   }, [isAgentThinking]);
 
-  useEffect(() => {
-    // Check if we have analysis data available to save (either from backend ID or structured data)
-    const hasAnalysisData = currentAnalysisId || messages.some(msg => msg.type === 'agent' && msg.structured_data);
-    const shouldShowSaveButton = analysisComplete && !analysisSaved && hasAnalysisData;
-    console.log('🔘 Save button state evaluation:', {
-      analysisComplete,
-      analysisSaved,
-      currentAnalysisId,
-      isConnected,
-      existingInsights: !!existingInsights,
-      shouldShowSaveButton,
-      condition1_analysisComplete: analysisComplete,
-      condition2_notAnalysisSaved: !analysisSaved,
-      condition3_hasAnalysisData: hasAnalysisData,
-      hasCurrentAnalysisId: !!currentAnalysisId,
-      hasStructuredData: messages.some(msg => msg.type === 'agent' && msg.structured_data),
-      allConditionsMet: analysisComplete && !analysisSaved && hasAnalysisData,
-      buttonWillShow: shouldShowSaveButton && isConnected
-    });
-    
-    if (!shouldShowSaveButton) {
-      console.log('🚫 Save button NOT showing because:', {
-        missingAnalysisComplete: !analysisComplete,
-        alreadySaved: analysisSaved,
-        missingAnalysisData: !hasAnalysisData,
-        notConnected: !isConnected
-      });
-    } else {
-      console.log('✅ Save button SHOULD be showing');
-    }
-  }, [analysisComplete, analysisSaved, currentAnalysisId, isConnected, existingInsights, messages]);
 
   // Timeout recovery for agent responses
   useEffect(() => {
@@ -874,13 +843,22 @@ export default function AgentConversation({ projectId, onAnalysisComplete, exist
                     willActivateSave: true
                   });
                   
-                  // Use backend analysis ID if available, otherwise only generate fallback for true emergencies
+                  // Only use analysis ID if provided by backend
                   const analysisId = data.analysis_id;
                   
+                  // If no analysis ID provided, log warning and skip save functionality
                   if (!analysisId) {
-                    console.warn('🟡 No analysis_id provided by backend - this may cause save issues');
-                    // Don't activate save button without proper backend analysis ID
-                    return;
+                    console.warn('🟡 No analysis_id provided by backend, analysis cannot be saved');
+                    console.warn('🔍 Expected to receive analysis_complete message with analysis_id from backend');
+                    console.warn('🔍 Current message data:', {
+                      type: data.type,
+                      hasAnalysisId: !!data.analysis_id,
+                      analysisIdValue: data.analysis_id,
+                      sender: data.sender,
+                      messageKeys: Object.keys(data)
+                    });
+                  } else {
+                    console.log('✅ Analysis ID received from backend:', analysisId);
                   }
                   
                   // If parsing failed but we have JSON content, try one more direct extraction
@@ -1461,27 +1439,30 @@ export default function AgentConversation({ projectId, onAnalysisComplete, exist
                     }
                   }
                   
-                  // Set analysis states to activate save button
+                  // Set analysis states to activate save button only if we have analysis ID
                   setIsAnalyzing(false);
-                  setAnalysisComplete(true);
-                  setAnalysisSaved(false);
-                  setCurrentAnalysisId(analysisId);
+                  setAnalysisComplete(!!analysisId); // Only mark complete if we have an ID
+                  if (analysisId) {
+                    setCurrentAnalysisId(analysisId);
+                  }
                   setIsAgentThinking(false);
                   
                   // Force save button activation by calling onAnalysisComplete if available
-                  if (onAnalysisComplete && parsedStructuredData) {
+                  if (onAnalysisComplete && parsedStructuredData && analysisId) {
                     onAnalysisComplete(parsedStructuredData);
                   }
                   
                   // Add the structured data to the message
                   data.structured_data = parsedStructuredData;
-                  data.analysis_id = analysisId;
+                  if (analysisId) {
+                    data.analysis_id = analysisId;
+                  }
                   
-                  console.log('🟡 Technical Analysis save button should now be active with:', {
-                    analysisComplete: true,
-                    analysisSaved: false,
+                  console.log('🟡 Technical Analysis completed with:', {
+                    analysisComplete: !!analysisId,
                     currentAnalysisId: analysisId,
-                    hasStructuredData: !!parsedStructuredData
+                    hasStructuredData: !!parsedStructuredData,
+                    canSave: !!analysisId
                   });
                 } else {
                   console.warn('🟡 Failed to parse Technical Analysis message');
@@ -1506,13 +1487,11 @@ export default function AgentConversation({ projectId, onAnalysisComplete, exist
                   structured_data_keys: Object.keys(data.structured_data || {}),
                   currentStates: {
                     analysisComplete: analysisComplete,
-                    analysisSaved: analysisSaved,
                     isConnected: isConnected
                   }
                 });
                 
                 setAnalysisComplete(true);
-                setAnalysisSaved(false);  // Reset saved state for new analysis
                 
                 // Always set the analysis ID for new analyses (remove conditional check)
                 console.log('🟡 Setting currentAnalysisId from agent message:', data.analysis_id);
@@ -1547,7 +1526,6 @@ export default function AgentConversation({ projectId, onAnalysisComplete, exist
             setCurrentAnalysisId(data.analysis_id);
             setIsAnalyzing(true);
             setAnalysisComplete(false);
-            setAnalysisSaved(false);  // Reset saved state when new analysis starts
             setIsAgentThinking(true);  // Show thinking indicator during analysis
             
             // Add a system message about the analysis starting
@@ -1613,13 +1591,14 @@ export default function AgentConversation({ projectId, onAnalysisComplete, exist
             break;
 
           case 'analysis_complete':
-            console.log('🟡 ANALYSIS_COMPLETE handler triggered:', {
+            console.log('🎉 ANALYSIS_COMPLETE handler triggered:', {
               analysis_id: data.analysis_id,
               currentAnalysisId: currentAnalysisId,
               willSetAnalysisId: data.analysis_id && !currentAnalysisId,
               hasResult: !!data.result,
               resultKeys: data.result ? Object.keys(data.result) : [],
-              resultData: data.result,
+              messageFromBackend: data.message,
+              fullDataKeys: Object.keys(data),
               currentState: {
                 isAnalyzing: isAnalyzing,
                 analysisComplete: analysisComplete,
@@ -1629,23 +1608,22 @@ export default function AgentConversation({ projectId, onAnalysisComplete, exist
             
             console.log('🟡 Setting analysis states...');
             setIsAnalyzing(false);
-            setAnalysisComplete(true);
+            setAnalysisComplete(!!data.analysis_id); // Only complete if we have an ID
             setIsAgentThinking(false); // Reset typing indicator
-            setAnalysisSaved(false); // Reset saved state for new analysis
             
             // Always set the analysis ID from the complete message
             if (data.analysis_id) {
-              console.log('🟡 Setting currentAnalysisId from analysis_complete:', data.analysis_id);
+              console.log('✅ Setting currentAnalysisId from analysis_complete:', data.analysis_id);
               setCurrentAnalysisId(data.analysis_id);
             } else {
-              console.warn('🟡 No analysis_id provided in analysis_complete message');
+              console.warn('❌ No analysis_id provided in analysis_complete message - analysis cannot be saved');
+              console.warn('🔍 This means backend did not send analysis_id in analysis_complete message');
             }
             
-            console.log('🟡 Analysis states set - save button should appear with:', {
-              analysisComplete: true,
-              analysisSaved: false,
+            console.log('✅ Analysis states set:', {
+              analysisComplete: !!data.analysis_id,
               currentAnalysisId: data.analysis_id,
-              expectedSaveButton: !!data.analysis_id
+              canNowSave: !!data.analysis_id
             });
             
             // Check if this is a regenerated analysis
@@ -1752,15 +1730,21 @@ export default function AgentConversation({ projectId, onAnalysisComplete, exist
 
           case 'analysis_saved':
             console.log('Analysis saved successfully:', data);
-            // The optimistic update already happened in confirmAndSaveAnalysis
-            // This just confirms it was saved to the database
+            
+            // Add success message to chat
+            setMessages(prev => [...prev, {
+              id: generateMessageId(),
+              type: 'system',
+              sender: 'system',
+              message: '✅ Analysis saved to project insights successfully!',
+              timestamp: new Date().toISOString()
+            }]);
             break;
 
           case 'analysis_cancelled':
             setCurrentAnalysisId(null);
             setIsAnalyzing(false);
             setAnalysisComplete(false);
-            setAnalysisSaved(false);  // Reset analysisSaved state
             setMessages(prev => [...prev, {
               id: generateMessageId(),
               type: 'system',
@@ -2034,75 +2018,6 @@ export default function AgentConversation({ projectId, onAnalysisComplete, exist
     }]);
   };
 
-  const confirmAndSaveAnalysis = async () => {
-    if (!isConnected) {
-      return;
-    }
-
-    try {
-      console.log('Saving analysis to insights via direct API call');
-      
-      // Find the latest analysis message with structured data
-      const latestAnalysisMessage = messages
-        .filter(msg => msg.type === 'agent' && msg.structured_data)
-        .pop();
-      
-      if (!latestAnalysisMessage?.structured_data) {
-        console.error('No structured analysis data found to save');
-        setMessages(prev => [...prev, {
-          id: generateMessageId(),
-          type: 'system',
-          sender: 'system',
-          message: 'No analysis data found to save. Please run an analysis first.',
-          timestamp: new Date().toISOString()
-        }]);
-        return;
-      }
-
-      // Save directly via API instead of WebSocket
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/projects/${projectId}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          status: 'completed',
-          insights: latestAnalysisMessage.structured_data
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error(`Failed to save analysis: ${response.statusText}`);
-      }
-
-      // Optimistically update UI
-      setAnalysisSaved(true);
-      
-      // Show success message
-      setMessages(prev => [...prev, {
-        id: generateMessageId(),
-        type: 'system',
-        sender: 'system',
-        message: 'Analysis saved to project insights successfully!',
-        timestamp: new Date().toISOString()
-      }]);
-
-      // Notify parent component if available
-      if (onAnalysisComplete && latestAnalysisMessage.structured_data) {
-        onAnalysisComplete(latestAnalysisMessage.structured_data);
-      }
-      
-    } catch (error) {
-      console.error('Failed to save analysis:', error);
-      setMessages(prev => [...prev, {
-        id: generateMessageId(),
-        type: 'system',
-        sender: 'system',
-        message: `Failed to save analysis: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        timestamp: new Date().toISOString()
-      }]);
-    }
-  };
 
   const sendMessage = () => {
     if (!inputMessage.trim() || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
@@ -2119,7 +2034,72 @@ export default function AgentConversation({ projectId, onAnalysisComplete, exist
       timestamp: new Date().toISOString()
     }]);
 
-    // Send message based on context
+    // Check if user wants to save the analysis (do this first, before context routing)
+    const saveKeywords = ['save', 'store', 'persist', 'keep'];
+    const analysisKeywords = ['analysis', 'results', 'insights', 'findings'];
+    const isSaveRequest = saveKeywords.some(keyword => 
+      userMessage.toLowerCase().includes(keyword)
+    ) && analysisKeywords.some(keyword => 
+      userMessage.toLowerCase().includes(keyword)
+    );
+    
+    if (isSaveRequest && currentAnalysisId) {
+      console.log('✅ User requested to save analysis:', currentAnalysisId);
+      console.log('🔍 Current analysis state:', {
+        currentAnalysisId,
+        analysisComplete,
+        hasAnalysisId: !!currentAnalysisId,
+        messagesWithAnalysisData: messages.filter(m => m.structured_data).length
+      });
+      
+      // Send save request via WebSocket
+      wsRef.current.send(JSON.stringify({
+        type: 'confirm_analysis',
+        analysis_id: currentAnalysisId
+      }));
+      
+      // Add system message to confirm save attempt
+      setMessages(prev => [...prev, {
+        id: generateMessageId(),
+        type: 'system',
+        sender: 'system',
+        message: '💾 Saving analysis to project insights...',
+        timestamp: new Date().toISOString()
+      }]);
+      
+      // Clear input since we handled this request
+      setInputMessage('');
+      return;
+    } else if (isSaveRequest && !currentAnalysisId) {
+      // User wants to save but no analysis available
+      console.warn('❌ User tried to save but no analysis ID available');
+      console.warn('🔍 Current state debug:', {
+        currentAnalysisId,
+        analysisComplete,
+        hasAnalysisMessages: messages.filter(m => m.structured_data).length,
+        totalMessages: messages.length,
+        recentMessages: messages.slice(-3).map(m => ({
+          type: m.type,
+          sender: m.sender,
+          hasStructuredData: !!m.structured_data,
+          hasAnalysisId: !!(m as any).analysis_id
+        }))
+      });
+      
+      setMessages(prev => [...prev, {
+        id: generateMessageId(),
+        type: 'system',
+        sender: 'system',
+        message: '⚠️ No analysis available to save. Please create an analysis first by asking the technical analyst.',
+        timestamp: new Date().toISOString()
+      }]);
+      
+      // Clear input since we handled this request
+      setInputMessage('');
+      return;
+    }
+
+    // Send message based on context (after save detection)
     if (currentAnalysisId) {
       // In analysis context
       console.log('Sending user_question with analysis_id:', currentAnalysisId);
@@ -2133,9 +2113,8 @@ export default function AgentConversation({ projectId, onAnalysisComplete, exist
       // General chat
       console.log('Sending chat_message:', userMessage);
       
-      // Reset analysis saved state in case this triggers a new analysis
+      // Reset analysis state in case this triggers a new analysis
       if (userMessage.toLowerCase().includes('analysis') || userMessage.includes('@technical')) {
-        setAnalysisSaved(false);
         setAnalysisComplete(false);
       }
       
@@ -2196,7 +2175,6 @@ export default function AgentConversation({ projectId, onAnalysisComplete, exist
       
       setMessages([analysisMessage]);
       setAnalysisComplete(true);
-      setAnalysisSaved(true);  // Set analysisSaved state
       
       // Don't set currentAnalysisId from existing insights as this is from a previous session
       // and would prevent new chat messages from working properly
@@ -2264,16 +2242,6 @@ export default function AgentConversation({ projectId, onAnalysisComplete, exist
               <InformationCircleIcon className="h-5 w-5" />
               Agents
             </button>
-            {analysisComplete && !analysisSaved && currentAnalysisId && (
-              <button
-                onClick={confirmAndSaveAnalysis}
-                disabled={!isConnected || !currentAnalysisId}
-                className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-              >
-                <CheckIcon className="h-5 w-5" />
-                Save to Insights
-              </button>
-            )}
             {isAnalyzing && (
               <button
                 onClick={cancelAnalysis}
@@ -2624,24 +2592,6 @@ export default function AgentConversation({ projectId, onAnalysisComplete, exist
       {/* Input */}
       <div className="bg-white border-t px-6 py-4">
         <div className="relative">
-          {/* Save to Insights button (bottom placement) */}
-          {(() => {
-            const hasAnalysisData = currentAnalysisId || messages.some(msg => msg.type === 'agent' && msg.structured_data);
-            const shouldShow = analysisComplete && !analysisSaved && hasAnalysisData;
-            
-            return shouldShow && (
-              <div className="mb-4 flex justify-end">
-                <button
-                  onClick={confirmAndSaveAnalysis}
-                  disabled={!isConnected || (!currentAnalysisId && !messages.some(msg => msg.type === 'agent' && msg.structured_data))}
-                  className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                >
-                  <CheckIcon className="h-5 w-5" />
-                  Save to Insights
-                </button>
-              </div>
-            );
-          })()}
           {/* Agent suggestions dropdown */}
           {showAgentSuggestions && filteredAgents.length > 0 && (
             <div className="absolute bottom-full mb-2 left-0 w-64 bg-white border rounded-lg shadow-lg">

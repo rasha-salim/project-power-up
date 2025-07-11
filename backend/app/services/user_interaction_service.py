@@ -191,19 +191,14 @@ class UserInteractionService:
             
             # Detect analysis requests with type classification
             is_analysis_request, request_type = self.detect_analysis_request(cleaned_message)
+            logger.info(f"Analysis request detection: is_analysis_request={is_analysis_request}, request_type={request_type}, message='{cleaned_message}'")
             
             # Get existing analysis context for project
             existing_analysis_id = await self._get_latest_analysis_id(db, project_id)
             
-            # Route based on message type (prioritize agent mentions over analysis detection)
-            if effective_agent_id:
-                # Agent active or mentioned - route to specific agent for chat, not analysis
-                logger.info(f"Using agent context ({effective_agent_id}) - routing to agent chat")
-                return await self._handle_general_chat(
-                    db, project_id, cleaned_message, effective_agent_id, existing_analysis_id, ws_manager
-                )
-            elif is_analysis_request:
-                # Route to analysis execution with enhanced context
+            # Route based on message type (prioritize analysis requests over agent mentions)
+            if is_analysis_request:
+                # Analysis request takes precedence - route to analysis execution
                 logger.info(f"Routing {request_type} analysis request: {cleaned_message}")
                 
                 response = {
@@ -227,6 +222,12 @@ class UserInteractionService:
                     logger.info(f"Creating new analysis for {request_type} request")
                 
                 return response
+            elif effective_agent_id:
+                # Agent active or mentioned - route to specific agent for chat (not analysis)
+                logger.info(f"Using agent context ({effective_agent_id}) - routing to agent chat")
+                return await self._handle_general_chat(
+                    db, project_id, cleaned_message, effective_agent_id, existing_analysis_id, ws_manager
+                )
             elif is_feedback and analysis_id:
                 return await self.handle_feedback_message(
                     db, project_id, analysis_id, cleaned_message, ws_manager
