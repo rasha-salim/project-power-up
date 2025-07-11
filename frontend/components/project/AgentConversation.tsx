@@ -565,7 +565,9 @@ export default function AgentConversation({ projectId, onAnalysisComplete, exist
   }, [isAgentThinking]);
 
   useEffect(() => {
-    const shouldShowSaveButton = analysisComplete && !analysisSaved && currentAnalysisId;
+    // Check if we have analysis data available to save (either from backend ID or structured data)
+    const hasAnalysisData = currentAnalysisId || messages.some(msg => msg.type === 'agent' && msg.structured_data);
+    const shouldShowSaveButton = analysisComplete && !analysisSaved && hasAnalysisData;
     console.log('🔘 Save button state evaluation:', {
       analysisComplete,
       analysisSaved,
@@ -575,8 +577,10 @@ export default function AgentConversation({ projectId, onAnalysisComplete, exist
       shouldShowSaveButton,
       condition1_analysisComplete: analysisComplete,
       condition2_notAnalysisSaved: !analysisSaved,
-      condition3_hasCurrentAnalysisId: !!currentAnalysisId,
-      allConditionsMet: analysisComplete && !analysisSaved && currentAnalysisId,
+      condition3_hasAnalysisData: hasAnalysisData,
+      hasCurrentAnalysisId: !!currentAnalysisId,
+      hasStructuredData: messages.some(msg => msg.type === 'agent' && msg.structured_data),
+      allConditionsMet: analysisComplete && !analysisSaved && hasAnalysisData,
       buttonWillShow: shouldShowSaveButton && isConnected
     });
     
@@ -584,13 +588,13 @@ export default function AgentConversation({ projectId, onAnalysisComplete, exist
       console.log('🚫 Save button NOT showing because:', {
         missingAnalysisComplete: !analysisComplete,
         alreadySaved: analysisSaved,
-        missingAnalysisId: !currentAnalysisId,
+        missingAnalysisData: !hasAnalysisData,
         notConnected: !isConnected
       });
     } else {
       console.log('✅ Save button SHOULD be showing');
     }
-  }, [analysisComplete, analysisSaved, currentAnalysisId, isConnected, existingInsights]);
+  }, [analysisComplete, analysisSaved, currentAnalysisId, isConnected, existingInsights, messages]);
 
   // Timeout recovery for agent responses
   useEffect(() => {
@@ -870,8 +874,14 @@ export default function AgentConversation({ projectId, onAnalysisComplete, exist
                     willActivateSave: true
                   });
                   
-                  // Generate analysis ID if not provided
-                  const analysisId = data.analysis_id || `analysis_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                  // Use backend analysis ID if available, otherwise only generate fallback for true emergencies
+                  const analysisId = data.analysis_id;
+                  
+                  if (!analysisId) {
+                    console.warn('🟡 No analysis_id provided by backend - this may cause save issues');
+                    // Don't activate save button without proper backend analysis ID
+                    return;
+                  }
                   
                   // If parsing failed but we have JSON content, try one more direct extraction
                   if (!parsedStructuredData && data.message.includes('"technical_analysis"')) {
@@ -2025,39 +2035,70 @@ export default function AgentConversation({ projectId, onAnalysisComplete, exist
   };
 
   const confirmAndSaveAnalysis = async () => {
-    if (!currentAnalysisId || !isConnected) {
+    if (!isConnected) {
       return;
     }
 
     try {
-      console.log('Saving analysis to insights:', currentAnalysisId);
+      console.log('Saving analysis to insights via direct API call');
       
-      // Send save request via WebSocket using the existing confirm_analysis message type
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({
-          type: 'confirm_analysis',
-          analysis_id: currentAnalysisId
-        }));
-        
-        // Optimistically update UI
-        setAnalysisSaved(true);
-        
-        // Show success message
+      // Find the latest analysis message with structured data
+      const latestAnalysisMessage = messages
+        .filter(msg => msg.type === 'agent' && msg.structured_data)
+        .pop();
+      
+      if (!latestAnalysisMessage?.structured_data) {
+        console.error('No structured analysis data found to save');
         setMessages(prev => [...prev, {
           id: generateMessageId(),
           type: 'system',
           sender: 'system',
-          message: 'Analysis saved to project insights successfully!',
+          message: 'No analysis data found to save. Please run an analysis first.',
           timestamp: new Date().toISOString()
         }]);
+        return;
       }
+
+      // Save directly via API instead of WebSocket
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/projects/${projectId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          status: 'completed',
+          insights: latestAnalysisMessage.structured_data
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to save analysis: ${response.statusText}`);
+      }
+
+      // Optimistically update UI
+      setAnalysisSaved(true);
+      
+      // Show success message
+      setMessages(prev => [...prev, {
+        id: generateMessageId(),
+        type: 'system',
+        sender: 'system',
+        message: 'Analysis saved to project insights successfully!',
+        timestamp: new Date().toISOString()
+      }]);
+
+      // Notify parent component if available
+      if (onAnalysisComplete && latestAnalysisMessage.structured_data) {
+        onAnalysisComplete(latestAnalysisMessage.structured_data);
+      }
+      
     } catch (error) {
       console.error('Failed to save analysis:', error);
       setMessages(prev => [...prev, {
         id: generateMessageId(),
         type: 'system',
         sender: 'system',
-        message: 'Failed to save analysis. Please try again.',
+        message: `Failed to save analysis: ${error instanceof Error ? error.message : 'Unknown error'}`,
         timestamp: new Date().toISOString()
       }]);
     }
@@ -2584,18 +2625,23 @@ export default function AgentConversation({ projectId, onAnalysisComplete, exist
       <div className="bg-white border-t px-6 py-4">
         <div className="relative">
           {/* Save to Insights button (bottom placement) */}
-          {analysisComplete && !analysisSaved && currentAnalysisId && (
-            <div className="mb-4 flex justify-end">
-              <button
-                onClick={confirmAndSaveAnalysis}
-                disabled={!isConnected || !currentAnalysisId}
-                className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-              >
-                <CheckIcon className="h-5 w-5" />
-                Save to Insights
-              </button>
-            </div>
-          )}
+          {(() => {
+            const hasAnalysisData = currentAnalysisId || messages.some(msg => msg.type === 'agent' && msg.structured_data);
+            const shouldShow = analysisComplete && !analysisSaved && hasAnalysisData;
+            
+            return shouldShow && (
+              <div className="mb-4 flex justify-end">
+                <button
+                  onClick={confirmAndSaveAnalysis}
+                  disabled={!isConnected || (!currentAnalysisId && !messages.some(msg => msg.type === 'agent' && msg.structured_data))}
+                  className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                  <CheckIcon className="h-5 w-5" />
+                  Save to Insights
+                </button>
+              </div>
+            );
+          })()}
           {/* Agent suggestions dropdown */}
           {showAgentSuggestions && filteredAgents.length > 0 && (
             <div className="absolute bottom-full mb-2 left-0 w-64 bg-white border rounded-lg shadow-lg">
