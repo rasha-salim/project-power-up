@@ -1046,7 +1046,7 @@ export default function AgentConversation({ projectId, onAnalysisComplete, exist
                         if (resourceMatch) {
                           try {
                             const resourceContent = resourceMatch[1];
-                            const resourceReqs = {};
+                            const resourceReqs: any = {};
                             
                             const devMatch = resourceContent.match(/"developers":\s*(\d+)/);
                             const designersMatch = resourceContent.match(/"designers":\s*(\d+)/);
