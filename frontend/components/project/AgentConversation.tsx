@@ -747,7 +747,8 @@ export default function AgentConversation({ projectId, onAnalysisComplete, exist
                 message_length: data.message?.length,
                 is_thinking: data.is_thinking,
                 analysis_id: data.analysis_id,
-                message_preview: data.message?.substring(0, 100)
+                message_preview: data.message?.substring(0, 100),
+                message_full: data.message // Add full message for debugging
               });
               
               // Special logging for project planner
@@ -767,8 +768,23 @@ export default function AgentConversation({ projectId, onAnalysisComplete, exist
                 data.message.match(/Technical Analysis[:\s]/i) ||
                 (data.message.includes('Architecture Overview') && data.message.includes('Technology Stack'))
               );
+              const hasJsonTechnicalAnalysis = data.message && data.message.includes('"technical_analysis"');
               
-              if (isJsonStructuredResponse || isMarkdownAnalysisResponse) {
+              // Check for JSON within the message (even if preceded by text)
+              const hasJsonInMessage = data.message && data.message.includes('{') && data.message.includes('}') && data.message.includes('"technical_analysis"');
+              
+              console.log('🔍 Message analysis detection:', {
+                isJsonStructuredResponse,
+                isMarkdownAnalysisResponse, 
+                hasJsonTechnicalAnalysis,
+                hasJsonInMessage,
+                messageLength: data.message?.length,
+                startsWithBrace: data.message?.trim().startsWith('{'),
+                endsWithBrace: data.message?.trim().endsWith('}'),
+                containsTechnicalAnalysis: data.message?.includes('technical_analysis')
+              });
+              
+              if (isJsonStructuredResponse || isMarkdownAnalysisResponse || hasJsonTechnicalAnalysis || hasJsonInMessage) {
                 console.log('🟡 Technical Analysis message detected, parsing structured content:', {
                   sender: data.sender,
                   messageLength: data.message.length,
@@ -787,6 +803,18 @@ export default function AgentConversation({ projectId, onAnalysisComplete, exist
                     console.log('🟢 Direct JSON parse successful:', Object.keys(parsedStructuredData));
                   } catch (e) {
                     console.warn('🟡 Direct JSON parse failed, trying parseStructuredContent');
+                    parsedStructuredData = parseStructuredContent(data.message);
+                  }
+                } else if (hasJsonInMessage) {
+                  // Extract JSON from within the message
+                  try {
+                    const jsonMatch = data.message.match(/\{[\s\S]*\}/);
+                    if (jsonMatch) {
+                      parsedStructuredData = JSON.parse(jsonMatch[0]);
+                      console.log('🟢 Extracted JSON parse successful:', Object.keys(parsedStructuredData));
+                    }
+                  } catch (e) {
+                    console.warn('🟡 JSON extraction failed, trying parseStructuredContent');
                     parsedStructuredData = parseStructuredContent(data.message);
                   }
                 } else {
