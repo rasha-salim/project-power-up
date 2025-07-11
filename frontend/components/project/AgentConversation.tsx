@@ -854,7 +854,7 @@ export default function AgentConversation({ projectId, onAnalysisComplete, exist
                       console.warn('🟡 No JSON found in message');
                     }
                   } catch (e) {
-                    console.warn('🟡 JSON extraction failed:', e.message);
+                    console.warn('🟡 JSON extraction failed:', e instanceof Error ? e.message : String(e));
                     parsedStructuredData = parseStructuredContent(data.message);
                   }
                 } else {
