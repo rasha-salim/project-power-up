@@ -779,8 +779,20 @@ export default function AgentConversation({ projectId, onAnalysisComplete, exist
                   messagePreview: data.message.substring(0, 200) + '...'
                 });
                 
-                // Parse the formatted text into structured data
-                const parsedStructuredData = parseStructuredContent(data.message);
+                // For JSON responses, try direct parsing first
+                let parsedStructuredData = null;
+                if (isJsonStructuredResponse) {
+                  try {
+                    parsedStructuredData = JSON.parse(data.message.trim());
+                    console.log('🟢 Direct JSON parse successful:', Object.keys(parsedStructuredData));
+                  } catch (e) {
+                    console.warn('🟡 Direct JSON parse failed, trying parseStructuredContent');
+                    parsedStructuredData = parseStructuredContent(data.message);
+                  }
+                } else {
+                  // Parse markdown formatted text into structured data
+                  parsedStructuredData = parseStructuredContent(data.message);
+                }
                 
                 if (parsedStructuredData) {
                   console.log('🟡 Successfully parsed Technical Analysis, activating save button:', {
@@ -798,6 +810,11 @@ export default function AgentConversation({ projectId, onAnalysisComplete, exist
                   setAnalysisSaved(false);
                   setCurrentAnalysisId(analysisId);
                   setIsAgentThinking(false);
+                  
+                  // Force save button activation by calling onAnalysisComplete if available
+                  if (onAnalysisComplete && parsedStructuredData) {
+                    onAnalysisComplete(parsedStructuredData);
+                  }
                   
                   // Add the structured data to the message
                   data.structured_data = parsedStructuredData;
