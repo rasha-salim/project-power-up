@@ -873,14 +873,48 @@ export default function AgentConversation({ projectId, onAnalysisComplete, exist
                   // Generate analysis ID if not provided
                   const analysisId = data.analysis_id || `analysis_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
                   
-                  // If parsing failed but we have JSON content, create a simple structure
+                  // If parsing failed but we have JSON content, try one more direct extraction
                   if (!parsedStructuredData && data.message.includes('"technical_analysis"')) {
-                    parsedStructuredData = {
-                      technical_analysis: { architecture: "Analysis received" },
-                      risk_assessment: { overall_risk_score: 5 },
-                      project_plan: { timeline: "TBD" }
-                    };
-                    console.log('🔧 Created fallback structure for save button activation');
+                    console.log('🔧 Attempting direct JSON extraction from message:', data.message.substring(0, 200) + '...');
+                    
+                    try {
+                      // Method 1: Find the JSON block starting after "Technical Analysis"
+                      const lines = data.message.split('\n');
+                      let jsonStart = -1;
+                      
+                      for (let i = 0; i < lines.length; i++) {
+                        if (lines[i].trim().startsWith('{')) {
+                          jsonStart = i;
+                          break;
+                        }
+                      }
+                      
+                      if (jsonStart !== -1) {
+                        const jsonLines = lines.slice(jsonStart);
+                        const jsonText = jsonLines.join('\n');
+                        parsedStructuredData = JSON.parse(jsonText);
+                        console.log('🟢 Successfully extracted JSON by lines:', Object.keys(parsedStructuredData));
+                      } else {
+                        // Method 2: Simple index-based extraction
+                        const startIndex = data.message.indexOf('{');
+                        const endIndex = data.message.lastIndexOf('}');
+                        if (startIndex !== -1 && endIndex !== -1) {
+                          const jsonText = data.message.substring(startIndex, endIndex + 1);
+                          console.log('🔧 Trying to parse extracted JSON:', jsonText.substring(0, 100) + '...');
+                          parsedStructuredData = JSON.parse(jsonText);
+                          console.log('🟢 Successfully extracted JSON by index:', Object.keys(parsedStructuredData));
+                        }
+                      }
+                    } catch (e) {
+                      console.error('🔴 All JSON extraction methods failed:', e);
+                      // Only use fallback if everything fails
+                      parsedStructuredData = {
+                        technical_analysis: { architecture: "Analysis received - JSON parsing failed" },
+                        risk_assessment: { overall_risk_score: 5 },
+                        project_plan: { timeline: "TBD" }
+                      };
+                      console.log('🔧 Created fallback structure for save button activation');
+                    }
                   }
                   
                   // Set analysis states to activate save button
