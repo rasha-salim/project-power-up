@@ -907,13 +907,70 @@ export default function AgentConversation({ projectId, onAnalysisComplete, exist
                       }
                     } catch (e) {
                       console.error('🔴 All JSON extraction methods failed:', e);
-                      // Only use fallback if everything fails
-                      parsedStructuredData = {
-                        technical_analysis: { architecture: "Analysis received - JSON parsing failed" },
-                        risk_assessment: { overall_risk_score: 5 },
-                        project_plan: { timeline: "TBD" }
-                      };
-                      console.log('🔧 Created fallback structure for save button activation');
+                      
+                      // FALLBACK: Extract partial data from the raw JSON text
+                      try {
+                        const jsonText = data.message.substring(data.message.indexOf('{'));
+                        console.log('🔧 Attempting to extract partial data from truncated JSON');
+                        
+                        // Extract what we can manually
+                        const extracted = {
+                          technical_analysis: {},
+                          risk_assessment: {},
+                          project_plan: {}
+                        };
+                        
+                        // Extract architecture
+                        const archMatch = jsonText.match(/"architecture":\s*"([^"]+)"/);
+                        if (archMatch) extracted.technical_analysis.architecture = archMatch[1];
+                        
+                        // Extract tech stack
+                        const frontendMatch = jsonText.match(/"frontend":\s*\[([^\]]+)\]/);
+                        const backendMatch = jsonText.match(/"backend":\s*\[([^\]]+)\]/);
+                        if (frontendMatch || backendMatch) {
+                          extracted.technical_analysis.tech_stack = {};
+                          if (frontendMatch) {
+                            extracted.technical_analysis.tech_stack.frontend = frontendMatch[1].split(',').map(s => s.trim().replace(/"/g, ''));
+                          }
+                          if (backendMatch) {
+                            extracted.technical_analysis.tech_stack.backend = backendMatch[1].split(',').map(s => s.trim().replace(/"/g, ''));
+                          }
+                        }
+                        
+                        // Extract scores
+                        const complexityMatch = jsonText.match(/"complexity_score":\s*(\d+)/);
+                        const maintainabilityMatch = jsonText.match(/"maintainability_score":\s*(\d+)/);
+                        const scalabilityMatch = jsonText.match(/"scalability_score":\s*(\d+)/);
+                        const securityMatch = jsonText.match(/"security_score":\s*(\d+)/);
+                        
+                        if (complexityMatch) extracted.technical_analysis.complexity_score = parseInt(complexityMatch[1]);
+                        if (maintainabilityMatch) extracted.technical_analysis.maintainability_score = parseInt(maintainabilityMatch[1]);
+                        if (scalabilityMatch) extracted.technical_analysis.scalability_score = parseInt(scalabilityMatch[1]);
+                        if (securityMatch) extracted.technical_analysis.security_score = parseInt(securityMatch[1]);
+                        
+                        // Extract risk score
+                        const riskMatch = jsonText.match(/"overall_risk_score":\s*(\d+)/);
+                        if (riskMatch) extracted.risk_assessment.overall_risk_score = parseInt(riskMatch[1]);
+                        
+                        // Extract timeline and cost
+                        const timelineMatch = jsonText.match(/"timeline":\s*"([^"]+)"/);
+                        const costMatch = jsonText.match(/"estimated_cost":\s*(\d+)/);
+                        if (timelineMatch) extracted.project_plan.timeline = timelineMatch[1];
+                        if (costMatch) extracted.project_plan.estimated_cost = parseInt(costMatch[1]);
+                        
+                        parsedStructuredData = extracted;
+                        console.log('🟢 Successfully extracted partial data:', Object.keys(extracted));
+                        
+                      } catch (extractError) {
+                        console.error('🔴 Even partial extraction failed:', extractError);
+                        // Ultimate fallback
+                        parsedStructuredData = {
+                          technical_analysis: { architecture: "Analysis received - JSON parsing failed" },
+                          risk_assessment: { overall_risk_score: 5 },
+                          project_plan: { timeline: "TBD" }
+                        };
+                        console.log('🔧 Created fallback structure for save button activation');
+                      }
                     }
                   }
                   
