@@ -73,6 +73,14 @@ class AnalysisExecutionService:
                 "UI Components:",           # Wrong tech stack format
                 "Key Technical Components:", # Wrong section name
                 "Content Ingestion Pipeline:", # Wrong section structure
+                "Technical Analysis\nTechnical Analysis &",  # Pattern from broken output
+                "Timeline:  July",           # Pattern from broken output  
+                "Week 1-2:",                # Broken week format
+                "Week 3-4:",                # Broken week format
+                "Given the client's",       # Narrative text pattern
+                "here is a detailed",       # Narrative text pattern
+                "Validation Architecture Components",  # Wrong section pattern
+                "Core Validation Layer:",   # Wrong subsection pattern
             ]
             
             if any(indicator in cleaned_text for indicator in wrong_format_indicators):
@@ -524,12 +532,25 @@ class AnalysisExecutionService:
                 if constraint_attempt > 0:
                     constraint_violation_feedback = f"""
                     
-                    🚨 CONSTRAINT VIOLATION RETRY - ATTEMPT {constraint_attempt + 1}/{self.max_constraint_retries + 1}
-                    Previous attempt failed constraint validation. PAY SPECIAL ATTENTION TO:
+                    🚨🚨🚨 RETRY ATTEMPT {constraint_attempt + 1}/{self.max_constraint_retries + 1} 🚨🚨🚨
+                    Previous attempt failed validation. CRITICAL REQUIREMENTS:
+                    
+                    1. JSON FORMAT MANDATORY:
+                    - RETURN ONLY VALID JSON - NO TEXT, NO MARKDOWN, NO EXPLANATIONS
+                    - Response MUST start with {{ and end with }}
+                    - NO explanatory text before or after the JSON
+                    - DO NOT use "Technical Analysis Update" or narrative format
+                    
+                    2. CONSTRAINT COMPLIANCE:
                     - Team size constraint: MUST NOT exceed {getattr(project, 'team_size', 'specified')} people total
                     - Budget constraint: MUST NOT exceed ${getattr(project, 'budget', 'specified')} budget
                     - Resource allocation MUST sum to team_size or less
-                    - This is a RETRY - follow constraints exactly or analysis will be rejected
+                    
+                    3. STRUCTURE REQUIREMENT:
+                    - Follow the exact JSON structure provided in the task
+                    - Include all required sections: technical_analysis, risk_assessment, project_plan, recommendations
+                    
+                    This is a RETRY - follow ALL requirements exactly or analysis will be rejected.
                     """
                 
                 task_description = self._build_task_description(
@@ -614,6 +635,57 @@ class AnalysisExecutionService:
                         logger.error(f"🔍 INCREMENTAL VALIDATION FAILURE:")
                         logger.error(f"   - Validation error: {validation_error}")
                         logger.error(f"   - Raw output that failed: {crew_output}")
+                    
+                    # Check if this is a JSON format issue (agent returned formatted text)
+                    if "Response is not valid JSON" in validation_error or "detected forbidden patterns" in validation_error:
+                        # This is a format error, not an API error - handle it with constraint retry logic
+                        if constraint_attempt < self.max_constraint_retries:
+                            constraint_attempt += 1
+                            logger.warning(f"JSON format validation failed. Retrying with enhanced JSON instructions (constraint attempt {constraint_attempt}/{self.max_constraint_retries})")
+                            
+                            # Send format retry notification
+                            if ws_manager:
+                                await ws_manager.broadcast(
+                                    project_id,
+                                    {
+                                        "type": "format_validation_retry",
+                                        "analysis_id": analysis_id,
+                                        "validation_error": validation_error,
+                                        "message": f"🔄 Agent returned formatted text instead of JSON. Retrying with enhanced instructions (attempt {constraint_attempt}/{self.max_constraint_retries})...",
+                                        "timestamp": datetime.now().isoformat(),
+                                        "attempt": constraint_attempt
+                                    }
+                                )
+                            
+                            # Skip to next attempt with enhanced JSON instructions
+                            continue
+                        else:
+                            # Final format attempt failed - send formatted fallback
+                            logger.error(f"Final JSON format attempt failed - sending formatted fallback")
+                            if ws_manager:
+                                try:
+                                    formatted_output = f"""# Technical Analysis
+
+{str(crew_output)[:2000]}
+
+---
+*Note: Agent returned formatted text instead of required JSON structure after multiple retry attempts.*"""
+                                    
+                                    formatted_message = {
+                                        "type": "agent_message",
+                                        "sender": "technical_agent", 
+                                        "sender_name": "Technical Analysis Agent",
+                                        "message": formatted_output,
+                                        "analysis_id": analysis_id,
+                                        "timestamp": str(datetime.now())
+                                    }
+                                    
+                                    await ws_manager.broadcast(project_id, formatted_message)
+                                    logger.info(f"Sent formatted fallback after JSON validation failures")
+                                    
+                                except Exception as format_error:
+                                    logger.error(f"Failed to send formatted fallback: {format_error}")
+                    
                     raise ValueError(f"Analysis validation failed: {validation_error}")
                 
                 if not structured_analysis:
@@ -1378,7 +1450,81 @@ class AnalysisExecutionService:
            - Budget limitations and resource constraints
         
         STEP 4 - STRUCTURED OUTPUT:
-        After completing all document searches and analysis, provide your findings in the required JSON format.
+        🚨🚨🚨 CRITICAL: YOU MUST RETURN EXACTLY THIS JSON FORMAT - NO DEVIATIONS ALLOWED 🚨🚨🚨
+        
+        ABSOLUTE REQUIREMENTS:
+        1. RETURN ONLY VALID JSON - NO TEXT, NO MARKDOWN, NO EXPLANATIONS
+        2. DO NOT create "Technical Analysis Update" format
+        3. DO NOT use Start Date/End Date fields
+        4. DO NOT create "Architecture Overview" sections
+        5. MUST match the original analysis structure EXACTLY
+        6. Your response must start with {{ and end with }}
+        7. NO explanatory text before or after the JSON
+        
+        REQUIRED JSON STRUCTURE (copy this structure exactly):
+        {{
+          "analysis_mode": "initial|update",
+          "technical_analysis": {{
+            "architecture": "Specific architectural pattern based on documents",
+            "tech_stack": {{
+              "frontend": ["Technologies found in documents"],
+              "backend": ["Technologies found in documents"], 
+              "infrastructure": ["Infrastructure mentioned in documents"],
+              "tools": ["Tools and frameworks from documents"]
+            }},
+            "complexity_score": [1-10 based on document analysis],
+            "maintainability_score": [1-10 based on document findings],
+            "scalability_score": [1-10 based on requirements],
+            "performance_score": [1-10 based on requirements],
+            "security_score": [1-10 based on requirements]
+          }},
+          "risk_assessment": {{
+            "overall_risk_score": [1-10 based on project complexity],
+            "key_risks": [
+              {{
+                "name": "Risk name from analysis",
+                "level": "Low/Medium/High",
+                "impact": [1-10],
+                "probability": [1-10], 
+                "description": "Description based on document findings"
+              }}
+            ],
+            "mitigation_strategies": ["Strategies based on identified risks"]
+          }},
+          "project_plan": {{
+            "timeline": "Timeline preserving original deadline constraints",
+            "estimated_cost": [Cost respecting original budget constraints],
+            "phases": [
+              {{
+                "name": "Phase name",
+                "duration": [weeks],
+                "description": "Phase description"
+              }}
+            ],
+            "milestones": [
+              {{
+                "name": "Milestone name",
+                "date": "Target date within original timeline",
+                "status": "upcoming",
+                "description": "Milestone description"
+              }}
+            ],
+            "resource_requirements": {{
+              "developers": [whole number - integer only, no decimals],
+              "designers": [whole number - integer only, no decimals],
+              "qa": [whole number - integer only, no decimals],
+              "devops": [whole number - integer only, no decimals],
+              "pm": 1,
+              "other": {{}}
+            }}
+          }},
+          "recommendations": ["Recommendations based on document analysis"],
+          "explanations": {{
+            "complexity_reasoning": "Cite specific documents and findings",
+            "risk_analysis_details": "Cite specific documents and findings",
+            "technology_rationale": "Cite specific documents and findings"
+          }}
+        }}
         
         STEP 5 - CITATION:
         Include specific document references and sections where you found information in the explanations.
