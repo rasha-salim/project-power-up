@@ -85,8 +85,8 @@ class AgentServiceV2:
             analysis_id = str(uuid.uuid4())
             logger.info(f"Starting incremental analysis {analysis_id} based on existing analysis {existing_analysis_id}")
             
-            # Enhance additional context for incremental analysis
-            additional_context = f"Previous analysis context exists. New requirements: {additional_context}"
+            # Enhance additional context for incremental analysis (simplified to avoid agent confusion)
+            additional_context = f"Update analysis with: {additional_context}"
             
             # Send notification about incremental analysis starting
             if ws_manager:

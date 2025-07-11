@@ -593,6 +593,15 @@ class AnalysisExecutionService:
                 except asyncio.TimeoutError:
                     raise TimeoutError("Analysis execution timed out after 5 minutes")
                 
+                # Debug logging for incremental analysis
+                if additional_context and "Update analysis with:" in additional_context:
+                    logger.info(f"🔍 INCREMENTAL ANALYSIS DEBUG:")
+                    logger.info(f"   - Analysis ID: {analysis_id}")
+                    logger.info(f"   - Additional context: {additional_context}")
+                    logger.info(f"   - Raw crew output length: {len(crew_output)} chars")
+                    logger.info(f"   - Raw crew output preview: {crew_output[:500]}...")
+                    logger.info(f"   - Raw crew output ending: ...{crew_output[-200:]}")
+                
                 # Parse and structure the results using Pydantic validation
                 is_valid, structured_analysis, validation_error = self._validate_analysis_with_pydantic(
                     crew_output, analysis_id, project_id
@@ -600,6 +609,11 @@ class AnalysisExecutionService:
                 
                 if not is_valid:
                     logger.error(f"Analysis validation failed: {validation_error}")
+                    # Debug: Log the raw output that failed validation for incremental analysis
+                    if additional_context and "Update analysis with:" in additional_context:
+                        logger.error(f"🔍 INCREMENTAL VALIDATION FAILURE:")
+                        logger.error(f"   - Validation error: {validation_error}")
+                        logger.error(f"   - Raw output that failed: {crew_output}")
                     raise ValueError(f"Analysis validation failed: {validation_error}")
                 
                 if not structured_analysis:
@@ -715,6 +729,33 @@ class AnalysisExecutionService:
                         logger.info(f"Broadcasting analysis_complete message with structured data only")
                         await ws_manager.broadcast(project_id, completion_message)
                         logger.info(f"Successfully broadcasted analysis_complete message")
+                        
+                        # If structured data is None or empty, send formatted fallback via agent_message
+                        if not structured_data or len(structured_data) == 0:
+                            logger.warning(f"Structured data is None/empty, sending formatted fallback message")
+                            try:
+                                # Create a simple formatted version of the raw output
+                                formatted_output = f"""# Technical Analysis
+
+{str(crew_result)[:2000]}
+
+---
+*Note: Analysis completed but structured parsing failed. This is the raw agent output.*"""
+                                
+                                formatted_message = {
+                                    "type": "agent_message",
+                                    "sender": "technical_agent", 
+                                    "sender_name": "Technical Analysis Agent",
+                                    "message": formatted_output,
+                                    "analysis_id": analysis_id,
+                                    "timestamp": str(datetime.now())
+                                }
+                                
+                                await ws_manager.broadcast(project_id, formatted_message)
+                                logger.info(f"Successfully sent formatted fallback message")
+                                
+                            except Exception as format_error:
+                                logger.error(f"Failed to send formatted fallback: {format_error}")
                         
                     except Exception as e:
                         logger.error(f"Failed to broadcast analysis_complete message: {e}")
