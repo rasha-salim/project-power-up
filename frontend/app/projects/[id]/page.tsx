@@ -218,20 +218,6 @@ export default function ProjectDetailPage() {
     fetchProjectData();
   }, [projectId]);
 
-  // Handle starting analysis
-  const handleStartAnalysis = async () => {
-    try {
-      setIsAnalysisRunning(true);
-      setProject(prev => prev ? { ...prev, status: 'analyzing' } : null);
-      
-      // The analysis status will be updated via WebSocket messages
-      // No need for polling anymore
-      
-    } catch (err) {
-      console.error('Error starting analysis:', err);
-      setIsAnalysisRunning(false);
-    }
-  };
 
   const handleAnalysisComplete = (insights: any) => {
     setProject(prev => prev ? { 
@@ -451,7 +437,6 @@ export default function ProjectDetailPage() {
             {activeTab === 'conversation' ? (
               <AgentConversation 
                 projectId={projectId}
-                onStartAnalysis={handleStartAnalysis}
                 onAnalysisComplete={handleAnalysisComplete}
                 existingInsights={project.insights}  // Pass existing insights
               />

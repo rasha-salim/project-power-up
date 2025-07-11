@@ -31,12 +31,11 @@ interface AgentInfo {
 
 interface AgentConversationProps {
   projectId: string;
-  onStartAnalysis: () => void;
   onAnalysisComplete?: (insights: any) => void;
   existingInsights?: any;  // Add this prop for existing analysis
 }
 
-export default function AgentConversation({ projectId, onStartAnalysis, onAnalysisComplete, existingInsights }: AgentConversationProps) {
+export default function AgentConversation({ projectId, onAnalysisComplete, existingInsights }: AgentConversationProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputMessage, setInputMessage] = useState('');
   const [isConnected, setIsConnected] = useState(false);
@@ -1297,16 +1296,6 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
     }
   };
 
-  const startAnalysis = (force: boolean = false) => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      return;
-    }
-
-    wsRef.current.send(JSON.stringify({
-      type: 'start_analysis',
-      force: force
-    }));
-  };
 
   const cancelAnalysis = () => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN || !currentAnalysisId) {
@@ -1488,13 +1477,16 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
     if (!analysisError?.analysisId) return;
     
     setAnalysisError(null);
-    setAnalysisProgress('Retrying analysis...');
+    setAnalysisProgress('');
     
-    // Send retry message
-    wsRef.current?.send(JSON.stringify({
-      type: 'start_analysis',
-      force: true // Force retry even if previous analysis exists
-    }));
+    // Add a message suggesting the user to retry via chat
+    setMessages(prev => [...prev, {
+      id: generateMessageId(),
+      type: 'system',
+      sender: 'system',
+      message: '💡 To retry analysis, please send a message like "@technical please analyze" or "start analysis"',
+      timestamp: new Date().toISOString()
+    }]);
   };
 
   return (
@@ -1550,16 +1542,6 @@ export default function AgentConversation({ projectId, onStartAnalysis, onAnalys
               >
                 <CheckIcon className="h-5 w-5" />
                 Save to Insights
-              </button>
-            )}
-            {!isAnalyzing && !analysisComplete && !existingInsights && (
-              <button
-                onClick={() => startAnalysis()}
-                disabled={!isConnected}
-                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-              >
-                <ArrowPathIcon className="h-5 w-5" />
-                Start Analysis
               </button>
             )}
             {isAnalyzing && (
