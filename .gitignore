@@ -22,49 +22,127 @@ var/
 # Virtual Environment
 venv/
 ENV/
+env/
 .env
+.env.*
 
-# Database
+# Database Files (Runtime Data)
 *.db
 *.sqlite3
 project_powerup.db
 
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
+# Vector Database (Runtime Data)
+chroma_db/
+chromadb/
+*.chroma
 
-# Logs
+# File Uploads & Processing (Runtime Data)
+uploads/
+minimal_uploads/
+generated_documents/
+
+# Logs & Debug Files
 logs/
 *.log
 document_processor_debug.log
 document_processing_started.txt
 document_processing_completed.txt
 
-# Frontend
+# IDE & Editor Files
+.idea/
+.vscode/
+*.swp
+*.swo
+.sublime-*
+*.kate-swp
+
+# Frontend Dependencies & Build Files
 node_modules/
 .next/
 out/
 .cache/
+.turbo/
+.vercel/
+.netlify/
+
+# Environment Files
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
+.env.development
+.env.staging
+.env.production
 
-# Vector DB
-chroma_db/
-chromadb/
-
-# Uploads & Processing
-uploads/
-minimal_uploads/
-
-# OS specific
+# OS Specific Files
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
 
-# Development Rules (keep local for now)
+# Screenshot & Image Files (Development)
+Screenshot*.png
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.ico
+*.webp
+
+# Test & Development Files
+test_*.py
+*_test.py
+tests/coverage/
+.coverage
+.pytest_cache/
+.tox/
+.nox/
+
+# Documentation Build Files
+docs/_build/
+docs/build/
+site/
+
+# Package Manager Files
+pip-log.txt
+pip-delete-this-directory.txt
+.pypirc
+
+# Development Tools
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+.ruff_cache/
+
+# Security & Secrets
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+.secrets
+secrets.json
+
+# Backup Files
+*.bak
+*.tmp
+*.temp
+*~
+.#*
+#*#
+
+# Runtime Configuration
+config.local.json
 .cursorrules
-docs/development-rules.md
-.claude/settings.local.json
+.claude/
