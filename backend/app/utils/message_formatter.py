@@ -311,3 +311,116 @@ class MessageFormatter:
                 sections.append(f"{i}. {rec}")
         
         return '\n'.join(sections)
+    
+    @staticmethod
+    def format_security_analysis(analysis_data: dict) -> str:
+        """
+        Format security analysis data in a structured format
+        
+        Args:
+            analysis_data: Dictionary containing security analysis results
+            
+        Returns:
+            Formatted security analysis text
+        """
+        if not analysis_data:
+            return "No security analysis data available"
+        
+        sections = []
+        
+        # Security Analysis Results header
+        sections.append("## Security Analysis Results:\n")
+        
+        # Security Analysis Section
+        if 'security_analysis' in analysis_data:
+            security = analysis_data['security_analysis']
+            sections.append("### Security Analysis")
+            
+            if 'overall_security_score' in security:
+                sections.append(f"**Overall Security Score**: {security['overall_security_score']}/10")
+            
+            if 'security_posture' in security:
+                sections.append(f"**Security Posture**: {security['security_posture']}")
+            
+            # Compliance Status
+            if 'compliance_status' in security:
+                compliance = security['compliance_status']
+                sections.append("**Compliance Status**:")
+                if 'required_standards' in compliance and compliance['required_standards']:
+                    sections.append(f"  Required Standards: {', '.join(compliance['required_standards'])}")
+                if 'current_compliance_level' in compliance:
+                    sections.append(f"  Current Level: {compliance['current_compliance_level']}")
+                if 'compliance_gaps' in compliance and compliance['compliance_gaps']:
+                    sections.append(f"  Gaps: {', '.join(compliance['compliance_gaps'])}")
+            
+            # Authentication Analysis
+            if 'authentication_analysis' in security:
+                auth = security['authentication_analysis']
+                sections.append("**Authentication Analysis**:")
+                if 'current_mechanism' in auth:
+                    sections.append(f"  Current Mechanism: {auth['current_mechanism']}")
+                if 'security_level' in auth:
+                    sections.append(f"  Security Level: {auth['security_level']}")
+        
+        # Vulnerability Assessment Section
+        if 'vulnerability_assessment' in analysis_data:
+            vuln = analysis_data['vulnerability_assessment']
+            sections.append("\n### Vulnerability Assessment")
+            
+            if 'critical_vulnerabilities' in vuln and vuln['critical_vulnerabilities']:
+                sections.append("**Critical Vulnerabilities**:")
+                for vuln_item in vuln['critical_vulnerabilities']:
+                    vuln_name = vuln_item.get('name', 'Unknown Vulnerability')
+                    vuln_severity = vuln_item.get('severity', 'Unknown')
+                    vuln_desc = vuln_item.get('description', '')
+                    sections.append(f"  {vuln_name} ({vuln_severity}) - {vuln_desc}")
+            
+            if 'security_risks' in vuln and vuln['security_risks']:
+                sections.append("**Security Risks**:")
+                for risk_item in vuln['security_risks']:
+                    risk_name = risk_item.get('name', 'Unknown Risk')
+                    risk_severity = risk_item.get('severity', 'Unknown')
+                    risk_category = risk_item.get('category', 'General')
+                    risk_desc = risk_item.get('description', '')
+                    sections.append(f"  {risk_name} ({risk_category}, {risk_severity}) - {risk_desc}")
+        
+        # Security Recommendations Section
+        if 'security_recommendations' in analysis_data:
+            recs = analysis_data['security_recommendations']
+            sections.append("\n### Security Recommendations")
+            
+            if 'immediate_actions' in recs and recs['immediate_actions']:
+                sections.append("**Immediate Actions**:")
+                for action in recs['immediate_actions']:
+                    sections.append(f"  • {action}")
+            
+            if 'short_term' in recs and recs['short_term']:
+                sections.append("**Short-term (30 days)**:")
+                for action in recs['short_term']:
+                    sections.append(f"  • {action}")
+            
+            if 'long_term' in recs and recs['long_term']:
+                sections.append("**Long-term (3+ months)**:")
+                for action in recs['long_term']:
+                    sections.append(f"  • {action}")
+        
+        # Security Roadmap Section
+        if 'security_roadmap' in analysis_data:
+            roadmap = analysis_data['security_roadmap']
+            sections.append("\n### Security Implementation Roadmap")
+            
+            for phase_key in ['phase_1', 'phase_2', 'phase_3']:
+                if phase_key in roadmap:
+                    phase = roadmap[phase_key]
+                    phase_name = phase.get('name', f'Phase {phase_key[-1]}')
+                    phase_priority = phase.get('priority', 'Medium')
+                    sections.append(f"**{phase_name}** (Priority: {phase_priority})")
+                    
+                    if 'actions' in phase and phase['actions']:
+                        for action in phase['actions']:
+                            sections.append(f"  • {action}")
+                    
+                    if 'estimated_effort' in phase:
+                        sections.append(f"  Estimated Effort: {phase['estimated_effort']}")
+        
+        return '\n'.join(sections)

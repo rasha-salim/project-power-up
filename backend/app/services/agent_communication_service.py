@@ -43,6 +43,122 @@ class AgentCommunicationService:
         message_lower = message.lower()
         return any(re.search(pattern, message_lower) for pattern in document_patterns)
     
+    def _load_structured_agent_config(self, agent_id: str, task_id: str) -> tuple[Dict[str, Any], Dict[str, Any]]:
+        """
+        Load structured agent and task configuration from YAML
+        
+        Args:
+            agent_id: ID of the agent (e.g., "technical_analyst", "security_analyst")
+            task_id: ID of the task (e.g., "technical_analysis", "security_analysis")
+            
+        Returns:
+            tuple: (agent_config, task_config)
+            
+        Raises:
+            ValueError: If configuration not found
+        """
+        from app.config.config_loader import ConfigLoader
+        
+        config_loader = ConfigLoader()
+        
+        # Get agent and task configurations
+        agent_config = config_loader.get_agent_config(agent_id)
+        task_config = config_loader.get_task_config(task_id)
+        
+        if not agent_config:
+            raise ValueError(f"Agent configuration not found for {agent_id} in agents.yaml")
+        
+        if not task_config:
+            raise ValueError(f"Task configuration not found for {task_id} in agents.yaml")
+        
+        return agent_config, task_config
+    
+    def _create_structured_agent(
+        self, 
+        agent_config: Dict[str, Any], 
+        context: str, 
+        tools: list,
+        additional_instructions: str = ""
+    ) -> Agent:
+        """
+        Create a structured agent using YAML configuration with context
+        
+        Args:
+            agent_config: Agent configuration from YAML
+            context: Project and analysis context
+            tools: List of tools for the agent
+            additional_instructions: Additional instructions to append to backstory
+            
+        Returns:
+            Agent: Configured CrewAI agent
+        """
+        # Get LLM configuration
+        llm_config = agent_config.get("llm", {})
+        temperature = llm_config.get("temperature", 0.1)
+        llm = self._get_llm(temperature=temperature)
+        
+        # Build structured backstory with context
+        structured_backstory = agent_config["backstory"] + f"""
+        
+        CURRENT PROJECT CONTEXT:
+        {context}
+        
+        CRITICAL: You must respond in the EXACT JSON format specified in the task description. 
+        This is a communication interaction, so provide a structured analysis that 
+        addresses the user's specific question while following the JSON template format.
+        {additional_instructions}
+        """
+        
+        return Agent(
+            role=agent_config["role"],
+            goal=agent_config["goal"],
+            backstory=structured_backstory,
+            llm=llm,
+            tools=tools,
+            verbose=agent_config.get("verbose", True),
+            allow_delegation=agent_config.get("allow_delegation", False)
+        )
+    
+    def _create_structured_task(
+        self, 
+        task_config: Dict[str, Any], 
+        user_message: str, 
+        agent: Agent,
+        task_type: str = "analysis"
+    ) -> Task:
+        """
+        Create a structured task using YAML configuration
+        
+        Args:
+            task_config: Task configuration from YAML
+            user_message: User's message/request
+            agent: Agent to execute the task
+            task_type: Type of task (e.g., "technical", "security")
+            
+        Returns:
+            Task: Configured CrewAI task
+        """
+        # Build structured task description
+        structured_task_description = f"""
+        MANDATORY FIRST STEP: Review the comprehensive document content and current context provided above.
+        
+        USER REQUEST: {user_message}
+        
+        ANALYSIS APPROACH:
+        - Address the user's specific {task_type} question or request
+        - If this involves updating existing analysis, integrate the new requirements
+        - Use project documents and existing analysis as foundation
+        - Provide structured insights in the required JSON format
+        
+        CRITICAL: You must respond with the EXACT JSON structure from the expected_output below.
+        """
+        
+        return Task(
+            description=structured_task_description,
+            expected_output=task_config["expected_output"],  # Use the structured JSON format from YAML
+            agent=agent
+        )
+    
     def _get_llm(self, temperature: float = 0.3) -> ChatAnthropic:
         """Get configured Anthropic LLM instance"""
         if not self.anthropic_api_key:
@@ -417,7 +533,7 @@ class AgentCommunicationService:
         ws_manager: Optional[WebSocketManager] = None
     ) -> Dict[str, Any]:
         """
-        Handle technical questions directed to the technical agent
+        Handle technical questions directed to the technical agent using structured format enforcement
         
         Args:
             db: Database session
@@ -451,43 +567,39 @@ class AgentCommunicationService:
                     }
                 )
             
-            # Create technical context
+            # Load structured agent configuration from YAML using shared method
+            agent_config, task_config = self._load_structured_agent_config("technical_analyst", "technical_analysis")
+            
+            # Create technical context with project and analysis data
             context_parts = [f"Project: {project.name}"]
+            if project.description:
+                context_parts.append(f"Description: {project.description}")
+            
+            # Add existing analysis context if available
             if existing_analysis_id and project.insights:
                 context_parts.append("Current Technical Analysis:")
                 context_parts.append(self._get_technical_analysis_summary(project.insights))
             
+            # Add user message context
+            context_parts.append(f"\nUser Question/Request: {message}")
+            
             context = "\n".join(context_parts)
             
-            # Create technical agent with document search
-            llm = self._get_llm()
+            # Create structured technical agent using shared method
             tools = [DocumentSearchTool(project_id)]
-            
-            backstory = f"""You are a Senior Technical Analyst specializing in software architecture, 
-            technology stack analysis, and technical decision-making. You have access to project documents 
-            and existing technical analysis.
-            
-            Current Technical Context:
-            {context}
-            
-            Provide detailed technical insights, recommendations, and explanations. If the question would 
-            benefit from a full technical analysis, suggest running a complete analysis."""
-            
-            agent = Agent(
-                role="Senior Technical Analyst",
-                goal="Provide expert technical insights and recommendations",
-                backstory=backstory,
-                llm=llm,
-                tools=tools,
-                verbose=True,
-                allow_delegation=False
+            agent = self._create_structured_agent(
+                agent_config, 
+                context, 
+                tools,
+                "This is a technical communication interaction."
             )
             
-            # Create and execute task
-            task = Task(
-                description=f"Technical question: {message}",
-                expected_output="A detailed technical response with insights and recommendations",
-                agent=agent
+            # Create structured task using shared method
+            task = self._create_structured_task(
+                task_config, 
+                message, 
+                agent,
+                "technical"
             )
             
             crew = Crew(
@@ -503,31 +615,45 @@ class AgentCommunicationService:
                 logger.info(f"Technical agent execution successful, response length: {len(response_text)}")
                 logger.debug(f"Raw response preview: {response_text[:200]}...")
                 
-                # Format the response for better readability
+                # Validate and format the structured JSON response
                 try:
-                    # Check if response contains structured analysis data (JSON format)
-                    if response_text.strip().startswith('{') and response_text.strip().endswith('}'):
+                    # Apply the same validation used in AnalysisExecutionService
+                    is_valid, validated_data, error_message = self._validate_technical_response(response_text, project_id)
+                    
+                    if is_valid and validated_data:
+                        # Format as structured technical analysis
+                        formatted_response = MessageFormatter.format_technical_analysis(validated_data)
+                        logger.info(f"Successfully validated and formatted structured technical response")
+                        
+                        # Store the validated structured data for potential use
+                        structured_data = validated_data
+                    else:
+                        # Validation failed, log the error but continue with fallback formatting
+                        logger.warning(f"Technical response validation failed: {error_message}")
+                        logger.warning(f"Falling back to standard formatting for response")
+                        
+                        # Try to parse as JSON anyway for basic formatting
                         try:
-                            # Try to parse as JSON and format as technical analysis
                             import json
                             analysis_data = json.loads(response_text)
                             if any(key in analysis_data for key in ['technical_analysis', 'risk_assessment', 'project_plan']):
                                 formatted_response = MessageFormatter.format_technical_analysis(analysis_data)
-                                logger.debug(f"Formatted as technical analysis: {formatted_response[:200]}...")
+                                structured_data = analysis_data
                             else:
                                 formatted_response = MessageFormatter.format_agent_response(response_text)
+                                structured_data = None
                         except json.JSONDecodeError:
                             # Not valid JSON, use regular formatting
                             formatted_response = MessageFormatter.format_agent_response(response_text)
-                    else:
-                        # Regular response, use standard formatting
-                        formatted_response = MessageFormatter.format_agent_response(response_text)
+                            structured_data = None
                         
-                    logger.debug(f"Formatted response preview: {formatted_response[:200]}...")
-                except Exception as format_error:
-                    logger.error(f"Error formatting response: {str(format_error)}")
-                    # Use raw response if formatting fails
+                    logger.debug(f"Final formatted response preview: {formatted_response[:200]}...")
+                    
+                except Exception as validation_error:
+                    logger.error(f"Error during response validation/formatting: {str(validation_error)}")
+                    # Use raw response if all formatting fails
                     formatted_response = response_text
+                    structured_data = None
                 
             except Exception as crew_error:
                 logger.error(f"Technical crew execution failed: {str(crew_error)}")
@@ -539,16 +665,6 @@ class AgentCommunicationService:
             # Send final response
             if ws_manager:
                 try:
-                    # Check if we parsed structured data for preservation
-                    structured_data = None
-                    if response_text.strip().startswith('{') and response_text.strip().endswith('}'):
-                        try:
-                            parsed_data = json.loads(response_text)
-                            if any(key in parsed_data for key in ['technical_analysis', 'risk_assessment', 'project_plan']):
-                                structured_data = parsed_data
-                        except json.JSONDecodeError:
-                            pass
-
                     await ws_manager.broadcast(
                         project_id,
                         {
@@ -558,10 +674,11 @@ class AgentCommunicationService:
                             "message": formatted_response,
                             "is_thinking": False,
                             "analysis_id": existing_analysis_id,  # Include analysis_id to prevent filtering
-                            "structured_data": structured_data  # Include structured data if available
+                            "structured_data": structured_data if 'structured_data' in locals() else None,  # Include validated structured data
+                            "is_structured_response": bool(structured_data)  # Flag to indicate this is a structured response
                         }
                     )
-                    logger.info(f"Successfully sent technical agent response via WebSocket")
+                    logger.info(f"Successfully sent structured technical agent response via WebSocket")
                 except Exception as ws_error:
                     logger.error(f"Error broadcasting technical agent response: {str(ws_error)}")
                     # Don't raise here, as the response was successful - just log the WebSocket error
@@ -604,7 +721,7 @@ class AgentCommunicationService:
         ws_manager: Optional[WebSocketManager] = None
     ) -> Dict[str, Any]:
         """
-        Handle security questions directed to the security agent
+        Handle security questions directed to the security agent using structured format enforcement
         
         Args:
             db: Database session
@@ -638,7 +755,10 @@ class AgentCommunicationService:
                     }
                 )
             
-            # Create security-focused context
+            # Load structured agent configuration from YAML using shared method
+            agent_config, task_config = self._load_structured_agent_config("security_analyst", "security_analysis")
+            
+            # Create security-focused context with project and analysis data
             context_parts = [f"Project: {project.name}"]
             if project.description:
                 context_parts.append(f"Description: {project.description}")
@@ -652,34 +772,26 @@ class AgentCommunicationService:
                 context_parts.append("Current Analysis Data for Security Review:")
                 context_parts.append(self._get_security_context_summary(project.insights))
             
+            # Add user message context
+            context_parts.append(f"\nUser Security Question/Request: {message}")
+            
             context = "\n".join(context_parts)
             
-            # Create security agent with document search
-            llm = self._get_llm()
+            # Create structured security agent using shared method
             tools = [DocumentSearchTool(project_id)]
-            
-            backstory = f"""You are a Senior Security Analyst with expertise in cybersecurity and application security. 
-            
-            Current Project Context:
-            {context}
-            
-            Provide specific security recommendations based on the project's architecture and technology stack."""
-            
-            agent = Agent(
-                role="Security Analyst",
-                goal=f"Provide comprehensive security analysis and recommendations for the project based on the user's question: '{message}'",
-                backstory=backstory,
-                verbose=True,
-                allow_delegation=False,
-                llm=llm,
-                tools=tools
+            agent = self._create_structured_agent(
+                agent_config, 
+                context, 
+                tools,
+                "This is a security communication interaction focused on security analysis."
             )
             
-            # Create security analysis task
-            task = Task(
-                description=f"Analyze the security aspects of the project and provide recommendations for the user's question: {message}",
-                expected_output="Security analysis with specific recommendations and risk assessment",
-                agent=agent
+            # Create structured task using shared method
+            task = self._create_structured_task(
+                task_config, 
+                message, 
+                agent,
+                "security"
             )
             
             # Execute the crew
@@ -692,18 +804,49 @@ class AgentCommunicationService:
             
             try:
                 result = crew.kickoff()
-                response_text = str(result)
+                response_text = str(result).strip()
                 logger.info(f"Security agent execution successful, response length: {len(response_text)}")
                 logger.debug(f"Raw response preview: {response_text[:200]}...")
                 
-                # Format the response for better readability
+                # Validate and format the structured JSON response
                 try:
-                    formatted_response = MessageFormatter.format_agent_response(response_text)
-                    logger.debug(f"Formatted response preview: {formatted_response[:200]}...")
-                except Exception as format_error:
-                    logger.error(f"Error formatting response: {str(format_error)}")
-                    # Use raw response if formatting fails
+                    # Apply security-specific validation
+                    is_valid, validated_data, error_message = self._validate_security_response(response_text, project_id)
+                    
+                    if is_valid and validated_data:
+                        # Format as structured security analysis
+                        formatted_response = MessageFormatter.format_security_analysis(validated_data)
+                        logger.info(f"Successfully validated and formatted structured security response")
+                        
+                        # Store the validated structured data for potential use
+                        structured_data = validated_data
+                    else:
+                        # Validation failed, log the error but continue with fallback formatting
+                        logger.warning(f"Security response validation failed: {error_message}")
+                        logger.warning(f"Falling back to standard formatting for response")
+                        
+                        # Try to parse as JSON anyway for basic formatting
+                        try:
+                            import json
+                            analysis_data = json.loads(response_text)
+                            if any(key in analysis_data for key in ['security_analysis', 'vulnerability_assessment', 'security_recommendations']):
+                                formatted_response = MessageFormatter.format_security_analysis(analysis_data)
+                                structured_data = analysis_data
+                            else:
+                                formatted_response = MessageFormatter.format_agent_response(response_text)
+                                structured_data = None
+                        except json.JSONDecodeError:
+                            # Not valid JSON, use regular formatting
+                            formatted_response = MessageFormatter.format_agent_response(response_text)
+                            structured_data = None
+                        
+                    logger.debug(f"Final formatted security response preview: {formatted_response[:200]}...")
+                    
+                except Exception as validation_error:
+                    logger.error(f"Error during security response validation/formatting: {str(validation_error)}")
+                    # Use raw response if all formatting fails
                     formatted_response = response_text
+                    structured_data = None
                 
             except Exception as crew_error:
                 logger.error(f"Security crew execution failed: {str(crew_error)}")
@@ -722,10 +865,13 @@ class AgentCommunicationService:
                             "sender": "security_analyst",
                             "sender_name": "Security Analyst",
                             "message": formatted_response,
-                            "is_thinking": False
+                            "is_thinking": False,
+                            "analysis_id": existing_analysis_id,  # Include analysis_id to prevent filtering
+                            "structured_data": structured_data if 'structured_data' in locals() else None,  # Include validated structured data
+                            "is_structured_response": bool(structured_data)  # Flag to indicate this is a structured response
                         }
                     )
-                    logger.info(f"Successfully sent security agent response via WebSocket")
+                    logger.info(f"Successfully sent structured security agent response via WebSocket")
                 except Exception as ws_error:
                     logger.error(f"Error broadcasting security agent response: {str(ws_error)}")
                     # Don't raise here, as the response was successful - just log the WebSocket error
@@ -930,6 +1076,162 @@ class AgentCommunicationService:
             return "\n".join(summary_parts)
         except:
             return "Technical analysis summary not available"
+    
+    def _validate_technical_response(self, response_text: str, project_id: str) -> tuple[bool, Optional[Dict[str, Any]], str]:
+        """
+        Validate technical agent response using the same logic as AnalysisExecutionService
+        
+        Args:
+            response_text: Raw response from technical agent
+            project_id: ID of the project for context
+            
+        Returns:
+            tuple: (is_valid, validated_data, error_message)
+        """
+        try:
+            import json
+            
+            # Clean the response text
+            cleaned_text = response_text.strip()
+            
+            # Check if it starts and ends with braces
+            if not (cleaned_text.startswith('{') and cleaned_text.endswith('}')):
+                return False, None, "Response is not valid JSON (must start with { and end with })"
+            
+            # Check for wrong format patterns (same as AnalysisExecutionService)
+            wrong_format_indicators = [
+                "Technical Analysis Update",  # Wrong header format
+                "Start Date:",               # Wrong date format  
+                "End Date:",                 # Wrong date format
+                "Architecture Overview:",    # Wrong section name
+                "Primary Framework:",        # Wrong tech stack format
+                "UI Components:",           # Wrong tech stack format
+                "Key Technical Components:", # Wrong section name
+                "Content Ingestion Pipeline:", # Wrong section structure
+                "Technical Analysis\\nTechnical Analysis &",  # Pattern from broken output
+                "Timeline:  July",           # Pattern from broken output  
+                "Week 1-2:",                # Broken week format
+                "Week 3-4:",                # Broken week format
+                "Given the client's",       # Narrative text pattern
+                "here is a detailed",       # Narrative text pattern
+                "Validation Architecture Components",  # Wrong section pattern
+                "Core Validation Layer:",   # Wrong subsection pattern
+            ]
+            
+            if any(indicator in cleaned_text for indicator in wrong_format_indicators):
+                return False, None, f"Response uses wrong format - detected forbidden patterns. Must use exact JSON structure from template."
+            
+            # Check if response contains raw document content (indicates agent confusion)
+            if len(cleaned_text) > 15000:  # Very long responses might contain raw docs
+                return False, None, "Response too long - likely contains raw document content instead of structured analysis"
+            
+            # Parse JSON first to check basic structure
+            try:
+                parsed_json = json.loads(cleaned_text)
+            except json.JSONDecodeError as e:
+                return False, None, f"Invalid JSON format: {str(e)}"
+            
+            # Validate required structure sections
+            required_sections = ["technical_analysis", "risk_assessment", "project_plan", "recommendations"]
+            missing_sections = [section for section in required_sections if section not in parsed_json]
+            
+            if missing_sections:
+                return False, None, f"Missing required sections: {', '.join(missing_sections)}"
+            
+            # Validate technical_analysis section structure
+            tech_analysis = parsed_json.get("technical_analysis", {})
+            required_tech_fields = ["architecture", "tech_stack"]
+            missing_tech_fields = [field for field in required_tech_fields if field not in tech_analysis]
+            
+            if missing_tech_fields:
+                return False, None, f"Missing required technical analysis fields: {', '.join(missing_tech_fields)}"
+            
+            # Validate tech_stack structure
+            tech_stack = tech_analysis.get("tech_stack", {})
+            if not isinstance(tech_stack, dict):
+                return False, None, "tech_stack must be a dictionary with frontend, backend, infrastructure, tools"
+            
+            # All validation passed
+            logger.info(f"Technical response validation successful for project {project_id}")
+            return True, parsed_json, "Validation successful"
+            
+        except Exception as e:
+            logger.error(f"Error during technical response validation: {str(e)}")
+            return False, None, f"Validation error: {str(e)}"
+    
+    def _validate_security_response(self, response_text: str, project_id: str) -> tuple[bool, Optional[Dict[str, Any]], str]:
+        """
+        Validate security agent response using similar logic as technical validation
+        
+        Args:
+            response_text: Raw response from security agent
+            project_id: ID of the project for context
+            
+        Returns:
+            tuple: (is_valid, validated_data, error_message)
+        """
+        try:
+            import json
+            
+            # Clean the response text
+            cleaned_text = response_text.strip()
+            
+            # Check if it starts and ends with braces
+            if not (cleaned_text.startswith('{') and cleaned_text.endswith('}')):
+                return False, None, "Response is not valid JSON (must start with { and end with })"
+            
+            # Check for wrong format patterns specific to security responses
+            wrong_format_indicators = [
+                "Security Analysis Update",  # Wrong header format
+                "Security Overview:",        # Wrong section name
+                "Security Assessment:",      # Wrong section name
+                "Security Report:",          # Wrong section name
+                "Given the security",       # Narrative text pattern
+                "here is a security",       # Narrative text pattern
+                "Security Recommendations:", # Wrong top-level section name
+                "Vulnerability Summary:",    # Wrong section name
+            ]
+            
+            if any(indicator in cleaned_text for indicator in wrong_format_indicators):
+                return False, None, f"Response uses wrong format - detected forbidden patterns. Must use exact JSON structure from template."
+            
+            # Check if response contains raw document content (indicates agent confusion)
+            if len(cleaned_text) > 20000:  # Security responses might be longer
+                return False, None, "Response too long - likely contains raw document content instead of structured analysis"
+            
+            # Parse JSON first to check basic structure
+            try:
+                parsed_json = json.loads(cleaned_text)
+            except json.JSONDecodeError as e:
+                return False, None, f"Invalid JSON format: {str(e)}"
+            
+            # Validate required structure sections for security analysis
+            required_sections = ["security_analysis", "vulnerability_assessment", "security_recommendations", "security_roadmap", "explanations"]
+            missing_sections = [section for section in required_sections if section not in parsed_json]
+            
+            if missing_sections:
+                return False, None, f"Missing required sections: {', '.join(missing_sections)}"
+            
+            # Validate security_analysis section structure
+            security_analysis = parsed_json.get("security_analysis", {})
+            required_security_fields = ["overall_security_score", "security_posture", "compliance_status"]
+            missing_security_fields = [field for field in required_security_fields if field not in security_analysis]
+            
+            if missing_security_fields:
+                return False, None, f"Missing required security analysis fields: {', '.join(missing_security_fields)}"
+            
+            # Validate vulnerability_assessment section structure
+            vuln_assessment = parsed_json.get("vulnerability_assessment", {})
+            if not isinstance(vuln_assessment, dict):
+                return False, None, "vulnerability_assessment must be a dictionary with critical_vulnerabilities and security_risks"
+            
+            # All validation passed
+            logger.info(f"Security response validation successful for project {project_id}")
+            return True, parsed_json, "Validation successful"
+            
+        except Exception as e:
+            logger.error(f"Error during security response validation: {str(e)}")
+            return False, None, f"Validation error: {str(e)}"
     
     async def chat_with_project_planner(
         self,
