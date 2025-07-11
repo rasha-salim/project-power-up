@@ -930,10 +930,10 @@ export default function AgentConversation({ projectId, onAnalysisComplete, exist
                         if (frontendMatch || backendMatch) {
                           extracted.technical_analysis.tech_stack = {};
                           if (frontendMatch) {
-                            extracted.technical_analysis.tech_stack.frontend = frontendMatch[1].split(',').map(s => s.trim().replace(/"/g, ''));
+                            extracted.technical_analysis.tech_stack.frontend = frontendMatch[1].split(',').map((s: string) => s.trim().replace(/"/g, ''));
                           }
                           if (backendMatch) {
-                            extracted.technical_analysis.tech_stack.backend = backendMatch[1].split(',').map(s => s.trim().replace(/"/g, ''));
+                            extracted.technical_analysis.tech_stack.backend = backendMatch[1].split(',').map((s: string) => s.trim().replace(/"/g, ''));
                           }
                         }
                         
