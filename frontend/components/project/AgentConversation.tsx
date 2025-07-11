@@ -972,6 +972,102 @@ export default function AgentConversation({ projectId, onAnalysisComplete, exist
                         const performanceMatch = jsonText.match(/"performance_score":\s*(\d+)/);
                         if (performanceMatch) extracted.technical_analysis.performance_score = parseInt(performanceMatch[1]);
                         
+                        // Extract project phases if available
+                        const phasesMatch = jsonText.match(/"phases":\s*\[([\s\S]*?)\]/);
+                        if (phasesMatch) {
+                          try {
+                            const phasesContent = phasesMatch[1];
+                            const phases = [];
+                            
+                            // Extract individual phase objects
+                            const phaseMatches = [...phasesContent.matchAll(/\{([^}]+)\}/g)];
+                            for (const phaseMatch of phaseMatches) {
+                              const phaseContent = phaseMatch[1];
+                              const nameMatch = phaseContent.match(/"name":\s*"([^"]+)"/);
+                              const durationMatch = phaseContent.match(/"duration":\s*(\d+)/);
+                              const progressMatch = phaseContent.match(/"progress":\s*(\d+)/);
+                              const descMatch = phaseContent.match(/"description":\s*"([^"]+)"/);
+                              
+                              if (nameMatch) {
+                                phases.push({
+                                  name: nameMatch[1],
+                                  duration: durationMatch ? parseInt(durationMatch[1]) : 2,
+                                  progress: progressMatch ? parseInt(progressMatch[1]) : 0,
+                                  description: descMatch ? descMatch[1] : ""
+                                });
+                              }
+                            }
+                            
+                            if (phases.length > 0) {
+                              extracted.project_plan.phases = phases;
+                            }
+                          } catch (e) {
+                            console.warn('Could not extract project phases');
+                          }
+                        }
+                        
+                        // Extract milestones if available
+                        const milestonesMatch = jsonText.match(/"milestones":\s*\[([\s\S]*?)\]/);
+                        if (milestonesMatch) {
+                          try {
+                            const milestonesContent = milestonesMatch[1];
+                            const milestones = [];
+                            
+                            const milestoneMatches = [...milestonesContent.matchAll(/\{([^}]+)\}/g)];
+                            for (const milestoneMatch of milestoneMatches) {
+                              const milestoneContent = milestoneMatch[1];
+                              const nameMatch = milestoneContent.match(/"name":\s*"([^"]+)"/);
+                              const dateMatch = milestoneContent.match(/"date":\s*"([^"]+)"/);
+                              const statusMatch = milestoneContent.match(/"status":\s*"([^"]+)"/);
+                              const descMatch = milestoneContent.match(/"description":\s*"([^"]+)"/);
+                              const priorityMatch = milestoneContent.match(/"priority":\s*"([^"]+)"/);
+                              
+                              if (nameMatch) {
+                                milestones.push({
+                                  name: nameMatch[1],
+                                  date: dateMatch ? dateMatch[1] : "TBD",
+                                  status: statusMatch ? statusMatch[1] : "upcoming",
+                                  description: descMatch ? descMatch[1] : "",
+                                  priority: priorityMatch ? priorityMatch[1] : "Medium"
+                                });
+                              }
+                            }
+                            
+                            if (milestones.length > 0) {
+                              extracted.project_plan.milestones = milestones;
+                            }
+                          } catch (e) {
+                            console.warn('Could not extract milestones');
+                          }
+                        }
+                        
+                        // Extract resource requirements if available
+                        const resourceMatch = jsonText.match(/"resource_requirements":\s*\{([^}]+)\}/);
+                        if (resourceMatch) {
+                          try {
+                            const resourceContent = resourceMatch[1];
+                            const resourceReqs = {};
+                            
+                            const devMatch = resourceContent.match(/"developers":\s*(\d+)/);
+                            const designersMatch = resourceContent.match(/"designers":\s*(\d+)/);
+                            const qaMatch = resourceContent.match(/"qa":\s*(\d+)/);
+                            const devopsMatch = resourceContent.match(/"devops":\s*(\d+)/);
+                            const pmMatch = resourceContent.match(/"pm":\s*(\d+)/);
+                            
+                            if (devMatch) resourceReqs.developers = parseInt(devMatch[1]);
+                            if (designersMatch) resourceReqs.designers = parseInt(designersMatch[1]);
+                            if (qaMatch) resourceReqs.qa = parseInt(qaMatch[1]);
+                            if (devopsMatch) resourceReqs.devops = parseInt(devopsMatch[1]);
+                            if (pmMatch) resourceReqs.pm = parseInt(pmMatch[1]);
+                            
+                            if (Object.keys(resourceReqs).length > 0) {
+                              extracted.project_plan.resource_requirements = resourceReqs;
+                            }
+                          } catch (e) {
+                            console.warn('Could not extract resource requirements');
+                          }
+                        }
+                        
                         // Extract key risks if available
                         const risksMatch = jsonText.match(/"key_risks":\s*\[([\s\S]*?)\]/);
                         if (risksMatch) {
@@ -1001,8 +1097,346 @@ export default function AgentConversation({ projectId, onAnalysisComplete, exist
                           }
                         }
                         
+                        // Extract mitigation strategies if available
+                        const mitigationMatch = jsonText.match(/"mitigation_strategies":\s*\[([\s\S]*?)\]/);
+                        if (mitigationMatch) {
+                          try {
+                            const mitigationContent = mitigationMatch[1];
+                            const strategies = [];
+                            
+                            // Extract individual strategy strings
+                            const strategyMatches = [...mitigationContent.matchAll(/"([^"]+)"/g)];
+                            for (const strategyMatch of strategyMatches) {
+                              strategies.push(strategyMatch[1]);
+                            }
+                            
+                            if (strategies.length > 0) {
+                              extracted.risk_assessment.mitigation_strategies = strategies;
+                            }
+                          } catch (e) {
+                            console.warn('Could not extract mitigation strategies');
+                          }
+                        }
+                        
+                        // Extract recommendations if available
+                        const recommendationsMatch = jsonText.match(/"recommendations":\s*\[([\s\S]*?)\]/);
+                        if (recommendationsMatch) {
+                          try {
+                            const recommendationsContent = recommendationsMatch[1];
+                            const recommendations = [];
+                            
+                            // Extract individual recommendation strings
+                            const recMatches = [...recommendationsContent.matchAll(/"([^"]+)"/g)];
+                            for (const recMatch of recMatches) {
+                              recommendations.push(recMatch[1]);
+                            }
+                            
+                            if (recommendations.length > 0) {
+                              extracted.recommendations = recommendations;
+                            }
+                          } catch (e) {
+                            console.warn('Could not extract recommendations');
+                          }
+                        }
+                        
+                        // Extract effort distribution if available
+                        const effortMatch = jsonText.match(/"effort_distribution":\s*\[([\s\S]*?)\]/);
+                        if (effortMatch) {
+                          try {
+                            const effortContent = effortMatch[1];
+                            const effortDist = [];
+                            
+                            const effortMatches = [...effortContent.matchAll(/\{([^}]+)\}/g)];
+                            for (const effortItemMatch of effortMatches) {
+                              const effortContent = effortItemMatch[1];
+                              const componentMatch = effortContent.match(/"component":\s*"([^"]+)"/);
+                              const effortValueMatch = effortContent.match(/"effort":\s*(\d+)/);
+                              
+                              if (componentMatch && effortValueMatch) {
+                                effortDist.push({
+                                  component: componentMatch[1],
+                                  effort: parseInt(effortValueMatch[1])
+                                });
+                              }
+                            }
+                            
+                            if (effortDist.length > 0) {
+                              extracted.project_plan.effort_distribution = effortDist;
+                            }
+                          } catch (e) {
+                            console.warn('Could not extract effort distribution');
+                          }
+                        }
+                        
                         parsedStructuredData = extracted;
                         console.log('🟢 Successfully extracted partial data:', Object.keys(extracted));
+                        console.log('🟢 Extracted details:', {
+                          hasPhases: !!extracted.project_plan.phases,
+                          phasesCount: extracted.project_plan.phases?.length || 0,
+                          hasMilestones: !!extracted.project_plan.milestones,
+                          milestonesCount: extracted.project_plan.milestones?.length || 0,
+                          hasResourceReqs: !!extracted.project_plan.resource_requirements,
+                          resourceCount: Object.keys(extracted.project_plan.resource_requirements || {}).length,
+                          hasMitigation: !!extracted.risk_assessment.mitigation_strategies,
+                          mitigationCount: extracted.risk_assessment.mitigation_strategies?.length || 0,
+                          hasRecommendations: !!extracted.recommendations,
+                          recommendationsCount: extracted.recommendations?.length || 0,
+                          hasEffortDist: !!extracted.project_plan.effort_distribution,
+                          effortDistCount: extracted.project_plan.effort_distribution?.length || 0
+                        });
+                        
+                        // INTELLIGENT FALLBACKS: Generate reasonable defaults for missing data
+                        console.log('🧠 Applying intelligent fallbacks for missing data...');
+                        
+                        // Ensure project_plan exists
+                        if (!extracted.project_plan) extracted.project_plan = {};
+                        if (!extracted.technical_analysis) extracted.technical_analysis = {};
+                        if (!extracted.risk_assessment) extracted.risk_assessment = {};
+                        
+                        // Calculate team size based on complexity and tech stack
+                        if (!extracted.project_plan.resource_requirements || Object.keys(extracted.project_plan.resource_requirements).length === 0) {
+                          const complexityScore = extracted.technical_analysis.complexity_score || 7;
+                          const techStack = extracted.technical_analysis.tech_stack || {};
+                          
+                          // Base team size on complexity
+                          let baseTeamSize = Math.max(1, Math.floor(complexityScore / 2));
+                          
+                          // Adjust based on tech stack diversity
+                          const totalTechItems = (techStack.frontend?.length || 0) + 
+                                               (techStack.backend?.length || 0) + 
+                                               (techStack.infrastructure?.length || 0);
+                          if (totalTechItems > 6) baseTeamSize += 1; // More diverse stack needs more developers
+                          
+                          extracted.project_plan.resource_requirements = {
+                            developers: Math.min(baseTeamSize, 4), // Cap at 4 developers
+                            designers: techStack.frontend?.length > 0 ? 1 : 0, // UI work needs designer
+                            qa: baseTeamSize > 2 ? 1 : 0, // Larger teams need dedicated QA
+                            devops: (techStack.infrastructure?.length || 0) > 2 ? 1 : 0, // Complex infra needs DevOps
+                            pm: 1
+                          };
+                          
+                          console.log('🧠 Generated resource requirements based on complexity:', {
+                            complexityScore,
+                            totalTechItems,
+                            generatedResources: extracted.project_plan.resource_requirements
+                          });
+                        }
+                        
+                        // Generate effort distribution based on tech stack
+                        if (!extracted.project_plan.effort_distribution || extracted.project_plan.effort_distribution.length === 0) {
+                          const techStack = extracted.technical_analysis.tech_stack || {};
+                          const hasBackend = techStack.backend?.length > 0;
+                          const hasFrontend = techStack.frontend?.length > 0;
+                          const hasInfra = techStack.infrastructure?.length > 0;
+                          
+                          const distribution = [];
+                          
+                          if (hasBackend) {
+                            distribution.push({
+                              component: "Backend Development",
+                              effort: hasFrontend ? 40 : 60
+                            });
+                          }
+                          
+                          if (hasFrontend) {
+                            distribution.push({
+                              component: "Frontend Development", 
+                              effort: hasBackend ? 30 : 50
+                            });
+                          }
+                          
+                          if (hasInfra) {
+                            distribution.push({
+                              component: "Infrastructure & DevOps",
+                              effort: 15
+                            });
+                          }
+                          
+                          // Always include testing
+                          distribution.push({
+                            component: "Testing & QA",
+                            effort: 15
+                          });
+                          
+                          // Adjust percentages to sum to 100
+                          const totalEffort = distribution.reduce((sum, item) => sum + item.effort, 0);
+                          if (totalEffort !== 100) {
+                            const adjustment = 100 / totalEffort;
+                            distribution.forEach(item => {
+                              item.effort = Math.round(item.effort * adjustment);
+                            });
+                          }
+                          
+                          extracted.project_plan.effort_distribution = distribution;
+                          
+                          console.log('🧠 Generated effort distribution based on tech stack:', {
+                            hasBackend, hasFrontend, hasInfra,
+                            distribution: extracted.project_plan.effort_distribution
+                          });
+                        }
+                        
+                        // Generate default phases if none exist
+                        if (!extracted.project_plan.phases || extracted.project_plan.phases.length === 0) {
+                          const complexityScore = extracted.technical_analysis.complexity_score || 7;
+                          
+                          const phases = [
+                            {
+                              name: "Planning & Architecture",
+                              duration: Math.max(1, Math.floor(complexityScore / 4)),
+                              progress: 0,
+                              description: "System design and architecture planning"
+                            },
+                            {
+                              name: "Core Development",
+                              duration: Math.max(2, Math.floor(complexityScore / 2)),
+                              progress: 0,
+                              description: "Implementation of core functionality"
+                            },
+                            {
+                              name: "Integration & Testing",
+                              duration: Math.max(1, Math.floor(complexityScore / 3)),
+                              progress: 0,
+                              description: "System integration and comprehensive testing"
+                            },
+                            {
+                              name: "Deployment & Launch",
+                              duration: 1,
+                              progress: 0,
+                              description: "Production deployment and go-live"
+                            }
+                          ];
+                          
+                          extracted.project_plan.phases = phases;
+                          
+                          console.log('🧠 Generated default phases based on complexity:', {
+                            complexityScore,
+                            phases: phases.map(p => `${p.name} (${p.duration}w)`)
+                          });
+                        }
+                        
+                        // Generate default milestones if none exist
+                        if (!extracted.project_plan.milestones || extracted.project_plan.milestones.length === 0) {
+                          const phases = extracted.project_plan.phases || [];
+                          const milestones = [];
+                          
+                          if (phases.length > 0) {
+                            milestones.push({
+                              name: "Architecture Approved",
+                              date: "Week 2",
+                              status: "upcoming",
+                              description: "System architecture design completed and approved",
+                              priority: "High"
+                            });
+                            
+                            if (phases.length > 2) {
+                              milestones.push({
+                                name: "Core Features Complete",
+                                date: `Week ${phases.slice(0, 2).reduce((sum, p) => sum + p.duration, 0)}`,
+                                status: "upcoming", 
+                                description: "All core functionality implemented and tested",
+                                priority: "High"
+                              });
+                            }
+                            
+                            milestones.push({
+                              name: "Ready for Launch",
+                              date: `Week ${phases.reduce((sum, p) => sum + p.duration, 0)}`,
+                              status: "upcoming",
+                              description: "System tested and ready for production deployment",
+                              priority: "Critical"
+                            });
+                          }
+                          
+                          if (milestones.length > 0) {
+                            extracted.project_plan.milestones = milestones;
+                            
+                            console.log('🧠 Generated default milestones based on phases:', {
+                              milestonesCount: milestones.length,
+                              milestones: milestones.map(m => `${m.name} (${m.date})`)
+                            });
+                          }
+                        }
+                        
+                        // Generate default mitigation strategies if none exist
+                        if (!extracted.risk_assessment.mitigation_strategies || extracted.risk_assessment.mitigation_strategies.length === 0) {
+                          const techStack = extracted.technical_analysis.tech_stack || {};
+                          const complexityScore = extracted.technical_analysis.complexity_score || 7;
+                          
+                          const strategies = [
+                            "Implement comprehensive automated testing strategy",
+                            "Establish continuous integration and deployment pipeline",
+                            "Create detailed documentation and knowledge sharing sessions",
+                            "Plan for iterative development with regular stakeholder feedback"
+                          ];
+                          
+                          // Add technology-specific strategies
+                          if (techStack.infrastructure?.length > 2) {
+                            strategies.push("Implement infrastructure monitoring and alerting");
+                          }
+                          
+                          if (complexityScore > 7) {
+                            strategies.push("Consider proof-of-concept for high-risk components");
+                            strategies.push("Plan for additional contingency time and resources");
+                          }
+                          
+                          extracted.risk_assessment.mitigation_strategies = strategies;
+                          
+                          console.log('🧠 Generated default mitigation strategies:', {
+                            strategiesCount: strategies.length,
+                            complexityScore,
+                            hasComplexInfra: (techStack.infrastructure?.length || 0) > 2
+                          });
+                        }
+                        
+                        // Generate default recommendations if none exist
+                        if (!extracted.recommendations || extracted.recommendations.length === 0) {
+                          const techStack = extracted.technical_analysis.tech_stack || {};
+                          const complexityScore = extracted.technical_analysis.complexity_score || 7;
+                          
+                          const recommendations = [
+                            "Follow agile development methodology with regular sprint reviews",
+                            "Implement robust error handling and logging throughout the system",
+                            "Ensure comprehensive security measures are implemented from the start",
+                            "Plan for scalability and performance optimization early in development"
+                          ];
+                          
+                          // Add technology-specific recommendations
+                          if (techStack.frontend?.includes('React') || techStack.frontend?.includes('Vue') || techStack.frontend?.includes('Angular')) {
+                            recommendations.push("Implement responsive design and progressive web app features");
+                          }
+                          
+                          if (techStack.backend?.includes('API') || techStack.backend?.includes('REST') || techStack.backend?.includes('GraphQL')) {
+                            recommendations.push("Design clear API documentation and versioning strategy");
+                          }
+                          
+                          if (complexityScore > 7) {
+                            recommendations.push("Consider implementing feature flags for controlled rollouts");
+                            recommendations.push("Establish performance benchmarks and monitoring early");
+                          }
+                          
+                          extracted.recommendations = recommendations;
+                          
+                          console.log('🧠 Generated default recommendations:', {
+                            recommendationsCount: recommendations.length,
+                            complexityScore,
+                            techStackKeys: Object.keys(techStack)
+                          });
+                        }
+                        
+                        console.log('🧠 Intelligent fallbacks complete. Final extracted data:', {
+                          hasPhases: !!extracted.project_plan.phases,
+                          phasesCount: extracted.project_plan.phases?.length || 0,
+                          hasMilestones: !!extracted.project_plan.milestones,
+                          milestonesCount: extracted.project_plan.milestones?.length || 0,
+                          hasResourceReqs: !!extracted.project_plan.resource_requirements,
+                          resourceKeys: Object.keys(extracted.project_plan.resource_requirements || {}),
+                          hasMitigation: !!extracted.risk_assessment.mitigation_strategies,
+                          mitigationCount: extracted.risk_assessment.mitigation_strategies?.length || 0,
+                          hasRecommendations: !!extracted.recommendations,
+                          recommendationsCount: extracted.recommendations?.length || 0,
+                          hasEffortDist: !!extracted.project_plan.effort_distribution,
+                          effortDistCount: extracted.project_plan.effort_distribution?.length || 0
+                        });
                         
                       } catch (extractError) {
                         console.error('🔴 Even partial extraction failed:', extractError);
