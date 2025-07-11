@@ -63,12 +63,47 @@ class AgentServiceV2:
             ValueError: If project is not found or invalid
             RuntimeError: If analysis execution fails
         """
-        # Use existing analysis ID for incremental updates, otherwise generate new one
+        # Handle incremental analysis scenarios
         if existing_analysis_id:
-            analysis_id = existing_analysis_id
-            logger.info(f"Using existing analysis ID {analysis_id} for incremental analysis")
-        else:
+            # Check if existing analysis exists in memory or database
+            existing_analysis = self.analysis_manager.get_pending_analysis(existing_analysis_id)
+            if not existing_analysis:
+                # Try to get from project insights/database
+                from app.services.project_service import ProjectService
+                project_service = ProjectService()
+                project = await project_service.get_project(db, project_id)
+                if project and project.insights:
+                    logger.info(f"Found existing analysis in project insights for incremental update")
+                    # Store it as pending for reference
+                    self.analysis_manager.store_pending_analysis(
+                        existing_analysis_id, project_id, project.insights
+                    )
+                else:
+                    logger.warning(f"Existing analysis {existing_analysis_id} not found, treating as new analysis")
+            
+            # Generate new analysis ID for the incremental analysis
             analysis_id = str(uuid.uuid4())
+            logger.info(f"Starting incremental analysis {analysis_id} based on existing analysis {existing_analysis_id}")
+            
+            # Enhance additional context for incremental analysis
+            additional_context = f"Previous analysis context exists. New requirements: {additional_context}"
+            
+            # Send notification about incremental analysis starting
+            if ws_manager:
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "incremental_analysis_started",
+                        "analysis_id": analysis_id,
+                        "base_analysis_id": existing_analysis_id,
+                        "message": "🔄 Starting incremental analysis with new context...",
+                        "new_context": additional_context
+                    }
+                )
+        else:
+            # Generate new analysis ID for new analysis
+            analysis_id = str(uuid.uuid4())
+            logger.info(f"Starting new analysis {analysis_id} for project {project_id}")
         
         try:
             logger.info(f"Starting analysis execution for project {project_id} (ID: {analysis_id})")
@@ -300,12 +335,13 @@ class AgentServiceV2:
                 if existing_analysis_id and request_type in ['update', 'update_with_context']:
                     # Execute incremental analysis with existing context
                     logger.info(f"Executing incremental {request_type} analysis based on existing analysis {existing_analysis_id}")
-                    analysis_id = await self.execute_incremental_analysis(
+                    analysis_id = await self.execute_analysis_with_context(
                         project_id=project_id,
-                        existing_analysis_id=existing_analysis_id,
-                        new_context=additional_context,
                         db=db,
-                        ws_manager=ws_manager
+                        ws_manager=ws_manager,
+                        force=True,  # Force new analysis even if one exists
+                        additional_context=additional_context,
+                        existing_analysis_id=existing_analysis_id
                     )
                     
                     return {
@@ -555,86 +591,6 @@ class AgentServiceV2:
                     logger.error(f"Failed to send error notification via WebSocket: {str(ws_error)}")
             
             return False
-    
-    async def execute_incremental_analysis(
-        self, 
-        project_id: str, 
-        existing_analysis_id: str,
-        new_context: str,
-        db: AsyncSession, 
-        ws_manager: Optional[WebSocketManager] = None
-    ) -> str:
-        """
-        Execute incremental analysis with new context based on existing analysis
-        
-        Args:
-            project_id: ID of the project
-            existing_analysis_id: ID of the existing analysis to build upon
-            new_context: New context or requirements from user
-            db: Database session
-            ws_manager: WebSocket manager for real-time updates
-            
-        Returns:
-            str: New analysis ID for the incremental analysis
-        """
-        try:
-            logger.info(f"Starting incremental analysis for project {project_id} based on {existing_analysis_id}")
-            
-            # Check if existing analysis exists
-            existing_analysis = self.analysis_manager.get_pending_analysis(existing_analysis_id)
-            if not existing_analysis:
-                # Try to get from project insights/database
-                from app.services.project_service import ProjectService
-                project_service = ProjectService()
-                project = await project_service.get_project(db, project_id)
-                if project and project.insights:
-                    logger.info(f"Found existing analysis in project insights")
-                    # Store it as pending for reference
-                    self.analysis_manager.store_pending_analysis(
-                        existing_analysis_id, project_id, project.insights
-                    )
-                else:
-                    logger.warning(f"Existing analysis {existing_analysis_id} not found")
-            
-            # Generate new analysis ID for the incremental analysis
-            new_analysis_id = str(uuid.uuid4())
-            
-            # Send notification about incremental analysis starting
-            if ws_manager:
-                await ws_manager.broadcast(
-                    project_id,
-                    {
-                        "type": "incremental_analysis_started",
-                        "analysis_id": new_analysis_id,
-                        "base_analysis_id": existing_analysis_id,
-                        "message": "🔄 Starting incremental analysis with new context...",
-                        "new_context": new_context
-                    }
-                )
-            
-            # Execute analysis with existing context
-            return await self.execute_analysis_with_context(
-                project_id=project_id,
-                db=db,
-                ws_manager=ws_manager,
-                force=True,  # Force new analysis even if one exists
-                additional_context=f"Previous analysis context exists. New requirements: {new_context}",
-                existing_analysis_id=existing_analysis_id
-            )
-            
-        except Exception as e:
-            logger.error(f"Error executing incremental analysis: {str(e)}")
-            
-            if ws_manager:
-                await ws_manager.broadcast(
-                    project_id,
-                    {
-                        "type": "error",
-                        "message": f"❌ Failed to start incremental analysis: {str(e)}"
-                    }
-                )
-            
-            raise RuntimeError(f"Incremental analysis failed: {str(e)}")
     
     async def cancel_analysis(self, analysis_id: str) -> bool:
         """
