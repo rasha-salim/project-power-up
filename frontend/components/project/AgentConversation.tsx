@@ -958,6 +958,49 @@ export default function AgentConversation({ projectId, onAnalysisComplete, exist
                         if (timelineMatch) extracted.project_plan.timeline = timelineMatch[1];
                         if (costMatch) extracted.project_plan.estimated_cost = parseInt(costMatch[1]);
                         
+                        // Extract infrastructure and tools from tech_stack
+                        const infraMatch = jsonText.match(/"infrastructure":\s*\[([^\]]+)\]/);
+                        const toolsMatch = jsonText.match(/"tools":\s*\[([^\]]+)\]/);
+                        if (infraMatch) {
+                          extracted.technical_analysis.tech_stack.infrastructure = infraMatch[1].split(',').map((s: string) => s.trim().replace(/"/g, ''));
+                        }
+                        if (toolsMatch) {
+                          extracted.technical_analysis.tech_stack.tools = toolsMatch[1].split(',').map((s: string) => s.trim().replace(/"/g, ''));
+                        }
+                        
+                        // Extract performance score if available
+                        const performanceMatch = jsonText.match(/"performance_score":\s*(\d+)/);
+                        if (performanceMatch) extracted.technical_analysis.performance_score = parseInt(performanceMatch[1]);
+                        
+                        // Extract key risks if available
+                        const risksMatch = jsonText.match(/"key_risks":\s*\[([\s\S]*?)\]/);
+                        if (risksMatch) {
+                          try {
+                            // Try to extract individual risk objects
+                            const risksContent = risksMatch[1];
+                            const riskObjects = [];
+                            
+                            // Look for risk patterns in the available text
+                            const riskNameMatches = [...risksContent.matchAll(/"name":\s*"([^"]+)"/g)];
+                            const riskLevelMatches = [...risksContent.matchAll(/"level":\s*"([^"]+)"/g)];
+                            const riskDescMatches = [...risksContent.matchAll(/"description":\s*"([^"]+)"/g)];
+                            
+                            for (let i = 0; i < Math.min(riskNameMatches.length, riskLevelMatches.length, riskDescMatches.length); i++) {
+                              riskObjects.push({
+                                name: riskNameMatches[i][1],
+                                level: riskLevelMatches[i][1], 
+                                description: riskDescMatches[i][1]
+                              });
+                            }
+                            
+                            if (riskObjects.length > 0) {
+                              extracted.risk_assessment.key_risks = riskObjects;
+                            }
+                          } catch (e) {
+                            console.warn('Could not extract individual risks');
+                          }
+                        }
+                        
                         parsedStructuredData = extracted;
                         console.log('🟢 Successfully extracted partial data:', Object.keys(extracted));
                         
