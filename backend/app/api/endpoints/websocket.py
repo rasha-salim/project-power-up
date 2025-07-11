@@ -288,24 +288,37 @@ async def agent_conversation_websocket(
                         logger.info(f"Confirming and saving analysis {analysis_id}")
                         
                         try:
+                            logger.info(f"Processing confirm_analysis for analysis_id: {analysis_id}, project_id: {project_id}")
+                            
                             # Import dependencies
                             from sqlalchemy.ext.asyncio import AsyncSession
                             from app.db.init_db_simple import get_async_db
                             
                             # Get database session
                             db = await anext(get_async_db().__aiter__())
+                            logger.info("Database session obtained successfully")
                             
                             # Register the current connection if not already registered
                             if websocket not in ws_manager.active_connections.get(project_id, []):
                                 await ws_manager.connect(websocket, project_id)
+                                logger.info(f"WebSocket registered for project {project_id}")
                             
                             # Confirm and save
+                            logger.info(f"Calling confirm_and_save_analysis for {analysis_id}")
                             success = await agent_service.confirm_and_save_analysis(db, analysis_id, ws_manager)
                             
-                            if not success:
+                            if success:
+                                logger.info(f"Analysis {analysis_id} saved successfully")
+                                await websocket.send_text(json.dumps({
+                                    "type": "analysis_saved",
+                                    "analysis_id": analysis_id,
+                                    "message": "Analysis saved successfully"
+                                }))
+                            else:
+                                logger.error(f"Failed to save analysis {analysis_id}")
                                 await websocket.send_text(json.dumps({
                                     "type": "error",
-                                    "message": "Failed to save analysis"
+                                    "message": "Failed to save analysis - check server logs for details"
                                 }))
                             
                         except Exception as e:

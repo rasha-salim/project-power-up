@@ -355,9 +355,12 @@ class ProjectService:
             insights: Insights from agent analysis
         """
         try:
+            logger.info(f"Storing insights for project {project_id}")
+            logger.info(f"Insights keys: {list(insights.keys()) if isinstance(insights, dict) else 'Not a dict'}")
+            
             # Update project with insights in the database only
             # Skip the vector store operations for now to avoid ChromaDB issues
-            await self.update_project(
+            updated_project = await self.update_project(
                 db, 
                 project_id, 
                 ProjectUpdate(
@@ -365,6 +368,12 @@ class ProjectService:
                     insights=insights
                 )
             )
+            
+            if updated_project:
+                logger.info(f"Project {project_id} updated successfully with insights")
+            else:
+                logger.error(f"Failed to update project {project_id} - project not found")
+                raise Exception(f"Project {project_id} not found")
             
             logger.info(f"Successfully stored insights for project {project_id} in database")
             

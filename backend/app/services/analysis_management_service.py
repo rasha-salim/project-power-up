@@ -160,6 +160,7 @@ class AnalysisManagementService:
             # Check if analysis exists in pending analyses
             if analysis_id not in self.pending_analyses:
                 logger.error(f"Analysis {analysis_id} not found in pending analyses")
+                logger.error(f"Available pending analyses: {list(self.pending_analyses.keys())}")
                 return False
             
             analysis_data = self.pending_analyses[analysis_id]
@@ -199,7 +200,10 @@ class AnalysisManagementService:
             
             # Save to project
             project_service = ProjectService()
+            logger.info(f"Attempting to save insights to project {project_id}")
+            logger.info(f"Insights data size: {len(str(insights_data))} characters")
             await project_service.store_project_insights(db, project_id, insights_data)
+            logger.info(f"Successfully saved insights to project {project_id}")
             
             # Send success message via WebSocket
             if ws_manager:
