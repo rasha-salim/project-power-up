@@ -914,7 +914,7 @@ export default function AgentConversation({ projectId, onAnalysisComplete, exist
                         console.log('🔧 Attempting to extract partial data from truncated JSON');
                         
                         // Extract what we can manually
-                        const extracted = {
+                        const extracted: any = {
                           technical_analysis: {},
                           risk_assessment: {},
                           project_plan: {}
