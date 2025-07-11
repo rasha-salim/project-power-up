@@ -78,11 +78,30 @@ export default function AgentConversation({ projectId, onAnalysisComplete, exist
   // Parse structured content from agent messages
   const parseStructuredContent = (messageText: string) => {
     try {
-      // Try to parse JSON first
+      // Try to parse JSON first - handle both complete JSON objects and nested structures
       if (messageText.trim().startsWith('{') && messageText.trim().endsWith('}')) {
-        const parsed = JSON.parse(messageText);
-        if (parsed.technical_analysis || parsed.risk_assessment || parsed.project_plan) {
-          return parsed;
+        try {
+          const parsed = JSON.parse(messageText);
+          console.log('🟢 Successfully parsed JSON response:', {
+            hasTA: !!parsed.technical_analysis,
+            hasRA: !!parsed.risk_assessment,
+            hasPP: !!parsed.project_plan,
+            hasRec: !!parsed.recommendations,
+            topLevelKeys: Object.keys(parsed)
+          });
+          
+          // Check if it's a structured analysis response
+          if (parsed.technical_analysis || parsed.risk_assessment || parsed.project_plan || parsed.recommendations) {
+            return parsed;
+          }
+          
+          // Also check if the message itself contains the structure we need
+          if (typeof parsed === 'object' && parsed !== null) {
+            return parsed;
+          }
+        } catch (jsonError) {
+          console.warn('🟡 JSON parse error:', jsonError);
+          // Continue to markdown parsing if JSON fails
         }
       }
       
@@ -740,18 +759,24 @@ export default function AgentConversation({ projectId, onAnalysisComplete, exist
                 });
               }
               
-              // Check if this is a Technical Analysis message (formatted text from agent)
-              if (data.message && (
+              // Check if this is a Technical Analysis message (JSON or formatted text from agent)
+              const isJsonStructuredResponse = data.message && data.message.trim().startsWith('{') && data.message.trim().endsWith('}');
+              const isMarkdownAnalysisResponse = data.message && (
                 data.message.includes('Technical Analysis:') || 
                 data.message.includes('Technical Analysis\n') ||
                 data.message.match(/Technical Analysis[:\s]/i) ||
                 (data.message.includes('Architecture Overview') && data.message.includes('Technology Stack'))
-              )) {
+              );
+              
+              if (isJsonStructuredResponse || isMarkdownAnalysisResponse) {
                 console.log('🟡 Technical Analysis message detected, parsing structured content:', {
                   sender: data.sender,
                   messageLength: data.message.length,
                   hasAnalysisId: !!data.analysis_id,
-                  currentAnalysisId: currentAnalysisId
+                  currentAnalysisId: currentAnalysisId,
+                  isJsonFormat: isJsonStructuredResponse,
+                  isMarkdownFormat: isMarkdownAnalysisResponse,
+                  messagePreview: data.message.substring(0, 200) + '...'
                 });
                 
                 // Parse the formatted text into structured data
