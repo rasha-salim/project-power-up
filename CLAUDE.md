@@ -199,7 +199,20 @@ WebSocket implementation for:
 
 ## Recent Major Updates
 
-### Railway Mixed Content Error Resolution (Latest - Jul 2025)
+### Analysis Validation Error Fix (Latest - Jul 2025)
+- **Issue Resolved**: Pydantic validation errors when updating analysis due to missing required fields
+- **Root Cause**: AI agents not consistently including `progress` field in phases and `effort_distribution` array in project plans
+- **Solution**: Enhanced agent configuration and validation in analysis_execution_service.py
+- **Files Updated**: 
+  - `backend/app/config/agents.yaml` - Added explicit validation requirements and mandatory field warnings
+  - `backend/app/services/analysis_execution_service.py` - Enhanced Pydantic validation with specific field checks
+- **Fields Fixed**:
+  - `progress` field (0-100 integer) now required for each phase
+  - `effort_distribution` array now required in project_plan with component/effort objects
+  - Enhanced error messages for validation failures
+- **Impact**: Analysis updates now pass Pydantic validation consistently, eliminating "Field required" errors
+
+### Railway Mixed Content Error Resolution (Jul 2025)
 - **Issue Resolved**: Mixed content errors preventing HTTPS frontend from accessing Railway backend API
 - **Root Cause**: Railway was redirecting URLs with trailing slashes from HTTPS to HTTP, causing browser security blocks
 - **Solution**: Removed trailing slashes from individual resource endpoints while keeping them for collection endpoints

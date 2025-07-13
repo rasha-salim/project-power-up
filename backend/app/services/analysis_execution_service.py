@@ -118,10 +118,30 @@ class AnalysisExecutionService:
             
             # Validate project_plan structure
             project_plan = parsed_json.get("project_plan", {})
-            required_plan_fields = ["timeline", "estimated_cost", "phases"]
+            required_plan_fields = ["timeline", "estimated_cost", "phases", "effort_distribution"]
             missing_plan_fields = [field for field in required_plan_fields if field not in project_plan]
             if missing_plan_fields:
                 return False, None, f"Missing project_plan fields: {', '.join(missing_plan_fields)}"
+            
+            # Validate phases structure - each phase must have progress field
+            phases = project_plan.get("phases", [])
+            for i, phase in enumerate(phases):
+                if not isinstance(phase, dict):
+                    return False, None, f"Phase {i} is not a dictionary object"
+                if "progress" not in phase:
+                    return False, None, f"Phase {i} ('{phase.get('name', 'unnamed')}') is missing required 'progress' field"
+                if not isinstance(phase.get("progress"), int) or not (0 <= phase.get("progress") <= 100):
+                    return False, None, f"Phase {i} progress must be an integer between 0 and 100, got: {phase.get('progress')}"
+            
+            # Validate effort_distribution structure
+            effort_distribution = project_plan.get("effort_distribution", [])
+            if not isinstance(effort_distribution, list):
+                return False, None, f"effort_distribution must be an array, got: {type(effort_distribution).__name__}"
+            for i, effort_item in enumerate(effort_distribution):
+                if not isinstance(effort_item, dict):
+                    return False, None, f"effort_distribution item {i} is not a dictionary object"
+                if "component" not in effort_item or "effort" not in effort_item:
+                    return False, None, f"effort_distribution item {i} must have 'component' and 'effort' fields"
             
             # Add required fields for ProjectAnalysis model
             analysis_data = {
@@ -1461,6 +1481,7 @@ class AnalysisExecutionService:
               {{
                 "name": "Phase name",
                 "duration": [weeks],
+                "progress": 0,
                 "description": "Phase description"
               }}
             ],
@@ -1479,7 +1500,13 @@ class AnalysisExecutionService:
               "devops": [whole number - integer only, no decimals],
               "pm": 1,
               "other": {{}}
-            }}
+            }},
+            "effort_distribution": [
+              {{
+                "component": "Component name",
+                "effort": [percentage as integer]
+              }}
+            ]
           }},
           "recommendations": ["Recommendations based on document analysis"],
           "explanations": {{

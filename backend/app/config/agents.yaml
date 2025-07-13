@@ -200,6 +200,8 @@ tasks:
       8. Use clear, concise descriptions that match the example style
       9. Ensure all scores are integers from 1-10
       10. Timeline format: "Month Day, Year - Month Day, Year" (e.g., "May 15, 2025 - August 15, 2025")
+      11. MANDATORY: Every phase MUST have "progress": 0 (failing to include this will cause validation errors)
+      12. MANDATORY: project_plan MUST include "effort_distribution" array (failing to include this will cause validation errors)
       
       THIS IS THE ONLY ACCEPTABLE JSON FORMAT (copy this structure exactly):
       
@@ -290,6 +292,9 @@ tasks:
       - Use actual values from document analysis, not placeholder text
       - The timeline field should be a readable string like "May 15, 2025 - August 15, 2025" or "12 months"
       - DO NOT include any text, explanations, or content outside the JSON structure
+      - MANDATORY: Every phase MUST include "progress": 0 field (integer 0-100)
+      - MANDATORY: project_plan MUST include "effort_distribution" array with component/effort objects
+      - MANDATORY: All fields marked as required in the Pydantic model MUST be included
       
       EXACT JSON FORMAT REQUIRED (this structure produces the correct frontend display):
       {
