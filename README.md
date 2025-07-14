@@ -2,11 +2,12 @@
 
 An AI-powered project planning application that demonstrates the future of human-AI collaboration through specialized agents. Transform project briefs and meeting transcripts into comprehensive, actionable project plans using collaborative AI agents powered by CrewAI and Anthropic Claude.
 
+Please check this video for a demo of the application: https://www.youtube.com/watch?v=SZJKN0FNaTw&ab_channel=RashaSalim
+
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.9+-blue.svg)
 ![Node.js](https://img.shields.io/badge/node.js-18+-green.svg)
 ![TypeScript](https://img.shields.io/badge/typescript-5.0+-blue.svg)
-![Video Demonstration](https://www.youtube.com/watch?v=SZJKN0FNaTw&ab_channel=RashaSalim)
 
 ## 🚀 Key Features
 
